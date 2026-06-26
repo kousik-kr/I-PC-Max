@@ -1,0 +1,55 @@
+{
+  "input_files": {
+    "coords": "data\\USA-road-d.NY.co",
+    "travel_time": "data\\USA-road-t.NY.gr",
+    "distance": "data\\USA-road-d.NY.gr"
+  },
+  "output_files": [
+    "nodes.csv.gz",
+    "edges_static.csv.gz",
+    "travel_time_functions.jsonl.gz",
+    "score_functions.jsonl.gz",
+    "manifest.json",
+    "README_generated.md"
+  ],
+  "num_nodes": 264346,
+  "num_arcs": 733846,
+  "seed": 42,
+  "rush_windows": {
+    "morning": [
+      420,
+      600
+    ],
+    "evening": [
+      1020,
+      1200
+    ]
+  },
+  "multiplier_ranges": {
+    "morning": [
+      1.1,
+      2.0
+    ],
+    "evening": [
+      1.15,
+      2.5
+    ]
+  },
+  "travel_time_output": {
+    "file": "travel_time_functions.jsonl.gz",
+    "format": "gzip-compressed JSON Lines; one object per arc; travel_time_breakpoints contains [minute, travel_time] points from 0 through 1440; values outside rush windows equal base_travel_time",
+    "integer_travel_times": false,
+    "travel_time_decimals": 3
+  },
+  "score_edge_fraction": 0.2,
+  "score_min": 1,
+  "score_max": 15,
+  "selected_score_edge_count": 146769,
+  "score_intervals_per_rush": 3,
+  "materialize_zero_score_edges": false,
+  "unlisted_edges_have_score_zero": true,
+  "score_output": {
+    "file": "score_functions.jsonl.gz",
+    "format": "gzip-compressed JSON Lines; each object contains an arc_id and piecewise-constant score_intervals as [start_minute, end_minute, score]"
+  }
+}
