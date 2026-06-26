@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.DoubleUnaryOperator;
 
 /**
  * Piecewise-linear travel-time function over a one-day horizon.
@@ -168,5 +169,62 @@ public final class PiecewiseLinearFn {
      */
     public double lastMinute() {
         return breakpoints.get(breakpoints.size() - 1).minute();
+    }
+
+    /**
+     * Restricts this function to a discrete domain by sampling domain endpoints.
+     */
+    public PiecewiseLinearFn restrict(Domain domain) {
+        List<Breakpoint> restricted = new ArrayList<>();
+        for (Domain.Interval interval : domain.intervals()) {
+            double start = Math.max(interval.start(), firstMinute());
+            double end = Math.min(interval.end(), lastMinute());
+            if (start <= end) {
+                addUnique(restricted, new Breakpoint(start, travelTimeAt(start)));
+                addUnique(restricted, new Breakpoint(end, travelTimeAt(end)));
+            }
+        }
+        if (restricted.size() < 2) {
+            throw new IllegalArgumentException("restriction has fewer than two breakpoints");
+        }
+        return new PiecewiseLinearFn(restricted);
+    }
+
+    /**
+     * Builds a sampled travel-time profile {@code this.travelTime(profile(t))} over a domain.
+     */
+    public DoubleUnaryOperator composeTravelTime(DoubleUnaryOperator timeProfile) {
+        return rootTime -> travelTimeAt(timeProfile.applyAsDouble(rootTime));
+    }
+
+    /**
+     * Returns the discrete domain where arrival at root time is no later than another value function.
+     */
+    public Domain domainWhereArrivalAtMost(Domain domain, DoubleUnaryOperator rhs) {
+        List<Domain.Interval> intervals = new ArrayList<>();
+        Integer start = null;
+        Integer previous = null;
+        for (int t : domain) {
+            boolean ok = arrivalTimeAt(t) <= rhs.applyAsDouble(t);
+            if (ok && start == null) {
+                start = t;
+            }
+            if (!ok && start != null) {
+                intervals.add(new Domain.Interval(start, previous));
+                start = null;
+            }
+            previous = t;
+        }
+        if (start != null) {
+            intervals.add(new Domain.Interval(start, previous));
+        }
+        return intervals.isEmpty() ? Domain.empty() : Domain.of(intervals.toArray(Domain.Interval[]::new));
+    }
+
+    private static void addUnique(List<Breakpoint> points, Breakpoint point) {
+        if (!points.isEmpty() && points.get(points.size() - 1).minute() == point.minute()) {
+            return;
+        }
+        points.add(point);
     }
 }

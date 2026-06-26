@@ -3,6 +3,7 @@ package edu.ipcmax.core.function;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.DoubleUnaryOperator;
 
 /**
  * Piecewise-constant integer score function.
@@ -99,5 +100,113 @@ public final class PiecewiseConstFn {
             max = Math.max(max, interval.value());
         }
         return max;
+    }
+
+    /**
+     * Restricts this function to a discrete domain by clipping intervals.
+     */
+    public PiecewiseConstFn restrict(Domain domain) {
+        List<Interval> restricted = new ArrayList<>();
+        for (Domain.Interval domainInterval : domain.intervals()) {
+            double domainStart = domainInterval.start();
+            double domainEndExclusive = domainInterval.end() + 1.0;
+            for (Interval interval : intervals) {
+                double start = Math.max(domainStart, interval.startMinute());
+                double end = Math.min(domainEndExclusive, interval.endMinute());
+                if (start < end) {
+                    appendInterval(restricted, new Interval(start, end, interval.value()));
+                }
+            }
+        }
+        if (restricted.isEmpty()) {
+            throw new IllegalArgumentException("score restriction is empty");
+        }
+        return new PiecewiseConstFn(restricted);
+    }
+
+    /**
+     * Adds two score functions over a discrete domain using exact point sampling.
+     */
+    public PiecewiseConstFn add(PiecewiseConstFn other, Domain domain) {
+        List<Interval> result = new ArrayList<>();
+        Integer start = null;
+        Integer previous = null;
+        Integer currentValue = null;
+        for (int t : domain) {
+            int value = valueAt(t) + other.valueAt(t);
+            if (start == null) {
+                start = t;
+                currentValue = value;
+            } else if (value != currentValue || previous + 1 != t) {
+                result.add(new Interval(start, previous + 1.0, currentValue));
+                start = t;
+                currentValue = value;
+            }
+            previous = t;
+        }
+        if (start != null) {
+            result.add(new Interval(start, previous + 1.0, currentValue));
+        }
+        return new PiecewiseConstFn(result);
+    }
+
+    /**
+     * Composes this score function with a time profile over a discrete root domain.
+     */
+    public PiecewiseConstFn compose(DoubleUnaryOperator timeProfile, Domain domain) {
+        List<Interval> result = new ArrayList<>();
+        Integer start = null;
+        Integer previous = null;
+        Integer currentValue = null;
+        for (int t : domain) {
+            int value = valueAt(timeProfile.applyAsDouble(t));
+            if (start == null) {
+                start = t;
+                currentValue = value;
+            } else if (value != currentValue || previous + 1 != t) {
+                result.add(new Interval(start, previous + 1.0, currentValue));
+                start = t;
+                currentValue = value;
+            }
+            previous = t;
+        }
+        if (start != null) {
+            result.add(new Interval(start, previous + 1.0, currentValue));
+        }
+        return new PiecewiseConstFn(result);
+    }
+
+    /**
+     * Maximum score over a discrete domain.
+     */
+    public int maxValue(Domain domain) {
+        int max = 0;
+        for (int t : domain) {
+            max = Math.max(max, valueAt(t));
+        }
+        return max;
+    }
+
+    /**
+     * Breakpoint times.
+     */
+    public List<Double> breakpoints() {
+        List<Double> points = new ArrayList<>();
+        points.add(intervals.get(0).startMinute());
+        for (Interval interval : intervals) {
+            points.add(interval.endMinute());
+        }
+        return List.copyOf(points);
+    }
+
+    private static void appendInterval(List<Interval> intervals, Interval interval) {
+        if (!intervals.isEmpty()) {
+            Interval last = intervals.get(intervals.size() - 1);
+            if (last.endMinute() == interval.startMinute() && last.value() == interval.value()) {
+                intervals.set(intervals.size() - 1, new Interval(last.startMinute(), interval.endMinute(), last.value()));
+                return;
+            }
+        }
+        intervals.add(interval);
     }
 }
