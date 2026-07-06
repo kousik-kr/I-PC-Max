@@ -19,9 +19,19 @@ public final class TinyGraphBruteForceOracle {
     private final int maxPathLength;
 
     /**
-     * Creates an oracle with a path-length cap.
+     * Creates an exhaustive oracle over all loopless paths.
+     */
+    public TinyGraphBruteForceOracle(TDGraph graph) {
+        this(graph, Math.max(0, graph.nodeCount() - 1));
+    }
+
+    /**
+     * Creates a bounded oracle with an explicit path-length cap.
      */
     public TinyGraphBruteForceOracle(TDGraph graph, int maxPathLength) {
+        if (maxPathLength < 0) {
+            throw new IllegalArgumentException("max path length cannot be negative");
+        }
         this.graph = graph;
         this.maxPathLength = maxPathLength;
     }

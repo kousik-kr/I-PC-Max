@@ -42,4 +42,11 @@ public record CandidateProfile(
                 pivotId,
                 compressed);
     }
+
+    /**
+     * Travel time induced by the final arrival profile.
+     */
+    public double travelTimeAt(double startTime) {
+        return arrivalProfile.valueAt(startTime) - startTime;
+    }
 }

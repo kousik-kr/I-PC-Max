@@ -44,15 +44,20 @@ public final class IPCMaxCli {
                 cli.granularity);
 
         IPCMaxResult result;
+        String resultAlgorithm = cli.algorithm;
         if ("oracle".equals(cli.algorithm)) {
-            result = new TinyGraphBruteForceOracle(graph, cli.maxPathLength).solve(query);
+            TinyGraphBruteForceOracle oracle = cli.maxPathLength > 0
+                    ? new TinyGraphBruteForceOracle(graph, cli.maxPathLength)
+                    : new TinyGraphBruteForceOracle(graph);
+            resultAlgorithm = cli.maxPathLength > 0 ? "oracle-bounded" : "oracle-exhaustive";
+            result = oracle.solve(query);
         } else if ("fastest".equals(cli.algorithm)) {
             result = new RepeatedFastestPathBaseline(graph).solve(query);
         } else {
             throw new IllegalArgumentException("unknown --algorithm: " + cli.algorithm);
         }
 
-        printResult(cli.algorithm, result);
+        printResult(resultAlgorithm, result);
     }
 
     private static TDGraph demoGraph() {
@@ -101,7 +106,7 @@ public final class IPCMaxCli {
         private int departureEnd = 420;
         private double maxTravelTime = 60;
         private int granularity = 1;
-        private int maxPathLength = 8;
+        private int maxPathLength = 0;
 
         private static CliArgs parse(String[] args) {
             CliArgs cli = new CliArgs();

@@ -25,6 +25,9 @@ public final class PointPCMaxRunner {
      */
     public IPCMaxResult run(int source, int destination, int departureTime, double budget) {
         QuerySpec query = new QuerySpec(source, destination, departureTime, departureTime, budget, 1);
-        return new TinyGraphBruteForceOracle(graph, options.maxPathLength()).solve(query);
+        TinyGraphBruteForceOracle oracle = options.exactMode()
+                ? new TinyGraphBruteForceOracle(graph)
+                : new TinyGraphBruteForceOracle(graph, options.maxPathLength());
+        return oracle.solve(query);
     }
 }

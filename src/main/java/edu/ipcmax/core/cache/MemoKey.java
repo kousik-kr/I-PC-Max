@@ -1,12 +1,14 @@
 package edu.ipcmax.core.cache;
 
+import edu.ipcmax.core.function.Domain;
+
 /**
  * Deterministic memoization key for interval labeling and candidate recursion.
  */
 public record MemoKey(
         int source,
         int destination,
-        String domainFingerprint,
+        Domain domain,
         String departureProfileFingerprint,
         String deadlineProfileFingerprint,
         int theta,

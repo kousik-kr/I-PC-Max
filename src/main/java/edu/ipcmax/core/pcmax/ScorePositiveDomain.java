@@ -11,7 +11,10 @@ public final class ScorePositiveDomain {
     }
 
     /**
-     * Exact discrete positive-score domain using root time as edge departure time.
+     * Legacy root-time positive-score domain helper.
+     *
+     * <p>Exact PACE anchor handling must evaluate score domains at actual edge-entry time; see
+     * {@link PaceFrontierGenerator} and {@link TemporalStitch}.</p>
      */
     public static Domain forEdge(Edge edge, Domain domain) {
         Domain result = Domain.empty();

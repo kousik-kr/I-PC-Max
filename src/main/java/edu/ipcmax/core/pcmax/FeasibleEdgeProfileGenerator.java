@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Exact discrete feasible-edge profile generator using positive score filtering.
+ * Legacy discrete feasible-edge profile generator using root-time positive score filtering.
  */
 public final class FeasibleEdgeProfileGenerator {
     private final TDGraph graph;
@@ -22,6 +22,9 @@ public final class FeasibleEdgeProfileGenerator {
 
     /**
      * Computes positive-score feasible edge profiles over a root domain.
+     *
+     * <p>This helper is not used by exact PACE frontier generation because exact anchor domains are evaluated
+     * at actual edge-entry times.</p>
      */
     public List<FeasibleEdgeProfile> compute(Domain rootDomain) {
         List<FeasibleEdgeProfile> profiles = new ArrayList<>();

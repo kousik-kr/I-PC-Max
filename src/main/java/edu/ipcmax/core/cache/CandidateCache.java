@@ -20,7 +20,9 @@ public final class CandidateCache {
     public Optional<CandidateSet> get(MemoKey key) {
         if (values.containsKey(key)) {
             hits++;
-            return Optional.of(values.get(key));
+            CandidateSet copy = new CandidateSet();
+            copy.addAll(values.get(key));
+            return Optional.of(copy);
         }
         misses++;
         return Optional.empty();

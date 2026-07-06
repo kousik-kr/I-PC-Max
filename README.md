@@ -1,6 +1,6 @@
 # I-PC-Max
 
-This repository implements I-PC-Max, an interval version of PC-Max for time-dependent constrained path optimization.
+This repository implements I-PC-Max/PACE components for time-dependent constrained path optimization.
 BiSCOPE is not part of the core algorithm; it may only appear later as a separate baseline or experiment label.
 
 The current foundation loads the generated synthetic time-dependent road graph files produced by the sibling
@@ -70,10 +70,10 @@ Implemented now:
 - Loader for the generated compressed CSV and JSONL files.
 - Basic graph validation and loader smoke CLI.
 - Query specification, discrete `Domain`, exact loopless path replay, and final result tie-breaking.
+- Correctness-first exact PACE frontier generation, temporal stitching, and envelope extraction for small graphs.
 - FIFO point forward labeling.
 - Exact tiny brute-force oracle for correctness tests.
 - Repeated fastest-path baseline for smoke experiments.
 
-Next implementation layers should follow the subtask prompt pack: point backward labeling, repeated-PC-Max,
-lower-bound graphs, interval labeling, feasible edge profiles, pivots, candidate sets, recursion, safe dominance,
-memoization, deterministic parallelism, and paper-scale experiment runners.
+Next implementation layers should focus on continuous-domain profile refinement, Omega/path-signature dominance,
+bounded/scalable execution modes, deterministic parallelism, and paper-scale experiment runners.

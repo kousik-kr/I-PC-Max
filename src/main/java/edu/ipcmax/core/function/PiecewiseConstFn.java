@@ -103,6 +103,19 @@ public final class PiecewiseConstFn {
     }
 
     /**
+     * Returns the exact domain where the score is positive.
+     */
+    public Domain positiveDomain() {
+        List<Domain.Interval> positive = new ArrayList<>();
+        for (Interval interval : intervals) {
+            if (interval.value() > 0) {
+                positive.add(new Domain.Interval(interval.startMinute(), interval.endMinute()));
+            }
+        }
+        return positive.isEmpty() ? Domain.empty() : Domain.of(positive.toArray(Domain.Interval[]::new));
+    }
+
+    /**
      * Restricts this function to a discrete domain by clipping intervals.
      */
     public PiecewiseConstFn restrict(Domain domain) {
