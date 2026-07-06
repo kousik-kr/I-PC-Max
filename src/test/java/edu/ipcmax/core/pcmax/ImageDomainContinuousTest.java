@@ -1,20 +1,18 @@
 package edu.ipcmax.core.pcmax;
 
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
+
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.function.PiecewiseConstFn;
 import edu.ipcmax.core.function.PiecewiseLinearFn;
 import edu.ipcmax.core.graph.Edge;
-import edu.ipcmax.core.graph.Node;
-import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.profile.CandidateProfile;
 import edu.ipcmax.core.profile.PathPointer;
 import edu.ipcmax.core.profile.ScoreProfile;
 import edu.ipcmax.core.profile.TimeProfile;
-import org.junit.jupiter.api.Test;
-
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ImageDomainContinuousTest {
     @Test

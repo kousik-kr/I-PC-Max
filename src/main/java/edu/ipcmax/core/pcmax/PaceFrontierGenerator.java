@@ -1,5 +1,13 @@
 package edu.ipcmax.core.pcmax;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
 import edu.ipcmax.core.cache.CandidateCache;
 import edu.ipcmax.core.cache.MemoKey;
 import edu.ipcmax.core.function.Domain;
@@ -10,14 +18,6 @@ import edu.ipcmax.core.profile.CandidateSet;
 import edu.ipcmax.core.profile.ScoreProfile;
 import edu.ipcmax.core.profile.TimeProfile;
 import edu.ipcmax.core.validate.Path;
-
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 /**
  * Correctness-first implementation of the PACE GenerateFrontier recursion.

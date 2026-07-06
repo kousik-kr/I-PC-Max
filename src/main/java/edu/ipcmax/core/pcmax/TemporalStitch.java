@@ -1,5 +1,9 @@
 package edu.ipcmax.core.pcmax;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
@@ -9,10 +13,6 @@ import edu.ipcmax.core.profile.ScoreProfile;
 import edu.ipcmax.core.profile.TimeProfile;
 import edu.ipcmax.core.validate.LooplessChecker;
 import edu.ipcmax.core.validate.Path;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
 
 /**
  * PACE temporal stitching for a left candidate, score anchor, and right candidate.

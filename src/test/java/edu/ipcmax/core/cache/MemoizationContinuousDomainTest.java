@@ -1,9 +1,9 @@
 package edu.ipcmax.core.cache;
 
-import edu.ipcmax.core.function.Domain;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import edu.ipcmax.core.function.Domain;
 
 class MemoizationContinuousDomainTest {
     @Test

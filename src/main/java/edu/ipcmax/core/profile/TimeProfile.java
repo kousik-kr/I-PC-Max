@@ -1,13 +1,12 @@
 package edu.ipcmax.core.profile;
 
-import edu.ipcmax.core.function.Domain;
-import edu.ipcmax.core.function.PiecewiseLinearFn;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.DoubleUnaryOperator;
+
+import edu.ipcmax.core.function.Domain;
 
 /**
  * Time-valued profile over a continuous root departure domain.

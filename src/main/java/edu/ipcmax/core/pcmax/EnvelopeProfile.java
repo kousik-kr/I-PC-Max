@@ -1,11 +1,11 @@
 package edu.ipcmax.core.pcmax;
 
+import java.util.List;
+
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.profile.CandidateProfile;
 import edu.ipcmax.core.validate.ExactPathValidator;
 import edu.ipcmax.core.validate.ValidationResult;
-
-import java.util.List;
 
 /**
  * Departure-time-to-path profile extracted from a PACE candidate frontier.

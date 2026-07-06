@@ -1,13 +1,13 @@
 package edu.ipcmax.core.pcmax;
 
-import edu.ipcmax.core.function.Domain;
-import edu.ipcmax.core.profile.CandidateProfile;
-import edu.ipcmax.core.profile.CandidateSet;
-
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+
+import edu.ipcmax.core.function.Domain;
+import edu.ipcmax.core.profile.CandidateProfile;
+import edu.ipcmax.core.profile.CandidateSet;
 
 /**
  * Extracts the PACE departure-time-to-path envelope from a candidate frontier.

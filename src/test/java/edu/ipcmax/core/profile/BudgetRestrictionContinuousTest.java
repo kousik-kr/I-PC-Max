@@ -1,11 +1,11 @@
 package edu.ipcmax.core.profile;
 
-import edu.ipcmax.core.function.Domain;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
+
+import edu.ipcmax.core.function.Domain;
 
 class BudgetRestrictionContinuousTest {
     @Test
