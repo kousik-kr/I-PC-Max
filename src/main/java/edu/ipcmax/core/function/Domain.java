@@ -1,42 +1,88 @@
 package edu.ipcmax.core.function;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
 /**
- * Canonical set of disjoint closed real-valued intervals.
+ * Canonical set of disjoint real-valued intervals.
+ *
+ * <p>Endpoint inclusion is part of the value.  This is important for temporal
+ * functions: a score piece is normally half-open while a query interval is
+ * normally closed.  The two-argument {@link Interval} constructor is retained
+ * as the convenient spelling for a closed interval.</p>
  */
 public final class Domain implements Iterable<Integer> {
-    private static final double EPSILON = 1e-9;
+    /** Fixed decimal precision used by every temporal-domain boundary. */
+    public static final int TIME_SCALE = 9;
 
     private final List<Interval> intervals;
+    private final boolean partition;
 
     /**
-     * Closed real interval {@code [start,end]}.
+     * Real interval with explicit endpoint inclusion.
      */
-    public record Interval(double start, double end) {
+    public record Interval(
+            double start,
+            double end,
+            boolean startInclusive,
+            boolean endInclusive) {
         /**
-         * Creates a validated closed interval.
+         * Creates a closed interval {@code [start,end]}.
+         */
+        public Interval(double start, double end) {
+            this(start, end, true, true);
+        }
+
+        /**
+         * Creates a validated interval.
          */
         public Interval {
             if (!Double.isFinite(start) || !Double.isFinite(end)) {
                 throw new IllegalArgumentException("domain interval bounds must be finite");
             }
+            start = canonicalTime(start);
+            end = canonicalTime(end);
             if (end < start) {
                 throw new IllegalArgumentException("domain interval end must be >= start");
             }
+            if (end == start && !(startInclusive && endInclusive)) {
+                throw new IllegalArgumentException("a singleton interval must include its endpoint");
+            }
+        }
+
+        /**
+         * True when this interval contains {@code value}.
+         */
+        public boolean contains(double value) {
+            if (!Double.isFinite(value)) {
+                return false;
+            }
+            value = canonicalTime(value);
+            boolean afterStart = value > start || (value == start && startInclusive);
+            boolean beforeEnd = value < end || (value == end && endInclusive);
+            return afterStart && beforeEnd;
         }
     }
 
     private Domain(List<Interval> intervals) {
-        this.intervals = List.copyOf(canonicalize(intervals));
+        this(intervals, false);
+    }
+
+    private Domain(List<Interval> intervals, boolean preservePartition) {
+        this.intervals = List.copyOf(preservePartition
+                ? validatePartition(intervals)
+                : canonicalize(intervals));
+        this.partition = preservePartition;
     }
 
     /**
-     * Creates a domain from closed intervals.
+     * Creates a domain from intervals.
      */
     public static Domain of(Interval... intervals) {
         return new Domain(List.of(intervals));
@@ -50,6 +96,30 @@ public final class Domain implements Iterable<Integer> {
     }
 
     /**
+     * Creates one half-open interval domain {@code [start,end)}.
+     */
+    public static Domain halfOpen(double start, double end) {
+        start = canonicalTime(start);
+        end = canonicalTime(end);
+        if (end <= start) {
+            return empty();
+        }
+        return new Domain(List.of(new Interval(start, end, true, false)));
+    }
+
+    /**
+     * Creates one open interval domain {@code (start,end)}.
+     */
+    public static Domain open(double start, double end) {
+        start = canonicalTime(start);
+        end = canonicalTime(end);
+        if (end <= start) {
+            return empty();
+        }
+        return new Domain(List.of(new Interval(start, end, false, false)));
+    }
+
+    /**
      * Empty domain.
      */
     public static Domain empty() {
@@ -57,22 +127,27 @@ public final class Domain implements Iterable<Integer> {
     }
 
     /**
-     * Returns the canonical intervals.
+     * Returns the canonical intervals, or the ordered cells for a split view.
      */
     public List<Interval> intervals() {
         return intervals;
     }
 
     /**
-     * Returns all interval endpoints in order.
+     * Returns all distinct interval endpoints in order.
      */
     public List<Double> breakpoints() {
         List<Double> points = new ArrayList<>(intervals.size() * 2);
         for (Interval interval : intervals) {
-            points.add(interval.start());
-            points.add(interval.end());
+            addDistinct(points, interval.start());
+            addDistinct(points, interval.end());
         }
-        return List.copyOf(points);
+        points.sort(Double::compare);
+        List<Double> distinct = new ArrayList<>(points.size());
+        for (double point : points) {
+            addDistinct(distinct, point);
+        }
+        return List.copyOf(distinct);
     }
 
     /**
@@ -93,9 +168,16 @@ public final class Domain implements Iterable<Integer> {
      * True when the domain contains the time value.
      */
     public boolean contains(double minute) {
+        if (!Double.isFinite(minute)) {
+            return false;
+        }
+        minute = canonicalTime(minute);
         for (Interval interval : intervals) {
-            if (minute + EPSILON >= interval.start() && minute - EPSILON <= interval.end()) {
+            if (interval.contains(minute)) {
                 return true;
+            }
+            if (minute < interval.start()) {
+                return false;
             }
         }
         return false;
@@ -105,8 +187,9 @@ public final class Domain implements Iterable<Integer> {
      * Union with another domain.
      */
     public Domain union(Domain other) {
-        List<Interval> combined = new ArrayList<>(intervals);
-        combined.addAll(other.intervals);
+        Objects.requireNonNull(other, "other");
+        List<Interval> combined = new ArrayList<>(semanticIntervals());
+        combined.addAll(other.semanticIntervals());
         return new Domain(combined);
     }
 
@@ -114,20 +197,27 @@ public final class Domain implements Iterable<Integer> {
      * Intersection with another domain.
      */
     public Domain intersection(Domain other) {
+        Objects.requireNonNull(other, "other");
+        List<Interval> left = semanticIntervals();
+        List<Interval> right = other.semanticIntervals();
         List<Interval> result = new ArrayList<>();
         int i = 0;
         int j = 0;
-        while (i < intervals.size() && j < other.intervals.size()) {
-            Interval a = intervals.get(i);
-            Interval b = other.intervals.get(j);
-            double start = Math.max(a.start(), b.start());
-            double end = Math.min(a.end(), b.end());
-            if (start <= end + EPSILON) {
-                result.add(new Interval(start, end));
+        while (i < left.size() && j < right.size()) {
+            Interval a = left.get(i);
+            Interval b = right.get(j);
+            Interval overlap = intersect(a, b);
+            if (overlap != null) {
+                result.add(overlap);
             }
-            if (a.end() < b.end()) {
+
+            int endComparison = compare(a.end(), b.end());
+            if (endComparison < 0) {
                 i++;
+            } else if (endComparison > 0) {
+                j++;
             } else {
+                i++;
                 j++;
             }
         }
@@ -135,59 +225,22 @@ public final class Domain implements Iterable<Integer> {
     }
 
     /**
-     * Difference {@code this - other}.
+     * Difference {@code this - other} with exact endpoint ownership.
      */
     public Domain difference(Domain other) {
-        if (isIntegralDomain(this) && isIntegralDomain(other)) {
-            List<Interval> result = new ArrayList<>();
-            for (Interval base : intervals) {
-                int cursor = (int) Math.round(base.start());
-                for (Interval cut : other.intervals) {
-                    int cutStart = (int) Math.round(cut.start());
-                    int cutEnd = (int) Math.round(cut.end());
-                    if (cutEnd < cursor) {
-                        continue;
-                    }
-                    if (cutStart > (int) Math.round(base.end())) {
-                        break;
-                    }
-                    if (cutStart > cursor) {
-                        result.add(new Interval(cursor, Math.min((int) Math.round(base.end()), cutStart - 1)));
-                    }
-                    cursor = Math.max(cursor, cutEnd + 1);
-                    if (cursor > (int) Math.round(base.end())) {
-                        break;
-                    }
-                }
-                if (cursor <= (int) Math.round(base.end())) {
-                    result.add(new Interval(cursor, (int) Math.round(base.end())));
-                }
+        Objects.requireNonNull(other, "other");
+        List<Interval> fragments = new ArrayList<>(semanticIntervals());
+        for (Interval cut : other.semanticIntervals()) {
+            List<Interval> next = new ArrayList<>();
+            for (Interval fragment : fragments) {
+                subtractOne(fragment, cut, next);
             }
-            return new Domain(result);
-        }
-        List<Interval> result = new ArrayList<>();
-        for (Interval base : intervals) {
-            double cursor = base.start();
-            for (Interval cut : other.intervals) {
-                if (cut.end() < cursor - EPSILON) {
-                    continue;
-                }
-                if (cut.start() > base.end() + EPSILON) {
-                    break;
-                }
-                if (cut.start() > cursor + EPSILON) {
-                    result.add(new Interval(cursor, Math.min(base.end(), Math.nextDown(cut.start()))));
-                }
-                cursor = Math.max(cursor, Math.nextUp(cut.end()));
-                if (cursor > base.end() + EPSILON) {
-                    break;
-                }
-            }
-            if (cursor <= base.end() + EPSILON) {
-                result.add(new Interval(cursor, base.end()));
+            fragments = next;
+            if (fragments.isEmpty()) {
+                break;
             }
         }
-        return new Domain(result);
+        return new Domain(fragments);
     }
 
     /**
@@ -205,23 +258,38 @@ public final class Domain implements Iterable<Integer> {
     }
 
     /**
-     * Splits intervals at the supplied breakpoints while preserving exact coverage.
+     * Splits intervals at the supplied breakpoints while preserving exact
+     * coverage.  Returned cells use the canonical convention {@code [a,b)};
+     * the last cell inherits the original right-end inclusion.
+     *
+     * <p>The returned value is a partition view, so touching cells are kept
+     * separate instead of immediately being canonicalized back together.</p>
      */
     public Domain splitAt(List<Double> breakpoints) {
+        Objects.requireNonNull(breakpoints, "breakpoints");
         List<Interval> result = new ArrayList<>();
-        for (Interval interval : intervals) {
-            double cursor = interval.start();
-            List<Double> sorted = breakpoints.stream()
-                    .filter(point -> point > interval.start() + EPSILON && point < interval.end() - EPSILON)
-                    .sorted()
-                    .toList();
-            for (double point : sorted) {
-                result.add(new Interval(cursor, point));
-                cursor = point;
+        for (Interval interval : semanticIntervals()) {
+            List<Double> cuts = new ArrayList<>();
+            for (double point : breakpoints) {
+                if (!Double.isFinite(point)) {
+                    throw new IllegalArgumentException("domain breakpoint must be finite");
+                }
+                if (compare(point, interval.start()) > 0 && compare(point, interval.end()) < 0) {
+                    addDistinct(cuts, point);
+                }
             }
-            result.add(new Interval(cursor, interval.end()));
+            cuts.sort(Double::compare);
+
+            double cursor = interval.start();
+            boolean cursorInclusive = interval.startInclusive();
+            for (double point : cuts) {
+                result.add(new Interval(cursor, point, cursorInclusive, false));
+                cursor = point;
+                cursorInclusive = true;
+            }
+            result.add(new Interval(cursor, interval.end(), cursorInclusive, interval.endInclusive()));
         }
-        return new Domain(result);
+        return new Domain(result, true);
     }
 
     /**
@@ -233,21 +301,21 @@ public final class Domain implements Iterable<Integer> {
 
     @Override
     public Iterator<Integer> iterator() {
+        List<Interval> semantic = semanticIntervals();
         return new Iterator<>() {
-            private int intervalIndex = 0;
-            private int next = intervals.isEmpty() ? 0 : (int) Math.ceil(intervals.get(0).start());
+            private int intervalIndex;
+            private int next = semantic.isEmpty() ? 0 : firstInteger(semantic.get(0));
 
             @Override
             public boolean hasNext() {
-                while (intervalIndex < intervals.size()) {
-                    Interval interval = intervals.get(intervalIndex);
-                    int upper = (int) Math.floor(interval.end());
-                    if (next <= upper) {
+                while (intervalIndex < semantic.size()) {
+                    Interval interval = semantic.get(intervalIndex);
+                    if (next <= lastInteger(interval)) {
                         return true;
                     }
                     intervalIndex++;
-                    if (intervalIndex < intervals.size()) {
-                        next = (int) Math.ceil(intervals.get(intervalIndex).start());
+                    if (intervalIndex < semantic.size()) {
+                        next = firstInteger(semantic.get(intervalIndex));
                     }
                 }
                 return false;
@@ -276,18 +344,35 @@ public final class Domain implements Iterable<Integer> {
         if (!(other instanceof Domain domain)) {
             return false;
         }
-        return intervals.equals(domain.intervals);
+        return semanticIntervals().equals(domain.semanticIntervals());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(intervals);
+        return Objects.hash(semanticIntervals());
+    }
+
+    private List<Interval> semanticIntervals() {
+        return partition ? canonicalize(intervals) : intervals;
+    }
+
+    private static List<Interval> validatePartition(List<Interval> raw) {
+        List<Interval> sorted = new ArrayList<>(raw);
+        sorted.sort(INTERVAL_ORDER);
+        for (int i = 1; i < sorted.size(); i++) {
+            Interval previous = sorted.get(i - 1);
+            Interval current = sorted.get(i);
+            int relation = compare(current.start(), previous.end());
+            if (relation < 0 || (relation == 0 && previous.endInclusive() && current.startInclusive())) {
+                throw new IllegalArgumentException("domain partition cells must not overlap");
+            }
+        }
+        return sorted;
     }
 
     private static List<Interval> canonicalize(List<Interval> raw) {
-        List<Interval> sorted = raw.stream()
-                .sorted((a, b) -> Double.compare(a.start(), b.start()))
-                .toList();
+        List<Interval> sorted = new ArrayList<>(raw);
+        sorted.sort(INTERVAL_ORDER);
         List<Interval> result = new ArrayList<>();
         for (Interval interval : sorted) {
             if (result.isEmpty()) {
@@ -295,21 +380,160 @@ public final class Domain implements Iterable<Integer> {
                 continue;
             }
             Interval last = result.get(result.size() - 1);
-            if (interval.start() <= last.end() + EPSILON) {
-                result.set(result.size() - 1, new Interval(last.start(), Math.max(last.end(), interval.end())));
-            } else {
+            int relation = compare(interval.start(), last.end());
+            boolean connected = relation < 0
+                    || (relation == 0 && (last.endInclusive() || interval.startInclusive()));
+            if (!connected) {
                 result.add(interval);
+                continue;
             }
+            result.set(result.size() - 1, merge(last, interval));
         }
         return result;
     }
 
-    private static boolean isIntegralDomain(Domain domain) {
-        for (Interval interval : domain.intervals) {
-            if (Math.rint(interval.start()) != interval.start() || Math.rint(interval.end()) != interval.end()) {
-                return false;
+    private static Interval merge(Interval left, Interval right) {
+        double start = left.start();
+        boolean startInclusive = left.startInclusive();
+        if (compare(left.start(), right.start()) == 0) {
+            start = Math.min(left.start(), right.start());
+            startInclusive = left.startInclusive() || right.startInclusive();
+        }
+
+        int endComparison = compare(left.end(), right.end());
+        if (endComparison > 0) {
+            return new Interval(start, left.end(), startInclusive, left.endInclusive());
+        }
+        if (endComparison < 0) {
+            return new Interval(start, right.end(), startInclusive, right.endInclusive());
+        }
+        return new Interval(start, Math.max(left.end(), right.end()), startInclusive,
+                left.endInclusive() || right.endInclusive());
+    }
+
+    private static Interval intersect(Interval left, Interval right) {
+        int startComparison = compare(left.start(), right.start());
+        double start;
+        boolean startInclusive;
+        if (startComparison > 0) {
+            start = left.start();
+            startInclusive = left.startInclusive();
+        } else if (startComparison < 0) {
+            start = right.start();
+            startInclusive = right.startInclusive();
+        } else {
+            start = Math.max(left.start(), right.start());
+            startInclusive = left.startInclusive() && right.startInclusive();
+        }
+
+        int endComparison = compare(left.end(), right.end());
+        double end;
+        boolean endInclusive;
+        if (endComparison < 0) {
+            end = left.end();
+            endInclusive = left.endInclusive();
+        } else if (endComparison > 0) {
+            end = right.end();
+            endInclusive = right.endInclusive();
+        } else {
+            end = Math.min(left.end(), right.end());
+            endInclusive = left.endInclusive() && right.endInclusive();
+        }
+
+        int relation = compare(start, end);
+        if (relation > 0 || (relation == 0 && !(startInclusive && endInclusive))) {
+            return null;
+        }
+        if (relation == 0) {
+            double point = (start + end) / 2.0;
+            return new Interval(point, point);
+        }
+        return new Interval(start, end, startInclusive, endInclusive);
+    }
+
+    private static void subtractOne(Interval base, Interval cut, List<Interval> output) {
+        Interval overlap = intersect(base, cut);
+        if (overlap == null) {
+            output.add(base);
+            return;
+        }
+
+        addIfNonEmpty(output, base.start(), overlap.start(), base.startInclusive(), !overlap.startInclusive());
+        addIfNonEmpty(output, overlap.end(), base.end(), !overlap.endInclusive(), base.endInclusive());
+    }
+
+    private static void addIfNonEmpty(
+            List<Interval> output,
+            double start,
+            double end,
+            boolean startInclusive,
+            boolean endInclusive) {
+        int relation = compare(start, end);
+        if (relation < 0) {
+            output.add(new Interval(start, end, startInclusive, endInclusive));
+        } else if (relation == 0 && startInclusive && endInclusive) {
+            double point = (start + end) / 2.0;
+            output.add(new Interval(point, point));
+        }
+    }
+
+    private static int firstInteger(Interval interval) {
+        int first = (int) Math.ceil(interval.start());
+        if (!interval.startInclusive() && first == interval.start()) {
+            first++;
+        }
+        return first;
+    }
+
+    private static int lastInteger(Interval interval) {
+        int last = (int) Math.floor(interval.end());
+        if (!interval.endInclusive() && last == interval.end()) {
+            last--;
+        }
+        return last;
+    }
+
+    private static void addDistinct(List<Double> points, double point) {
+        point = canonicalTime(point);
+        for (double existing : points) {
+            if (compare(existing, point) == 0) {
+                return;
             }
         }
-        return true;
+        points.add(point);
     }
+
+    private static int compare(double left, double right) {
+        return Double.compare(canonicalTime(left), canonicalTime(right));
+    }
+
+    /** Converts a temporal value to the repository's fixed decimal representation. */
+    public static double canonicalTime(double value) {
+        if (!Double.isFinite(value)) {
+            throw new IllegalArgumentException("time value must be finite");
+        }
+        return BigDecimal.valueOf(value)
+                .setScale(TIME_SCALE, RoundingMode.HALF_EVEN)
+                .doubleValue();
+    }
+
+    /** Exact equality after conversion to the fixed decimal representation. */
+    public static boolean sameTime(double left, double right) {
+        return Double.compare(canonicalTime(left), canonicalTime(right)) == 0;
+    }
+
+    private static final Comparator<Interval> INTERVAL_ORDER = (left, right) -> {
+        int startComparison = Double.compare(left.start(), right.start());
+        if (startComparison != 0) {
+            return startComparison;
+        }
+        if (left.startInclusive() != right.startInclusive()) {
+            return left.startInclusive() ? -1 : 1;
+        }
+        int endComparison = Double.compare(left.end(), right.end());
+        if (endComparison != 0) {
+            return endComparison;
+        }
+        return Boolean.compare(right.endInclusive(), left.endInclusive());
+    };
 }

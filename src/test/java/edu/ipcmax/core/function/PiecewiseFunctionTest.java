@@ -47,4 +47,37 @@ class PiecewiseFunctionTest {
         assertTrue(fn.hasPositiveValueIn(new TimeRange(500, 520)));
         assertFalse(fn.hasPositiveValueIn(new TimeRange(700, 800)));
     }
+
+    @Test
+    void linearRestrictionRetainsBreakpointsAndExactDomainHoles() {
+        PiecewiseLinearFn fn = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 0),
+                new PiecewiseLinearFn.Breakpoint(5, 10),
+                new PiecewiseLinearFn.Breakpoint(10, 0)));
+
+        PiecewiseLinearFn restricted = fn.restrict(Domain.of(
+                new Domain.Interval(0, 3, true, false),
+                new Domain.Interval(7, 10)));
+
+        assertEquals(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 0),
+                new PiecewiseLinearFn.Breakpoint(3, 6),
+                new PiecewiseLinearFn.Breakpoint(7, 6),
+                new PiecewiseLinearFn.Breakpoint(10, 0)), restricted.breakpoints());
+        assertEquals(2, restricted.travelTimeAt(1), 1e-9);
+        assertEquals(4, restricted.travelTimeAt(8), 1e-9);
+        assertThrows(IllegalArgumentException.class, () -> restricted.travelTimeAt(3));
+        assertThrows(IllegalArgumentException.class, () -> restricted.travelTimeAt(5));
+    }
+
+    @Test
+    void arrivalComparisonCutsAtContinuousRoot() {
+        PiecewiseLinearFn fn = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 0),
+                new PiecewiseLinearFn.Breakpoint(10, 10)));
+
+        Domain feasible = fn.domainWhereArrivalAtMost(Domain.closed(0, 10), ignored -> 7.5);
+
+        assertEquals(Domain.closed(0, 3.75), feasible);
+    }
 }

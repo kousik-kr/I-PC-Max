@@ -7,8 +7,8 @@
     <groupId>edu.ipcmax</groupId>
     <artifactId>i-pc-max</artifactId>
     <version>0.1.0-SNAPSHOT</version>
-    <name>I-PC-Max</name>
-    <description>Interval PC-Max for time-dependent constrained path optimization.</description>
+    <name>PACE</name>
+    <description>Profile-Aware Candidate Envelope for time-dependent constrained preference routing.</description>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>

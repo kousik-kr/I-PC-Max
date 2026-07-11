@@ -1,12 +1,9 @@
 package edu.ipcmax.core.pcmax;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import edu.ipcmax.core.cache.CandidateCache;
 import edu.ipcmax.core.cache.MemoKey;
@@ -15,202 +12,343 @@ import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.profile.CandidateProfile;
 import edu.ipcmax.core.profile.CandidateSet;
-import edu.ipcmax.core.profile.ScoreProfile;
+import edu.ipcmax.core.profile.PathPointer;
 import edu.ipcmax.core.profile.TimeProfile;
-import edu.ipcmax.core.validate.Path;
 
 /**
- * Correctness-first implementation of the PACE GenerateFrontier recursion.
+ * PACE GenerateFrontier recursion with explicit-anchor budget splitting.
  */
 public final class PaceFrontierGenerator {
-    private static final double EPSILON = 1e-9;
-
     private final TDGraph graph;
+    private final PaceOptions options;
     private final CandidateCache memo;
-    private final List<Edge> scoreAnchors;
+    private volatile PaceGenerationStats lastStats = PaceGenerationStats.empty();
 
-    /**
-     * Creates a generator using all score-contributing edges as anchors.
-     */
+    /** Backward-compatible exhaustive generator; the legacy method supplies theta. */
     public PaceFrontierGenerator(TDGraph graph) {
+        this(graph, PaceOptions.exhaustive(0));
+    }
+
+    /** Creates a generator with an explicit PACE policy. */
+    public PaceFrontierGenerator(TDGraph graph, PaceOptions options) {
+        if (graph == null || options == null) {
+            throw new IllegalArgumentException("graph and PACE options are required");
+        }
         this.graph = graph;
+        this.options = options;
         this.memo = new CandidateCache();
-        this.scoreAnchors = graph.edges().stream()
-                .filter(edge -> edge.scoreFunction().maxValue() > 0)
-                .toList();
+    }
+
+    /** Generates the root frontier for a validated logical PACE query. */
+    public synchronized CandidateSet generateFrontier(QuerySpec query) {
+        if (query == null) {
+            throw new IllegalArgumentException("query is required");
+        }
+        return execute(
+                query.source(),
+                query.destination(),
+                query.departureDomain(),
+                query.maxTravelTime(),
+                options.theta(),
+                options);
     }
 
     /**
-     * Generates {@code Q_uv^ell(D)} under budget {@code B}.
+     * Backward-compatible direct entry point. The supplied {@code ell} is an explicit-anchor
+     * budget, not a recursion-tree depth.
      */
-    public CandidateSet generateFrontier(int source, int destination, Domain domain, double budget, int ell) {
-        if (ell < 0) {
-            throw new IllegalArgumentException("frontier depth cannot be negative");
+    public synchronized CandidateSet generateFrontier(
+            int source,
+            int destination,
+            Domain domain,
+            double budget,
+            int ell) {
+        PaceOptions runOptions = new PaceOptions(
+                options.policy(),
+                ell,
+                options.anchorLimit(),
+                options.frontierLimit(),
+                options.threadCount(),
+                options.memoizationEnabled());
+        return execute(source, destination, domain, budget, ell, runOptions);
+    }
+
+    /** Statistics from the most recently completed root generation. */
+    public PaceGenerationStats stats() {
+        return lastStats;
+    }
+
+    private CandidateSet execute(
+            int source,
+            int destination,
+            Domain domain,
+            double budget,
+            int ell,
+            PaceOptions runOptions) {
+        lastStats = PaceGenerationStats.empty();
+        if (domain == null || domain.isEmpty()) {
+            return new CandidateSet();
         }
+        if (ell < 0) {
+            throw new IllegalArgumentException("remaining explicit-anchor budget cannot be negative");
+        }
+        if (budget < 0 || !Double.isFinite(budget)) {
+            throw new IllegalArgumentException("travel budget must be finite and nonnegative");
+        }
+        graph.node(source);
+        graph.node(destination);
+        double horizonStart = domain.intervals().get(0).start();
+        double horizonEnd = domain.intervals().get(domain.intervals().size() - 1).end() + budget;
+        if (!Double.isFinite(horizonEnd)) {
+            throw new IllegalArgumentException("query horizon endpoint must be finite");
+        }
+        Domain queryHorizon = Domain.closed(horizonStart, horizonEnd);
+        AnchorIndex anchorIndex = AnchorIndex.create(graph, queryHorizon);
+        QueryLowerBounds lowerBounds = new QueryLowerBounds(graph, queryHorizon);
+        ConnectorProfiles connectors = new ConnectorProfiles(graph, anchorIndex, lowerBounds, runOptions);
+        RunCounters counters = new RunCounters();
+        long hitsBefore = memo.hits();
+        long missesBefore = memo.misses();
+        RunContext context = new RunContext(
+                runOptions,
+                queryHorizon,
+                anchorIndex,
+                lowerBounds,
+                connectors,
+                counters,
+                "graph-edges=" + graph.edgeCount() + ":nodes=" + graph.nodeCount());
+        CandidateSet result = generate(context, source, destination, domain, budget, ell);
+        lastStats = new PaceGenerationStats(
+                counters.recursionCalls.get(),
+                counters.anchorsConsidered.get(),
+                counters.anchorsRetained.get(),
+                counters.connectorCandidates.get(),
+                counters.stitchedCandidates.get(),
+                memo.hits() - hitsBefore,
+                memo.misses() - missesBefore);
+        return result;
+    }
+
+    private CandidateSet generate(
+            RunContext context,
+            int source,
+            int destination,
+            Domain domain,
+            double budget,
+            int remainingAnchors) {
+        context.counters().recursionCalls.incrementAndGet();
         if (domain.isEmpty()) {
             return new CandidateSet();
         }
-
         MemoKey key = new MemoKey(
                 source,
                 destination,
-            domain,
-                "start-domain:" + domain.intervals(),
-                "budget:" + budget,
-                ell,
-                true,
-                1,
-                false,
-                0);
-        Optional<CandidateSet> cached = memo.get(key);
-        if (cached.isPresent()) {
-            return cached.get();
+                domain,
+                remainingAnchors,
+                context.options().policy(),
+                context.options().effectiveAnchorLimit(),
+                context.options().effectiveFrontierLimit(),
+                budget,
+                context.queryHorizon(),
+                context.graphVersion(),
+                context.anchors().version());
+        if (!context.options().memoizationEnabled()) {
+            return computeFrontier(context, source, destination, domain, budget, remainingAnchors);
         }
+        return memo.getOrCompute(
+                key,
+                () -> computeFrontier(context, source, destination, domain, budget, remainingAnchors));
+    }
 
-        CandidateSet frontier = connectorFrontier(source, destination, domain, budget);
-        if (ell > 0) {
-            for (Edge anchor : scoreAnchors) {
-                CandidateSet leftFrontier = generateFrontier(source, anchor.source(), domain, budget, ell - 1);
-                for (CandidateProfile left : leftFrontier.candidates()) {
-                    Domain leftAnchorDomain = leftAnchorDomain(left, anchor, domain);
-                    if (leftAnchorDomain.isEmpty()) {
-                        continue;
-                    }
-                    Domain rightDomain = imageDomainAfterAnchor(left, anchor, leftAnchorDomain);
-                    if (rightDomain.isEmpty()) {
-                        continue;
-                    }
-                    CandidateSet rightFrontier = generateFrontier(anchor.target(), destination, rightDomain, budget, ell - 1);
-                    for (CandidateProfile right : rightFrontier.candidates()) {
-                        TemporalStitch.stitch(graph, left, anchor, right, domain, budget)
-                                .ifPresent(frontier::add);
+    private CandidateSet computeFrontier(
+            RunContext context,
+            int source,
+            int destination,
+            Domain domain,
+            double budget,
+            int remainingAnchors) {
+        CandidateSet frontier = context.connectors().generate(source, destination, domain, budget);
+        context.counters().connectorCandidates.addAndGet(frontier.size());
+        if (remainingAnchors > 0) {
+            context.counters().anchorsConsidered.addAndGet(context.anchors().anchors().size());
+            var relevant = context.anchors().relevantAnchors(
+                    source,
+                    destination,
+                    domain,
+                    budget,
+                    context.lowerBounds(),
+                    context.options());
+            context.counters().anchorsRetained.addAndGet(relevant.size());
+            for (RelevantAnchor relevantAnchor : relevant) {
+                Anchor anchor = relevantAnchor.anchor();
+                for (int leftBudget = 0; leftBudget < remainingAnchors; leftBudget++) {
+                    int rightBudget = remainingAnchors - 1 - leftBudget;
+                    CandidateSet leftFrontier = generate(
+                            context,
+                            source,
+                            anchor.source(),
+                            domain,
+                            budget,
+                            leftBudget);
+                    for (CandidateProfile left : leftFrontier.candidates()) {
+                        Domain leftAnchorDomain = leftAnchorDomain(left, anchor, domain);
+                        if (leftAnchorDomain.isEmpty()) {
+                            continue;
+                        }
+                        Domain rightDomain = imageDomainAfterAnchor(left, anchor, leftAnchorDomain);
+                        if (rightDomain.isEmpty()) {
+                            continue;
+                        }
+                        CandidateSet rightFrontier = generate(
+                                context,
+                                anchor.target(),
+                                destination,
+                                rightDomain,
+                                budget,
+                                rightBudget);
+                        for (CandidateProfile right : rightFrontier.candidates()) {
+                            TemporalStitch.stitch(graph, left, anchor, right, domain, budget)
+                                    .ifPresent(candidate -> {
+                                        if (candidate.explicitAnchorCount() > remainingAnchors) {
+                                            throw new IllegalStateException(
+                                                    "generated candidate exceeds explicit-anchor budget");
+                                        }
+                                        frontier.add(candidate);
+                                        context.counters().stitchedCandidates.incrementAndGet();
+                                    });
+                        }
                     }
                 }
             }
         }
-
-        CandidateSet compressed = compressExactDuplicates(frontier);
-        memo.put(key, compressed);
-        return compressed;
+        CandidateSet canonical = canonicalizeGeneratedPaths(
+                context,
+                frontier,
+                source,
+                destination,
+                domain,
+                budget,
+                remainingAnchors);
+        return FrontierCompressor.compress(
+                graph,
+                canonical,
+                domain,
+                budget,
+                context.options().effectiveFrontierLimit(),
+                context.options().policy(),
+                source,
+                destination);
     }
 
-    /**
-     * Computes ImageDomain(A_a composed with A_C_L, D_L^a).
-     */
-    static Domain imageDomainAfterAnchor(CandidateProfile left, Edge anchor, Domain leftAnchorDomain) {
-        TimeProfile anchorArrival = edgeArrivalProfile(anchor);
-        TimeProfile composed = left.arrivalProfile().compose(anchorArrival, "image-domain:" + left.pathPointer().arcIds() + ":" + anchor.arcId());
-        Domain image = composed.imageDomain(leftAnchorDomain);
-        if (image.isEmpty()) {
+    private CandidateSet canonicalizeGeneratedPaths(
+            RunContext context,
+            CandidateSet generated,
+            int source,
+            int destination,
+            Domain subproblemDomain,
+            double budget,
+            int remainingAnchors) {
+        Map<List<Integer>, Domain> generatedDomains = new TreeMap<>(PathPointer.STABLE_PATH_ORDER);
+        for (CandidateProfile candidate : generated.candidates()) {
+            Domain retained = candidate.domain().intersection(subproblemDomain);
+            if (retained.isEmpty()) {
+                continue;
+            }
+            List<Integer> pathId = candidate.stablePathId();
+            generatedDomains.merge(pathId, retained, Domain::union);
+        }
+
+        CandidateSet canonical = new CandidateSet();
+        for (Map.Entry<List<Integer>, Domain> entry : generatedDomains.entrySet()) {
+            CanonicalPathProfileBuilder.replay(
+                    graph,
+                    context.anchors(),
+                    entry.getKey(),
+                    source,
+                    destination,
+                    subproblemDomain,
+                    budget,
+                    -1,
+                    false)
+                    .ifPresent(candidate -> {
+                        if (candidate.explicitAnchorCount() > remainingAnchors) {
+                            throw new IllegalStateException(
+                                    "canonical path exceeds explicit-anchor budget: "
+                                            + candidate.stablePathId());
+                        }
+                        Domain retained = candidate.domain().intersection(entry.getValue());
+                        if (!retained.isEmpty()) {
+                            canonical.add(candidate.domain().equals(retained)
+                                    ? candidate
+                                    : candidate.restrict(retained));
+                        }
+                    });
+        }
+        return canonical;
+    }
+
+    private static Domain leftAnchorDomain(CandidateProfile left, Anchor anchor, Domain rootDomain) {
+        Domain base = rootDomain.intersection(left.domain());
+        if (base.isEmpty()) {
             return Domain.empty();
         }
-        return image;
+        return left.arrivalProfile().preimage(anchor.validDomain(), base);
     }
 
-    private CandidateSet connectorFrontier(int source, int destination, Domain domain, double budget) {
-        CandidateSet set = new CandidateSet();
-        for (Path path : enumerateLooplessPaths(source, destination)) {
-            Domain feasible = feasiblePathDomain(path, domain, budget);
-            if (feasible.isEmpty()) {
-                continue;
-            }
-            set.add(candidateForPath(path, feasible));
+    /** Computes {@code ImageDomain(A_a composed A_C_L, D_L^a)}. */
+    static Domain imageDomainAfterAnchor(
+            CandidateProfile left,
+            Anchor anchor,
+            Domain leftAnchorDomain) {
+        return imageDomainAfterAnchor(left, anchor.edge(), anchor.validDomain(), leftAnchorDomain);
+    }
+
+    /** Backward-compatible image-domain helper. */
+    static Domain imageDomainAfterAnchor(
+            CandidateProfile left,
+            Edge anchor,
+            Domain leftAnchorDomain) {
+        return imageDomainAfterAnchor(
+                left,
+                anchor,
+                PaceProfiles.travelFunctionDomain(anchor),
+                leftAnchorDomain);
+    }
+
+    private static Domain imageDomainAfterAnchor(
+            CandidateProfile left,
+            Edge anchor,
+            Domain anchorValidDomain,
+            Domain leftAnchorDomain) {
+        if (leftAnchorDomain.isEmpty()) {
+            return Domain.empty();
         }
-        return set;
+        TimeProfile leftArrival = left.arrivalProfile().restrict(leftAnchorDomain);
+        TimeProfile anchorArrival = PaceProfiles.edgeArrivalProfile(
+                anchor,
+                anchorValidDomain,
+                "pace-anchor-image");
+        TimeProfile afterAnchor = leftArrival.compose(
+                anchorArrival,
+                "pace-anchor-image:left=" + left.stablePathId() + ":a=" + anchor.arcId());
+        return afterAnchor.imageDomain(leftAnchorDomain);
     }
 
-    private List<Path> enumerateLooplessPaths(int source, int destination) {
-        List<Path> paths = new ArrayList<>();
-        if (source == destination) {
-            paths.add(Path.empty());
-            return paths;
-        }
-        dfs(source, destination, new HashSet<>(), new ArrayList<>(), paths);
-        return paths;
+    private record RunContext(
+            PaceOptions options,
+            Domain queryHorizon,
+            AnchorIndex anchors,
+            QueryLowerBounds lowerBounds,
+            ConnectorProfiles connectors,
+            RunCounters counters,
+            String graphVersion) {
     }
 
-    private void dfs(int node, int destination, Set<Integer> visited, List<Integer> arcs, List<Path> paths) {
-        if (node == destination) {
-            paths.add(new Path(arcs));
-            return;
-        }
-        visited.add(node);
-        for (Edge edge : graph.outgoingEdges(node)) {
-            if (visited.contains(edge.target())) {
-                continue;
-            }
-            arcs.add(edge.arcId());
-            dfs(edge.target(), destination, visited, arcs, paths);
-            arcs.remove(arcs.size() - 1);
-        }
-        visited.remove(node);
-    }
-
-    private Domain feasiblePathDomain(Path path, Domain domain, double budget) {
-        TimeProfile arrival = pathArrivalProfile(path, domain);
-        return arrival.domainWhereTravelTimeAtMost(domain, budget);
-    }
-
-    private CandidateProfile candidateForPath(Path path, Domain domain) {
-        TimeProfile arrival = pathArrivalProfile(path, domain);
-        ScoreProfile score = pathScoreProfile(path, domain, arrival);
-        Domain feasible = arrival.domainWhereTravelTimeAtMost(domain, Double.POSITIVE_INFINITY).intersection(domain);
-        return new CandidateProfile(
-                feasible,
-                arrival.restrict(feasible),
-                score.restrict(feasible),
-                () -> path.arcIds(),
-                0,
-                -1,
-                false);
-    }
-
-    private TimeProfile pathArrivalProfile(Path path, Domain domain) {
-        TimeProfile arrival = TimeProfile.identity(domain);
-        for (int arcId : path.arcIds()) {
-            Edge edge = graph.edges().get(arcId);
-            arrival = arrival.compose(edgeArrivalProfile(edge), "connector-arrival:" + path.arcIds() + ":" + arcId + ":" + domain.intervals());
-        }
-        return arrival;
-    }
-
-    private ScoreProfile pathScoreProfile(Path path, Domain domain, TimeProfile arrival) {
-        ScoreProfile score = ScoreProfile.constant(domain, 0);
-        TimeProfile prefixArrival = TimeProfile.identity(domain);
-        for (int arcId : path.arcIds()) {
-            Edge edge = graph.edges().get(arcId);
-            ScoreProfile edgeScore = ScoreProfile.compose(prefixArrival, edge.scoreFunction(), domain, "connector-edge-score:" + path.arcIds() + ":" + arcId + ":" + domain.intervals());
-            score = score.add(edgeScore, domain, "connector-score:" + path.arcIds() + ":" + arcId + ":" + domain.intervals());
-            prefixArrival = prefixArrival.compose(edgeArrivalProfile(edge), "connector-prefix-arrival:" + path.arcIds() + ":" + arcId + ":" + domain.intervals());
-        }
-        return score;
-    }
-
-    private static TimeProfile edgeArrivalProfile(Edge edge) {
-        Domain edgeDomain = Domain.closed(edge.travelTimeFunction().firstMinute(), edge.travelTimeFunction().lastMinute());
-        List<TimeProfile.Breakpoint> breakpoints = new ArrayList<>();
-        for (edu.ipcmax.core.function.PiecewiseLinearFn.Breakpoint breakpoint : edge.travelTimeFunction().breakpoints()) {
-            breakpoints.add(new TimeProfile.Breakpoint(breakpoint.minute(), edge.travelTimeFunction().arrivalTimeAt(breakpoint.minute())));
-        }
-        return TimeProfile.piecewise(edgeDomain, breakpoints, "edge-arrival:" + edge.arcId());
-    }
-
-    private Domain leftAnchorDomain(CandidateProfile left, Edge anchor, Domain rootDomain) {
-        Domain base = rootDomain.intersection(left.domain());
-        return left.arrivalProfile().preimage(anchor.scoreFunction().positiveDomain(), base);
-    }
-
-    private CandidateSet compressExactDuplicates(CandidateSet frontier) {
-        Map<String, CandidateProfile> unique = new LinkedHashMap<>();
-        for (CandidateProfile candidate : frontier.candidates()) {
-            String key = candidate.pathPointer().arcIds()
-                    + "|" + candidate.domain().intervals()
-                    + "|" + candidate.arrivalProfile().fingerprint()
-                    + "|" + candidate.scoreProfile().fingerprint();
-            unique.putIfAbsent(key, candidate);
-        }
-        CandidateSet compressed = new CandidateSet();
-        unique.values().forEach(compressed::add);
-        return compressed;
+    private static final class RunCounters {
+        private final AtomicLong recursionCalls = new AtomicLong();
+        private final AtomicLong anchorsConsidered = new AtomicLong();
+        private final AtomicLong anchorsRetained = new AtomicLong();
+        private final AtomicLong connectorCandidates = new AtomicLong();
+        private final AtomicLong stitchedCandidates = new AtomicLong();
     }
 }

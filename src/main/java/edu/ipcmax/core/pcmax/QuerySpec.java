@@ -16,14 +16,15 @@ public record QuerySpec(
      * Creates a validated query.
      */
     public QuerySpec {
+        maxTravelTime = Domain.canonicalTime(maxTravelTime);
         if (source <= 0 || destination <= 0) {
             throw new IllegalArgumentException("source and destination must be positive node ids");
         }
         if (departureEnd < departureStart) {
             throw new IllegalArgumentException("departure interval must satisfy start <= end");
         }
-        if (maxTravelTime < 0) {
-            throw new IllegalArgumentException("max travel time cannot be negative");
+        if (!Double.isFinite(maxTravelTime) || maxTravelTime < 0) {
+            throw new IllegalArgumentException("max travel time must be finite and non-negative");
         }
         if (granularityMinutes <= 0) {
             throw new IllegalArgumentException("granularity must be positive");

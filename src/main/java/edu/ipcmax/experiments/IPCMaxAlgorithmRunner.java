@@ -7,21 +7,26 @@ import edu.ipcmax.core.pcmax.IPCMaxResult;
 import edu.ipcmax.core.pcmax.QuerySpec;
 
 /**
- * Experiment adapter for I-PC-Max exact mode.
+ * Legacy single-point experiment adapter backed by the PACE implementation.
+ *
+ * @deprecated use {@link PaceAlgorithmRunner} for full profile results
  */
+@Deprecated
 public final class IPCMaxAlgorithmRunner implements AlgorithmRunner {
     private final IPCMax algorithm;
+    private final String label;
 
     /**
      * Creates the adapter.
      */
     public IPCMaxAlgorithmRunner(TDGraph graph, IPCMaxOptions options) {
         this.algorithm = new IPCMax(graph, options);
+        this.label = options.exactMode() ? "pace-x-compat" : "pace-b-compat";
     }
 
     @Override
     public String label() {
-        return "i-pc-max-exact";
+        return label;
     }
 
     @Override

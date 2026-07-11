@@ -48,7 +48,7 @@ class EnvelopeContinuousTest {
         EnvelopeProfile profile = EnvelopeExtractor.extract(frontier, root);
 
         assertEquals(2, profile.segments().size());
-        assertEquals(new Domain.Interval(0, 3.75), profile.segments().get(0).interval());
+        assertEquals(new Domain.Interval(0, 3.75, true, false), profile.segments().get(0).interval());
         assertEquals(List.of(0), profile.segments().get(0).path().arcIds());
         assertEquals(new Domain.Interval(3.75, 10), profile.segments().get(1).interval());
         assertEquals(List.of(1), profile.segments().get(1).path().arcIds());
@@ -87,9 +87,9 @@ class EnvelopeContinuousTest {
         EnvelopeProfile profile = EnvelopeExtractor.extract(frontier, root);
 
         assertEquals(2, profile.segments().size());
-        assertEquals(new Domain.Interval(0, 5.5), profile.segments().get(0).interval());
+        assertEquals(new Domain.Interval(0, 5.5, true, true), profile.segments().get(0).interval());
         assertEquals(List.of(0), profile.segments().get(0).path().arcIds());
-        assertEquals(new Domain.Interval(5.5, 10), profile.segments().get(1).interval());
+        assertEquals(new Domain.Interval(5.5, 10, false, true), profile.segments().get(1).interval());
         assertEquals(List.of(1), profile.segments().get(1).path().arcIds());
     }
 }

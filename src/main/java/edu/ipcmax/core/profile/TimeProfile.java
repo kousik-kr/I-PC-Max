@@ -9,7 +9,7 @@ import java.util.function.DoubleUnaryOperator;
 import edu.ipcmax.core.function.Domain;
 
 /**
- * Time-valued profile over a continuous root departure domain.
+ * Continuous piecewise-linear time-valued profile over an exact root domain.
  */
 public final class TimeProfile {
     /**
@@ -20,79 +20,69 @@ public final class TimeProfile {
             if (!Double.isFinite(minute) || !Double.isFinite(value)) {
                 throw new IllegalArgumentException("time profile breakpoints must be finite");
             }
+            minute = Domain.canonicalTime(minute);
+            value = Domain.canonicalTime(value);
+        }
+    }
+
+    private record LinearSegment(
+            double start,
+            double end,
+            double startValue,
+            double endValue,
+            boolean startInclusive,
+            boolean endInclusive) {
+        private boolean isPoint() {
+            return start == end;
+        }
+
+        private Domain.Interval rootInterval() {
+            return new Domain.Interval(start, end, startInclusive, endInclusive);
         }
     }
 
     private final Domain domain;
-    private final DoubleUnaryOperator evaluator;
     private final String fingerprint;
     private final List<Breakpoint> breakpoints;
 
     /**
-     * Creates a profile with a stable fingerprint.
+     * Creates a profile that is affine on each connected domain component.
+     *
+     * <p>This compatibility constructor materializes exact endpoint metadata;
+     * callers with internal changes of slope must use {@link #piecewise}.</p>
      */
     public TimeProfile(Domain domain, DoubleUnaryOperator evaluator, String fingerprint) {
-        this(domain, evaluator, fingerprint, List.of());
+        this(domain, inferAffineBreakpoints(domain, evaluator), fingerprint);
     }
 
-    private TimeProfile(Domain domain, DoubleUnaryOperator evaluator, String fingerprint, List<Breakpoint> breakpoints) {
+    private TimeProfile(Domain domain, List<Breakpoint> breakpoints, String fingerprint) {
         if (domain == null || domain.isEmpty()) {
             throw new IllegalArgumentException("time profile domain cannot be null or empty");
         }
         this.domain = domain;
-        this.evaluator = Objects.requireNonNull(evaluator, "evaluator");
         this.fingerprint = Objects.requireNonNull(fingerprint, "fingerprint");
-        this.breakpoints = List.copyOf(breakpoints);
+        this.breakpoints = List.copyOf(validateBreakpoints(domain, breakpoints));
     }
 
     /**
      * Identity departure profile {@code psi(t)=t}.
      */
     public static TimeProfile identity(Domain domain) {
-        if (isSingletonDomain(domain)) {
-            double point = domain.intervals().get(0).start();
-            return new TimeProfile(domain, ignored -> point, "identity:" + domain.intervals());
-        }
-        return piecewise(domain, domain.breakpoints().stream()
-                .map(point -> new Breakpoint(point, point))
-                .toList(),
-                "identity:" + domain.intervals());
+        return new TimeProfile(domain, time -> time, "identity:" + domain.intervals());
     }
 
     /**
      * Constant time profile.
      */
     public static TimeProfile constant(Domain domain, double value) {
-        if (isSingletonDomain(domain)) {
-            return new TimeProfile(domain, ignored -> value, "constant:" + value + ":" + domain.intervals());
-        }
-        List<Breakpoint> points = new ArrayList<>();
-        for (Domain.Interval interval : domain.intervals()) {
-            points.add(new Breakpoint(interval.start(), value));
-            points.add(new Breakpoint(interval.end(), value));
-        }
-        return piecewise(domain, points, "constant:" + value + ":" + domain.intervals());
+        return new TimeProfile(domain, ignored -> value, "constant:" + value + ":" + domain.intervals());
     }
 
     /**
      * Builds an exact piecewise-linear profile.
      */
     public static TimeProfile piecewise(Domain domain, List<Breakpoint> breakpoints, String fingerprint) {
-        if (breakpoints.size() == 1 && isSingletonDomain(domain)) {
-            Breakpoint only = breakpoints.get(0);
-            return new TimeProfile(domain, ignored -> only.value(), fingerprint, breakpoints);
-        }
-        if (breakpoints.size() < 2) {
-            throw new IllegalArgumentException("piecewise time profile requires at least two breakpoints");
-        }
-        List<Breakpoint> sorted = new ArrayList<>(breakpoints);
-        sorted.sort(Comparator.comparingDouble(Breakpoint::minute));
-        for (int i = 1; i < sorted.size(); i++) {
-            if (sorted.get(i).minute() <= sorted.get(i - 1).minute()) {
-                throw new IllegalArgumentException("time profile breakpoints must be strictly increasing");
-            }
-        }
-        return new TimeProfile(domain, minute -> evaluatePiecewise(minute, sorted), fingerprint, sorted);
+        return new TimeProfile(domain, breakpoints, fingerprint);
     }
 
     /**
@@ -103,16 +93,29 @@ public final class TimeProfile {
     }
 
     /**
-     * Evaluates the profile at a start time in its domain.
+     * Evaluates the profile at a contained start time.
      */
     public double valueAt(double rootDepartureTime) {
+        rootDepartureTime = Domain.canonicalTime(rootDepartureTime);
         if (!domain.contains(rootDepartureTime)) {
             throw new IllegalArgumentException("time is outside profile domain: " + rootDepartureTime);
         }
-        if (!breakpoints.isEmpty()) {
-            return evaluatePiecewise(rootDepartureTime, breakpoints);
+        return Domain.canonicalTime(evaluateUnchecked(rootDepartureTime));
+    }
+
+    /**
+     * Evaluates the continuous profile on the closure of its domain.
+     *
+     * <p>This is intended for exact root and integral calculations on
+     * half-open cells. It does not make an excluded endpoint a valid query
+     * time.</p>
+     */
+    public double valueAtClosure(double rootDepartureTime) {
+        rootDepartureTime = Domain.canonicalTime(rootDepartureTime);
+        if (!inDomainClosure(rootDepartureTime)) {
+            throw new IllegalArgumentException("time is outside profile-domain closure: " + rootDepartureTime);
         }
-        return evaluator.applyAsDouble(rootDepartureTime);
+        return Domain.canonicalTime(evaluateUnchecked(rootDepartureTime));
     }
 
     /**
@@ -123,17 +126,17 @@ public final class TimeProfile {
     }
 
     /**
-     * Returns the exact breakpoints when this profile is piecewise-defined.
+     * Returns exact breakpoints.
      */
     public List<Breakpoint> breakpoints() {
         return breakpoints;
     }
 
     /**
-     * True when exact piecewise breakpoints are available.
+     * Exact piecewise metadata is always available.
      */
     public boolean isPiecewise() {
-        return !breakpoints.isEmpty();
+        return true;
     }
 
     /**
@@ -144,293 +147,407 @@ public final class TimeProfile {
     }
 
     /**
-     * Restricts this profile to a subdomain.
+     * Restricts this profile to a subdomain without sampling away any slope
+     * changes.
      */
     public TimeProfile restrict(Domain subdomain) {
         Domain restricted = domain.intersection(subdomain);
         if (restricted.isEmpty()) {
             throw new IllegalArgumentException("restricted time profile domain is empty");
         }
-        if (breakpoints.isEmpty()) {
-            return new TimeProfile(restricted, evaluator, fingerprint + "|restrict:" + restricted.intervals());
-        }
-        List<Breakpoint> restrictedBreakpoints = new ArrayList<>();
-        for (Domain.Interval interval : restricted.intervals()) {
-            addBreakpoint(restrictedBreakpoints, new Breakpoint(interval.start(), valueAt(interval.start())));
-            for (Breakpoint breakpoint : breakpoints) {
-                if (breakpoint.minute() > interval.start() && breakpoint.minute() < interval.end()) {
-                    addBreakpoint(restrictedBreakpoints, breakpoint);
-                }
-            }
-            addBreakpoint(restrictedBreakpoints, new Breakpoint(interval.end(), valueAt(interval.end())));
-        }
-        return new TimeProfile(restricted, evaluator, fingerprint + "|restrict:" + restricted.intervals(), restrictedBreakpoints);
+        List<Breakpoint> points = breakpointsOver(restricted);
+        return new TimeProfile(restricted, points, fingerprint + "|restrict:" + restricted.intervals());
     }
 
     /**
-     * Returns the image domain over the supplied root domain.
+     * Returns the exact image domain over the supplied root domain.
      */
     public Domain imageDomain(Domain rootDomain) {
         Domain restricted = domain.intersection(rootDomain);
         if (restricted.isEmpty()) {
             return Domain.empty();
         }
-        if (!breakpoints.isEmpty() || isSingletonDomain(restricted)) {
-            List<Domain.Interval> images = new ArrayList<>();
-            for (Domain.Interval interval : restricted.intervals()) {
-                double startValue = valueAt(interval.start());
-                double endValue = valueAt(interval.end());
-                images.add(new Domain.Interval(Math.min(startValue, endValue), Math.max(startValue, endValue)));
+        Domain image = Domain.empty();
+        for (LinearSegment segment : segments(restricted)) {
+            if (segment.isPoint() || approximatelyEqual(segment.startValue(), segment.endValue())) {
+                image = image.union(Domain.closed(segment.startValue(), segment.startValue()));
+                continue;
             }
-            return Domain.of(images.toArray(Domain.Interval[]::new));
+            boolean increasing = segment.endValue() > segment.startValue();
+            image = image.union(Domain.of(new Domain.Interval(
+                    Math.min(segment.startValue(), segment.endValue()),
+                    Math.max(segment.startValue(), segment.endValue()),
+                    increasing ? segment.startInclusive() : segment.endInclusive(),
+                    increasing ? segment.endInclusive() : segment.startInclusive())));
         }
-        List<Domain.Interval> images = new ArrayList<>();
-        for (Domain.Interval interval : restricted.intervals()) {
-            double startValue = valueAt(interval.start());
-            double endValue = valueAt(interval.end());
-            images.add(new Domain.Interval(Math.min(startValue, endValue), Math.max(startValue, endValue)));
-        }
-        return Domain.of(images.toArray(Domain.Interval[]::new));
+        return image;
     }
 
     /**
-     * Returns the root domain where this profile's value lies inside {@code target}.
+     * Returns the exact root domain where this profile's value lies inside
+     * {@code target}. Flat segments yield interval preimages.
      */
     public Domain preimage(Domain target, Domain rootDomain) {
+        Objects.requireNonNull(target, "target");
         Domain restricted = domain.intersection(rootDomain);
-        if (restricted.isEmpty()) {
+        if (restricted.isEmpty() || target.isEmpty()) {
             return Domain.empty();
         }
-        if (breakpoints.isEmpty() && isSingletonDomain(restricted)) {
-            Domain.Interval only = restricted.intervals().get(0);
-            double value = valueAt(only.start());
-            return target.contains(value) ? restricted : Domain.empty();
+
+        Domain result = Domain.empty();
+        for (LinearSegment segment : segments(restricted)) {
+            result = result.union(preimageOfSegment(segment, target));
         }
-        List<Domain.Interval> result = new ArrayList<>();
-        for (Domain.Interval interval : restricted.intervals()) {
-            result.addAll(preimageInInterval(interval, target));
-        }
-        return result.isEmpty() ? Domain.empty() : Domain.of(result.toArray(Domain.Interval[]::new));
+        return result;
     }
 
     /**
-     * Returns the root domain where {@code this(t) - t <= budget}.
+     * Returns the exact root domain where {@code this(t) - t <= budget}.
      */
     public Domain domainWhereTravelTimeAtMost(Domain rootDomain, double budget) {
+        if (Double.isNaN(budget)) {
+            throw new IllegalArgumentException("budget cannot be NaN");
+        }
         Domain restricted = domain.intersection(rootDomain);
         if (restricted.isEmpty()) {
             return Domain.empty();
         }
-        if (breakpoints.isEmpty() && isSingletonDomain(restricted)) {
-            Domain.Interval only = restricted.intervals().get(0);
-            return valueAt(only.start()) - only.start() <= budget + 1e-9 ? restricted : Domain.empty();
+        if (budget == Double.POSITIVE_INFINITY) {
+            return restricted;
         }
-        List<Domain.Interval> result = new ArrayList<>();
-        for (Domain.Interval interval : restricted.intervals()) {
-            List<Breakpoint> local = new ArrayList<>();
-            local.add(new Breakpoint(interval.start(), valueAt(interval.start()) - interval.start()));
-            for (Breakpoint breakpoint : breakpoints) {
-                if (breakpoint.minute() > interval.start() && breakpoint.minute() < interval.end()) {
-                    local.add(new Breakpoint(breakpoint.minute(), breakpoint.value() - breakpoint.minute()));
-                }
-            }
-            local.add(new Breakpoint(interval.end(), valueAt(interval.end()) - interval.end()));
-            result.addAll(preimageAtMostLinear(local, budget));
+        if (budget == Double.NEGATIVE_INFINITY) {
+            return Domain.empty();
         }
-        return result.isEmpty() ? Domain.empty() : Domain.of(result.toArray(Domain.Interval[]::new));
+
+        Domain result = Domain.empty();
+        for (LinearSegment segment : segments(restricted)) {
+            double leftTravel = segment.startValue() - segment.start();
+            double rightTravel = segment.endValue() - segment.end();
+            result = result.union(domainAtMost(segment, leftTravel, rightTravel, budget));
+        }
+        return result;
     }
 
     /**
-     * Composes {@code outer(this(t))} for exact piecewise-linear profiles.
+     * Composes {@code outer(this(t))} exactly.
      */
     public TimeProfile compose(TimeProfile outer, String composedFingerprint) {
-        if (breakpoints.isEmpty() || outer.breakpoints.isEmpty()) {
-            if (!isSingletonDomain(domain)) {
-                throw new UnsupportedOperationException("exact piecewise composition requires breakpoint metadata on both profiles");
-            }
-            return new TimeProfile(domain, t -> outer.valueAt(valueAt(t)), composedFingerprint);
-        }
-        if ((breakpoints.isEmpty() || outer.breakpoints.isEmpty()) && !(isSingletonDomain(domain) && isSingletonDomain(outer.domain))) {
-            throw new UnsupportedOperationException("exact piecewise composition requires breakpoint metadata on both profiles");
-        }
+        Objects.requireNonNull(outer, "outer");
         Domain composedDomain = preimage(outer.domain, domain);
         if (composedDomain.isEmpty()) {
             throw new IllegalArgumentException("composition domain is empty");
         }
-        List<Breakpoint> composed = composeBreakpoints(outer, composedDomain);
-        return TimeProfile.piecewise(composedDomain, composed, composedFingerprint);
-    }
 
-    private List<Domain.Interval> preimageInInterval(Domain.Interval interval, Domain target) {
-        List<Domain.Interval> result = new ArrayList<>();
-        List<Breakpoint> segmentBreakpoints = sliceBreakpoints(interval);
-        for (Domain.Interval targetInterval : target.intervals()) {
-            result.addAll(preimageLinear(segmentBreakpoints, targetInterval, interval));
-        }
-        return result;
-    }
-
-    private List<Breakpoint> sliceBreakpoints(Domain.Interval interval) {
-        List<Breakpoint> local = new ArrayList<>();
-        local.add(new Breakpoint(interval.start(), valueAt(interval.start())));
-        for (Breakpoint breakpoint : breakpoints) {
-            if (breakpoint.minute() > interval.start() && breakpoint.minute() < interval.end()) {
-                local.add(breakpoint);
+        List<Breakpoint> composed = new ArrayList<>();
+        for (Domain.Interval component : composedDomain.intervals()) {
+            List<Double> cuts = new ArrayList<>();
+            cuts.add(component.start());
+            for (Breakpoint innerBreakpoint : breakpoints) {
+                if (innerBreakpoint.minute() > component.start()
+                        && innerBreakpoint.minute() < component.end()) {
+                    addCut(cuts, innerBreakpoint.minute());
+                }
+            }
+            for (Breakpoint outerBreakpoint : outer.breakpoints) {
+                Domain roots = preimage(
+                        Domain.closed(outerBreakpoint.minute(), outerBreakpoint.minute()),
+                        Domain.of(component));
+                for (double root : roots.breakpoints()) {
+                    if (root > component.start() && root < component.end()) {
+                        addCut(cuts, root);
+                    }
+                }
+            }
+            cuts.add(component.end());
+            cuts.sort(Double::compare);
+            for (double cut : cuts) {
+                double innerValue = evaluateUnchecked(cut);
+                addBreakpoint(composed, new Breakpoint(cut, outer.evaluateUnchecked(innerValue)));
             }
         }
-        local.add(new Breakpoint(interval.end(), valueAt(interval.end())));
-        return local;
+        return new TimeProfile(composedDomain, composed, composedFingerprint);
     }
 
-    private List<Domain.Interval> preimageAtMostLinear(List<Breakpoint> localBreakpoints, double target) {
-        List<Domain.Interval> result = new ArrayList<>();
-        for (int i = 0; i < localBreakpoints.size() - 1; i++) {
-            Breakpoint left = localBreakpoints.get(i);
-            Breakpoint right = localBreakpoints.get(i + 1);
-            double x0 = left.minute();
-            double x1 = right.minute();
-            double y0 = left.value();
-            double y1 = right.value();
-            boolean leftFeasible = y0 <= target + 1e-9;
-            boolean rightFeasible = y1 <= target + 1e-9;
+    private Domain preimageOfSegment(LinearSegment segment, Domain target) {
+        if (segment.isPoint()) {
+            return target.contains(segment.startValue())
+                    ? Domain.closed(segment.start(), segment.end())
+                    : Domain.empty();
+        }
+        if (approximatelyEqual(segment.startValue(), segment.endValue())) {
+            return target.contains(segment.startValue())
+                    ? Domain.of(segment.rootInterval())
+                    : Domain.empty();
+        }
 
-            if (leftFeasible && rightFeasible) {
-                result.add(new Domain.Interval(x0, x1));
-                continue;
-            }
-            if (!leftFeasible && !rightFeasible) {
-                continue;
-            }
-            if (Math.abs(y1 - y0) < 1e-9) {
-                continue;
-            }
-
-            double slope = (y1 - y0) / (x1 - x0);
-            double crossing = x0 + (target - y0) / slope;
-            crossing = Math.max(x0, Math.min(x1, crossing));
-            if (leftFeasible) {
-                result.add(new Domain.Interval(x0, crossing));
+        boolean increasing = segment.endValue() > segment.startValue();
+        Domain image = Domain.of(new Domain.Interval(
+                Math.min(segment.startValue(), segment.endValue()),
+                Math.max(segment.startValue(), segment.endValue()),
+                increasing ? segment.startInclusive() : segment.endInclusive(),
+                increasing ? segment.endInclusive() : segment.startInclusive()));
+        Domain overlap = image.intersection(target);
+        Domain roots = Domain.empty();
+        for (Domain.Interval valueInterval : overlap.intervals()) {
+            double rootAtStart = inverse(segment, valueInterval.start());
+            double rootAtEnd = inverse(segment, valueInterval.end());
+            if (increasing) {
+                roots = roots.union(Domain.of(new Domain.Interval(
+                        rootAtStart,
+                        rootAtEnd,
+                        valueInterval.startInclusive(),
+                        valueInterval.endInclusive())));
             } else {
-                result.add(new Domain.Interval(crossing, x1));
+                roots = roots.union(Domain.of(new Domain.Interval(
+                        rootAtEnd,
+                        rootAtStart,
+                        valueInterval.endInclusive(),
+                        valueInterval.startInclusive())));
+            }
+        }
+        return roots;
+    }
+
+    private static Domain domainAtMost(
+            LinearSegment segment,
+            double leftValue,
+            double rightValue,
+            double target) {
+        boolean leftFeasible = lessThanOrEqual(leftValue, target);
+        boolean rightFeasible = lessThanOrEqual(rightValue, target);
+
+        if (segment.isPoint()) {
+            return leftFeasible ? Domain.closed(segment.start(), segment.end()) : Domain.empty();
+        }
+        if (leftFeasible && rightFeasible) {
+            return Domain.of(segment.rootInterval());
+        }
+        if (!leftFeasible && !rightFeasible) {
+            return Domain.empty();
+        }
+        if (approximatelyEqual(leftValue, rightValue)) {
+            return leftFeasible ? Domain.of(segment.rootInterval()) : Domain.empty();
+        }
+
+        double crossing = segment.start()
+                + (target - leftValue) * (segment.end() - segment.start()) / (rightValue - leftValue);
+        crossing = clamp(crossing, segment.start(), segment.end());
+        if (leftFeasible) {
+            return intervalOrEmpty(
+                    segment.start(), crossing, segment.startInclusive(), true);
+        }
+        return intervalOrEmpty(crossing, segment.end(), true, segment.endInclusive());
+    }
+
+    private List<LinearSegment> segments(Domain restricted) {
+        List<LinearSegment> result = new ArrayList<>();
+        for (Domain.Interval component : restricted.intervals()) {
+            if (component.start() == component.end()) {
+                double value = evaluateUnchecked(component.start());
+                result.add(new LinearSegment(
+                        component.start(), component.end(), value, value, true, true));
+                continue;
+            }
+
+            List<Double> cuts = new ArrayList<>();
+            cuts.add(component.start());
+            for (Breakpoint breakpoint : breakpoints) {
+                if (breakpoint.minute() > component.start()
+                        && breakpoint.minute() < component.end()) {
+                    addCut(cuts, breakpoint.minute());
+                }
+            }
+            cuts.add(component.end());
+            cuts.sort(Double::compare);
+            for (int i = 1; i < cuts.size(); i++) {
+                double start = cuts.get(i - 1);
+                double end = cuts.get(i);
+                result.add(new LinearSegment(
+                        start,
+                        end,
+                        evaluateUnchecked(start),
+                        evaluateUnchecked(end),
+                        i == 1 ? component.startInclusive() : true,
+                        i == cuts.size() - 1 ? component.endInclusive() : false));
             }
         }
         return result;
     }
 
-    private List<Domain.Interval> preimageLinear(List<Breakpoint> localBreakpoints, Domain.Interval target, Domain.Interval interval) {
-        List<Domain.Interval> result = new ArrayList<>();
-        for (int i = 0; i < localBreakpoints.size() - 1; i++) {
-            Breakpoint left = localBreakpoints.get(i);
-            Breakpoint right = localBreakpoints.get(i + 1);
-            double x0 = left.minute();
-            double x1 = right.minute();
-            double y0 = left.value();
-            double y1 = right.value();
-            double segmentMin = Math.min(y0, y1);
-            double segmentMax = Math.max(y0, y1);
-            double targetMin = target.start();
-            double targetMax = target.end();
-            if (segmentMax < targetMin - 1e-9 || segmentMin > targetMax + 1e-9) {
-                continue;
-            }
-            if (Math.abs(y1 - y0) < 1e-9) {
-                result.add(new Domain.Interval(x0, x1));
-                continue;
-            }
-            double slope = (y1 - y0) / (x1 - x0);
-            double enter = x0 + (targetMin - y0) / slope;
-            double exit = x0 + (targetMax - y0) / slope;
-            double start = Math.max(x0, Math.min(enter, exit));
-            double end = Math.min(x1, Math.max(enter, exit));
-            if (start <= end + 1e-9) {
-                result.add(new Domain.Interval(start, end));
-            }
-        }
-        return result;
-    }
-
-    private List<Breakpoint> composeBreakpoints(TimeProfile outer, Domain composedDomain) {
-        List<Double> cutPoints = new ArrayList<>();
-        for (Breakpoint breakpoint : breakpoints) {
-            cutPoints.add(breakpoint.minute());
-        }
-        for (Breakpoint outerBreakpoint : outer.breakpoints) {
-            cutPoints.addAll(preimagePoints(outerBreakpoint.minute(), composedDomain));
-        }
-        Domain refined = composedDomain.splitAt(cutPoints);
+    private List<Breakpoint> breakpointsOver(Domain restricted) {
         List<Breakpoint> result = new ArrayList<>();
-        for (Domain.Interval interval : refined.intervals()) {
-            double start = interval.start();
-            double end = interval.end();
-            addBreakpoint(result, new Breakpoint(start, outer.valueAt(valueAt(start))));
-            addBreakpoint(result, new Breakpoint(end, outer.valueAt(valueAt(end))));
+        for (Domain.Interval component : restricted.intervals()) {
+            addBreakpoint(result, new Breakpoint(component.start(), evaluateUnchecked(component.start())));
+            for (Breakpoint breakpoint : breakpoints) {
+                if (breakpoint.minute() > component.start()
+                        && breakpoint.minute() < component.end()) {
+                    addBreakpoint(result, breakpoint);
+                }
+            }
+            addBreakpoint(result, new Breakpoint(component.end(), evaluateUnchecked(component.end())));
         }
         return result;
     }
 
-    private List<Double> preimagePoints(double target, Domain rootDomain) {
-        List<Double> points = new ArrayList<>();
-        for (Domain.Interval interval : rootDomain.intervals()) {
-            List<Breakpoint> local = sliceBreakpoints(interval);
-            for (int i = 0; i < local.size() - 1; i++) {
-                Breakpoint left = local.get(i);
-                Breakpoint right = local.get(i + 1);
-                double min = Math.min(left.value(), right.value());
-                double max = Math.max(left.value(), right.value());
-                if (target < min - 1e-9 || target > max + 1e-9) {
-                    continue;
-                }
-                if (left.value() == right.value()) {
-                    points.add(left.minute());
-                    points.add(right.minute());
-                    continue;
-                }
-                double slope = (right.value() - left.value()) / (right.minute() - left.minute());
-                double x = left.minute() + (target - left.value()) / slope;
-                if (x >= interval.start() - 1e-9 && x <= interval.end() + 1e-9) {
-                    points.add(x);
-                }
+    private double evaluateUnchecked(double minute) {
+        minute = Domain.canonicalTime(minute);
+        if (breakpoints.size() == 1) {
+            if (!approximatelyEqual(minute, breakpoints.get(0).minute())) {
+                throw new IllegalArgumentException("time is outside piecewise profile closure: " + minute);
             }
+            return breakpoints.get(0).value();
         }
-        return points;
-    }
-
-    private static double evaluatePiecewise(double minute, List<Breakpoint> breakpoints) {
-        if (minute == breakpoints.get(breakpoints.size() - 1).minute()) {
+        if (minute < breakpoints.get(0).minute()
+                || minute > breakpoints.get(breakpoints.size() - 1).minute()) {
+            throw new IllegalArgumentException("time is outside piecewise profile closure: " + minute);
+        }
+        if (approximatelyEqual(minute, breakpoints.get(0).minute())) {
+            return breakpoints.get(0).value();
+        }
+        if (approximatelyEqual(minute, breakpoints.get(breakpoints.size() - 1).minute())) {
             return breakpoints.get(breakpoints.size() - 1).value();
         }
+
         int low = 0;
         int high = breakpoints.size() - 1;
         while (low <= high) {
             int mid = (low + high) >>> 1;
             Breakpoint breakpoint = breakpoints.get(mid);
-            if (minute < breakpoint.minute()) {
-                high = mid - 1;
-            } else if (minute > breakpoint.minute()) {
-                low = mid + 1;
-            } else {
+            if (approximatelyEqual(minute, breakpoint.minute())) {
                 return breakpoint.value();
             }
+            if (minute < breakpoint.minute()) {
+                high = mid - 1;
+            } else {
+                low = mid + 1;
+            }
         }
-        int index = Math.max(1, low) - 1;
-        Breakpoint left = breakpoints.get(index);
-        Breakpoint right = breakpoints.get(index + 1);
+        int rightIndex = low;
+        Breakpoint left = breakpoints.get(rightIndex - 1);
+        Breakpoint right = breakpoints.get(rightIndex);
         double alpha = (minute - left.minute()) / (right.minute() - left.minute());
-        return left.value() + alpha * (right.value() - left.value());
+        return Domain.canonicalTime(left.value() + alpha * (right.value() - left.value()));
+    }
+
+    private boolean inDomainClosure(double time) {
+        time = Domain.canonicalTime(time);
+        for (Domain.Interval component : domain.intervals()) {
+            if (time >= component.start() && time <= component.end()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<Breakpoint> inferAffineBreakpoints(
+            Domain domain,
+            DoubleUnaryOperator evaluator) {
+        Objects.requireNonNull(domain, "domain");
+        Objects.requireNonNull(evaluator, "evaluator");
+        if (domain.isEmpty()) {
+            throw new IllegalArgumentException("time profile domain cannot be empty");
+        }
+        List<Breakpoint> points = new ArrayList<>();
+        for (Domain.Interval component : domain.intervals()) {
+            addBreakpoint(points, evaluated(component.start(), evaluator));
+            addBreakpoint(points, evaluated(component.end(), evaluator));
+        }
+        return points;
+    }
+
+    private static Breakpoint evaluated(double time, DoubleUnaryOperator evaluator) {
+        double value = evaluator.applyAsDouble(time);
+        return new Breakpoint(time, value);
+    }
+
+    private static List<Breakpoint> validateBreakpoints(
+            Domain domain,
+            List<Breakpoint> supplied) {
+        Objects.requireNonNull(supplied, "breakpoints");
+        if (supplied.isEmpty()) {
+            throw new IllegalArgumentException("piecewise time profile requires at least one breakpoint");
+        }
+        List<Breakpoint> sorted = new ArrayList<>(supplied);
+        sorted.sort(Comparator.comparingDouble(Breakpoint::minute));
+        List<Breakpoint> unique = new ArrayList<>();
+        for (Breakpoint breakpoint : sorted) {
+            if (!unique.isEmpty()
+                    && approximatelyEqual(unique.get(unique.size() - 1).minute(), breakpoint.minute())) {
+                Breakpoint previous = unique.get(unique.size() - 1);
+                if (!approximatelyEqual(previous.value(), breakpoint.value())) {
+                    throw new IllegalArgumentException("conflicting values at one time-profile breakpoint");
+                }
+                continue;
+            }
+            unique.add(breakpoint);
+        }
+
+        double first = unique.get(0).minute();
+        double last = unique.get(unique.size() - 1).minute();
+        for (Domain.Interval component : domain.intervals()) {
+            if (component.start() < first || component.end() > last) {
+                throw new IllegalArgumentException("time profile breakpoints do not cover its domain");
+            }
+        }
+        return unique;
+    }
+
+    private static double inverse(LinearSegment segment, double value) {
+        double root = segment.start()
+                + (value - segment.startValue()) * (segment.end() - segment.start())
+                / (segment.endValue() - segment.startValue());
+        return clamp(root, segment.start(), segment.end());
+    }
+
+    private static Domain intervalOrEmpty(
+            double start,
+            double end,
+            boolean startInclusive,
+            boolean endInclusive) {
+        start = Domain.canonicalTime(start);
+        end = Domain.canonicalTime(end);
+        if (start < end) {
+            return Domain.of(new Domain.Interval(start, end, startInclusive, endInclusive));
+        }
+        if (approximatelyEqual(start, end) && startInclusive && endInclusive) {
+            double point = (start + end) / 2.0;
+            return Domain.closed(point, point);
+        }
+        return Domain.empty();
     }
 
     private static void addBreakpoint(List<Breakpoint> points, Breakpoint point) {
         if (!points.isEmpty()) {
             Breakpoint last = points.get(points.size() - 1);
-            if (Math.abs(last.minute() - point.minute()) < 1e-9) {
-                points.set(points.size() - 1, point);
+            if (approximatelyEqual(last.minute(), point.minute())) {
+                if (!approximatelyEqual(last.value(), point.value())) {
+                    throw new IllegalArgumentException("conflicting values at one time-profile breakpoint");
+                }
                 return;
             }
         }
         points.add(point);
     }
 
-    private static boolean isSingletonDomain(Domain domain) {
-        return domain.intervals().size() == 1 && domain.intervals().get(0).start() == domain.intervals().get(0).end();
+    private static void addCut(List<Double> cuts, double cut) {
+        cut = Domain.canonicalTime(cut);
+        for (double existing : cuts) {
+            if (approximatelyEqual(existing, cut)) {
+                return;
+            }
+        }
+        cuts.add(cut);
+    }
+
+    private static boolean lessThanOrEqual(double left, double right) {
+        return Domain.canonicalTime(left) <= Domain.canonicalTime(right);
+    }
+
+    private static boolean approximatelyEqual(double left, double right) {
+        return Domain.sameTime(left, right);
+    }
+
+    private static double clamp(double value, double minimum, double maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
     }
 }

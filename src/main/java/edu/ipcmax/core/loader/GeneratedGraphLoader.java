@@ -44,13 +44,27 @@ public final class GeneratedGraphLoader {
         readTravelTimeFunctions(directory.resolve("travel_time_functions.jsonl.gz"), builders);
         readScoreFunctions(directory.resolve("score_functions.jsonl.gz"), builders);
 
+        long listedScoreFunctions = builders.stream()
+                .filter(builder -> builder.scoreFunction != null)
+                .count();
+        if (manifest != null && listedScoreFunctions != manifest.selectedScoreEdgeCount()) {
+            throw new IOException("manifest score-edge count mismatch: manifest="
+                    + manifest.selectedScoreEdgeCount() + " loaded=" + listedScoreFunctions);
+        }
         List<Edge> edges = new ArrayList<>(builders.size());
         for (EdgeBuilder builder : builders) {
             if (builder.travelTimeFunction == null) {
                 throw new IOException("missing travel-time function for arc_id " + builder.arcId);
             }
             if (builder.scoreFunction == null) {
-                builder.scoreFunction = PiecewiseConstFn.zeroFullDay();
+                if (manifest != null && !manifest.unlistedEdgesHaveScoreZero()) {
+                    throw new IOException(
+                            "missing score function for arc_id " + builder.arcId
+                                    + " and manifest does not authorize zero scores for unlisted edges");
+                }
+                builder.scoreFunction = PiecewiseConstFn.constant(
+                        builder.travelTimeFunction.domain(),
+                        0);
             }
             edges.add(builder.toEdge());
         }

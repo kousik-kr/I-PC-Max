@@ -1,8 +1,9 @@
 package edu.ipcmax.core.pcmax;
 
-import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
@@ -15,16 +16,28 @@ import edu.ipcmax.core.validate.LooplessChecker;
 import edu.ipcmax.core.validate.Path;
 
 /**
- * PACE temporal stitching for a left candidate, score anchor, and right candidate.
+ * Exact staged temporal stitching of {@code C_L}, one anchor edge, and {@code C_R}.
  */
 public final class TemporalStitch {
-    private static final double EPSILON = 1e-9;
-
     private TemporalStitch() {
     }
 
     /**
-     * Stitches {@code C_L}, anchor {@code a=(x,y)}, and {@code C_R} over the root domain.
+     * Stitches through a query-specific anchor. Traversal validity uses {@code V_a}, never
+     * {@code D_a+}; consequently an anchor remains traversable while its instantaneous score is zero.
+     */
+    public static Optional<CandidateProfile> stitch(
+            TDGraph graph,
+            CandidateProfile left,
+            Anchor anchor,
+            CandidateProfile right,
+            Domain rootDomain,
+            double budget) {
+        return stitch(graph, left, anchor.edge(), anchor.validDomain(), right, rootDomain, budget);
+    }
+
+    /**
+     * Backward-compatible edge overload. New PACE recursion uses the {@link Anchor} overload.
      */
     public static Optional<CandidateProfile> stitch(
             TDGraph graph,
@@ -33,66 +46,161 @@ public final class TemporalStitch {
             CandidateProfile right,
             Domain rootDomain,
             double budget) {
-        PathPointer pathPointer = PathPointer.concat(left.pathPointer(), PathPointer.arc(anchor.arcId()), right.pathPointer());
-        if (!LooplessChecker.isLoopless(graph, new Path(pathPointer.arcIds()))) {
+        Domain valid = PaceProfiles.travelFunctionDomain(anchor)
+                .intersection(PaceProfiles.scoreFunctionDomain(anchor));
+        return stitch(graph, left, anchor, valid, right, rootDomain, budget);
+    }
+
+    private static Optional<CandidateProfile> stitch(
+            TDGraph graph,
+            CandidateProfile left,
+            Edge anchor,
+            Domain anchorValidDomain,
+            CandidateProfile right,
+            Domain rootDomain,
+            double budget) {
+        if (anchor.source() == anchor.target() || budget < 0 || !Double.isFinite(budget)) {
+            return Optional.empty();
+        }
+        if (!isVertexSimpleConcatenation(graph, left, anchor, right)) {
             return Optional.empty();
         }
 
-        Domain base = rootDomain.intersection(left.domain());
-        Domain stitchedDomain = feasibleDomain(left, anchor, right, base, budget);
-        if (stitchedDomain.isEmpty()) {
+        // D_0 = D intersect D_L.
+        Domain domain0 = rootDomain.intersection(left.domain());
+        if (domain0.isEmpty()) {
             return Optional.empty();
         }
 
-        TimeProfile anchorArrival = edgeArrivalProfile(anchor);
-        TimeProfile afterAnchor = left.arrivalProfile().compose(anchorArrival, "temporal-stitch-anchor-arrival:" + left.pathPointer().arcIds() + ":" + anchor.arcId());
-        TimeProfile stitchedArrival = afterAnchor.compose(right.arrivalProfile(), "temporal-stitch-arrival:" + left.pathPointer().arcIds() + ":" + anchor.arcId()
-            + ":" + right.pathPointer().arcIds() + ":" + stitchedDomain.intervals());
+        // D_1: the actual arrival at x belongs to V_a.
+        Domain domain1 = left.arrivalProfile().preimage(anchorValidDomain, domain0);
+        if (domain1.isEmpty()) {
+            return Optional.empty();
+        }
+        TimeProfile leftArrival = left.arrivalProfile().restrict(domain1);
+        TimeProfile anchorArrival = PaceProfiles.edgeArrivalProfile(
+                anchor,
+                anchorValidDomain,
+                "temporal-stitch-anchor");
+        TimeProfile afterAnchor = leftArrival.compose(
+                anchorArrival,
+                "temporal-stitch-after-anchor:left=" + left.stablePathId() + ":a=" + anchor.arcId());
 
-        ScoreProfile anchorScore = ScoreProfile.compose(left.arrivalProfile(), anchor.scoreFunction(), base, "temporal-stitch-anchor-score:" + left.pathPointer().arcIds() + ":" + anchor.arcId());
-        ScoreProfile rightScore = right.scoreProfile().compose(afterAnchor, "temporal-stitch-right-score:" + right.pathPointer().arcIds() + ":" + anchor.arcId());
-        ScoreProfile stitchedScore = left.scoreProfile()
-            .add(anchorScore, base, "temporal-stitch-score-left-anchor:" + left.pathPointer().arcIds() + ":" + anchor.arcId())
-            .add(rightScore, base, "temporal-stitch-score:" + left.pathPointer().arcIds() + ":" + anchor.arcId()
-                + ":" + right.pathPointer().arcIds() + ":" + stitchedDomain.intervals());
+        // D_2: the actual arrival at y belongs to the right-candidate entry domain.
+        Domain domain2 = afterAnchor.preimage(right.domain(), domain1);
+        if (domain2.isEmpty()) {
+            return Optional.empty();
+        }
+        TimeProfile afterAnchorOnRight = afterAnchor.restrict(domain2);
+        TimeProfile joinedArrival = afterAnchorOnRight.compose(
+                right.arrivalProfile(),
+                "temporal-stitch-arrival:left=" + left.stablePathId()
+                        + ":a=" + anchor.arcId() + ":right=" + right.stablePathId());
 
+        // D_J: exact root departures whose propagated travel time satisfies B.
+        Domain joinedDomain = joinedArrival.domainWhereTravelTimeAtMost(domain2, budget);
+        if (joinedDomain.isEmpty()) {
+            return Optional.empty();
+        }
+        TimeProfile finalArrival = joinedArrival.restrict(joinedDomain);
+
+        // Scores are pulled back at the actual x/y entry times.
+        TimeProfile leftEntryOnJoinedDomain = left.arrivalProfile().restrict(joinedDomain);
+        ScoreProfile leftScore = left.scoreProfile().restrict(joinedDomain);
+        ScoreProfile anchorScore = ScoreProfile.compose(
+                leftEntryOnJoinedDomain,
+                anchor.scoreFunction(),
+                joinedDomain,
+                "temporal-stitch-anchor-score:a=" + anchor.arcId());
+        TimeProfile yEntryOnJoinedDomain = afterAnchor.restrict(joinedDomain);
+        ScoreProfile rightScore = right.scoreProfile().compose(
+                yEntryOnJoinedDomain,
+                "temporal-stitch-right-score:path=" + right.stablePathId());
+        ScoreProfile finalScore = leftScore
+                .add(anchorScore, joinedDomain, "temporal-stitch-left-anchor-score")
+                .add(rightScore, joinedDomain, "temporal-stitch-total-score");
+
+        PathPointer path = PathPointer.concat(
+                left.pathPointer(),
+                PathPointer.arc(anchor.arcId()),
+                right.pathPointer());
         return Optional.of(new CandidateProfile(
-                stitchedDomain,
-            stitchedArrival.restrict(stitchedDomain),
-            stitchedScore.restrict(stitchedDomain),
-                pathPointer,
-                Math.max(left.recursionDepth(), right.recursionDepth()) + 1,
+                joinedDomain,
+                finalArrival,
+                finalScore.restrict(joinedDomain),
+                path,
+                left.explicitAnchorCount() + right.explicitAnchorCount() + 1,
                 anchor.arcId(),
                 false));
     }
 
-    private static Domain feasibleDomain(
+    private static boolean isVertexSimpleConcatenation(
+            TDGraph graph,
             CandidateProfile left,
             Edge anchor,
-            CandidateProfile right,
-            Domain base,
-            double budget) {
-        TimeProfile anchorArrival = edgeArrivalProfile(anchor);
-        Domain leftAnchorDomain = left.arrivalProfile().preimage(anchor.scoreFunction().positiveDomain(), base);
-        if (leftAnchorDomain.isEmpty()) {
-            return Domain.empty();
+            CandidateProfile right) {
+        Set<Integer> leftVertices = vertices(graph, left.pathPointer(), anchor.source(), true);
+        if (leftVertices == null) {
+            return false;
         }
-        TimeProfile afterAnchor = left.arrivalProfile().compose(anchorArrival, "temporal-stitch-feasible-anchor:" + left.pathPointer().arcIds() + ":" + anchor.arcId());
-        Domain rightFeasibleDomain = afterAnchor.preimage(right.domain(), leftAnchorDomain);
-        if (rightFeasibleDomain.isEmpty()) {
-            return Domain.empty();
+        Set<Integer> rightVertices = vertices(graph, right.pathPointer(), anchor.target(), false);
+        if (rightVertices == null) {
+            return false;
         }
-        TimeProfile stitchedArrival = afterAnchor.compose(right.arrivalProfile(), "temporal-stitch-feasible-arrival:" + left.pathPointer().arcIds() + ":" + anchor.arcId()
-                + ":" + right.pathPointer().arcIds());
-        return stitchedArrival.domainWhereTravelTimeAtMost(rightFeasibleDomain, budget);
+        if (leftVertices.contains(anchor.target()) || rightVertices.contains(anchor.source())) {
+            return false;
+        }
+        Set<Integer> leftWithoutX = new HashSet<>(leftVertices);
+        leftWithoutX.remove(anchor.source());
+        Set<Integer> rightWithoutY = new HashSet<>(rightVertices);
+        rightWithoutY.remove(anchor.target());
+        leftWithoutX.retainAll(rightWithoutY);
+        if (!leftWithoutX.isEmpty()) {
+            return false;
+        }
+        PathPointer combined = PathPointer.concat(
+                left.pathPointer(),
+                PathPointer.arc(anchor.arcId()),
+                right.pathPointer());
+        return LooplessChecker.isLoopless(graph, new Path(combined.arcIds()));
     }
 
-    private static TimeProfile edgeArrivalProfile(Edge edge) {
-        List<TimeProfile.Breakpoint> breakpoints = new ArrayList<>();
-        for (edu.ipcmax.core.function.PiecewiseLinearFn.Breakpoint breakpoint : edge.travelTimeFunction().breakpoints()) {
-            breakpoints.add(new TimeProfile.Breakpoint(breakpoint.minute(), edge.travelTimeFunction().arrivalTimeAt(breakpoint.minute())));
+    /**
+     * Returns path vertices, checking the endpoint adjacent to the anchor. Identity candidates
+     * contribute just that endpoint.
+     */
+    private static Set<Integer> vertices(
+            TDGraph graph,
+            PathPointer pointer,
+            int anchorEndpoint,
+            boolean left) {
+        List<Integer> arcs = pointer.arcIds();
+        if (arcs.isEmpty()) {
+            return Set.of(anchorEndpoint);
         }
-        return TimeProfile.piecewise(Domain.closed(edge.travelTimeFunction().firstMinute(), edge.travelTimeFunction().lastMinute()), breakpoints,
-                "temporal-stitch-edge-arrival:" + edge.arcId());
+        if (arcs.get(0) < 0 || arcs.get(0) >= graph.edgeCount()) {
+            return null;
+        }
+        Set<Integer> vertices = new HashSet<>();
+        Edge first = graph.edges().get(arcs.get(0));
+        int current = first.source();
+        vertices.add(current);
+        for (int arcId : arcs) {
+            if (arcId < 0 || arcId >= graph.edgeCount()) {
+                return null;
+            }
+            Edge edge = graph.edges().get(arcId);
+            if (edge.source() != current || !vertices.add(edge.target())) {
+                return null;
+            }
+            current = edge.target();
+        }
+        if (left && current != anchorEndpoint) {
+            return null;
+        }
+        if (!left && first.source() != anchorEndpoint) {
+            return null;
+        }
+        return vertices;
     }
 }

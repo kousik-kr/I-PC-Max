@@ -14,16 +14,50 @@ import java.util.List;
  * Deterministic container for candidate profiles.
  */
 public final class CandidateSet {
+    /**
+     * Canonical ordering independent of insertion and hash iteration order.
+     */
+    public static final Comparator<CandidateProfile> STABLE_ORDER = (left, right) -> {
+        int comparison = Double.compare(
+                left.domain().intervals().get(0).start(),
+                right.domain().intervals().get(0).start());
+        if (comparison != 0) {
+            return comparison;
+        }
+        comparison = PathPointer.STABLE_PATH_ORDER.compare(left.stablePathId(), right.stablePathId());
+        if (comparison != 0) {
+            return comparison;
+        }
+        comparison = left.domain().toString().compareTo(right.domain().toString());
+        if (comparison != 0) {
+            return comparison;
+        }
+        comparison = left.arrivalProfile().fingerprint().compareTo(right.arrivalProfile().fingerprint());
+        if (comparison != 0) {
+            return comparison;
+        }
+        comparison = left.scoreProfile().fingerprint().compareTo(right.scoreProfile().fingerprint());
+        if (comparison != 0) {
+            return comparison;
+        }
+        comparison = Integer.compare(left.explicitAnchorCount(), right.explicitAnchorCount());
+        if (comparison != 0) {
+            return comparison;
+        }
+        return Integer.compare(left.pivotId(), right.pivotId());
+    };
+
     private final List<CandidateProfile> candidates = new ArrayList<>();
 
     /**
      * Adds a non-empty candidate.
      */
     public void add(CandidateProfile candidate) {
+        if (candidate == null) {
+            throw new IllegalArgumentException("candidate is required");
+        }
         candidates.add(candidate);
-        candidates.sort(Comparator
-                .comparing((CandidateProfile c) -> c.domain().intervals().get(0).start())
-                .thenComparing(c -> c.pathPointer().arcIds().toString()));
+        candidates.sort(STABLE_ORDER);
     }
 
     /**
@@ -47,6 +81,13 @@ public final class CandidateSet {
      */
     public int size() {
         return candidates.size();
+    }
+
+    /**
+     * True when no candidates are retained.
+     */
+    public boolean isEmpty() {
+        return candidates.isEmpty();
     }
 
     /**

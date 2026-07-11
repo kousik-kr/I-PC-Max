@@ -25,9 +25,33 @@ public record EnvelopeSegment(Domain.Interval interval, CandidateProfile candida
     }
 
     /**
+     * True when this segment explicitly represents an uncovered NO_PATH cell.
+     */
+    public boolean noPath() {
+        return candidate == null;
+    }
+
+    /**
+     * Exact endpoint-aware containment.
+     */
+    public boolean contains(double departure) {
+        return interval.contains(departure);
+    }
+
+    /**
      * Materialized path, or the empty path for bottom.
      */
     public Path path() {
         return found() ? candidate.pathPointer().toPath() : Path.empty();
+    }
+
+    /**
+     * True when both segments select the same stable path, including NO_PATH.
+     */
+    public boolean sameAssignment(EnvelopeSegment other) {
+        if (candidate == null || other.candidate == null) {
+            return candidate == null && other.candidate == null;
+        }
+        return candidate.stablePathId().equals(other.candidate.stablePathId());
     }
 }

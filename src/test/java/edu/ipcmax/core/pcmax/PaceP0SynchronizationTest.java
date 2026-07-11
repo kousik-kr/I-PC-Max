@@ -93,7 +93,7 @@ class PaceP0SynchronizationTest {
         EnvelopeProfile profile = EnvelopeExtractor.extract(frontier, Domain.closed(1, 3));
 
         assertEquals(2, profile.segments().size());
-        assertEquals(new Domain.Interval(1, 2), profile.segments().get(0).interval());
+        assertEquals(new Domain.Interval(1, 2, true, false), profile.segments().get(0).interval());
         assertEquals(List.of(0), profile.segments().get(0).path().arcIds());
         assertEquals(new Domain.Interval(2, 3), profile.segments().get(1).interval());
         assertEquals(List.of(1, 2), profile.segments().get(1).path().arcIds());

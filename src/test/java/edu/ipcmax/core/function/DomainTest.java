@@ -16,7 +16,9 @@ class DomainTest {
 
         assertEquals(List.of(new Domain.Interval(1, 10)), left.union(right).intervals());
         assertEquals(List.of(new Domain.Interval(3, 4), new Domain.Interval(8, 8)), left.intersection(right).intervals());
-        assertEquals(List.of(new Domain.Interval(1, 2), new Domain.Interval(9, 10)), left.difference(right).intervals());
+        assertEquals(List.of(
+                new Domain.Interval(1, 3, true, false),
+                new Domain.Interval(8, 10, false, true)), left.difference(right).intervals());
 
         List<Integer> values = new ArrayList<>();
         for (int value : Domain.of(new Domain.Interval(1, 2), new Domain.Interval(4, 4))) {

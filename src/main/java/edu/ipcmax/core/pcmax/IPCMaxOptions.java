@@ -18,8 +18,8 @@ public record IPCMaxOptions(
      * Validated options.
      */
     public IPCMaxOptions {
-        if (theta < 1) {
-            throw new IllegalArgumentException("theta must be at least 1");
+        if (theta < 0) {
+            throw new IllegalArgumentException("theta cannot be negative");
         }
         if (k < 0) {
             throw new IllegalArgumentException("K cannot be negative");
@@ -36,6 +36,9 @@ public record IPCMaxOptions(
         if (threadCount < 1) {
             throw new IllegalArgumentException("thread count must be at least 1");
         }
+        if (!exactMode && k < 1) {
+            throw new IllegalArgumentException("bounded PACE requires K to be at least 1");
+        }
     }
 
     /**
@@ -43,5 +46,24 @@ public record IPCMaxOptions(
      */
     public static IPCMaxOptions defaults() {
         return new IPCMaxOptions(1, 0, 10, true, false, 1, false, 2, 1, 42);
+    }
+
+    /**
+     * Maps the legacy IPCMax configuration to the single PACE implementation.
+     *
+     * <p>The legacy type has only one bounded limit, so that value is used for both
+     * the PACE-B anchor limit {@code L} and connector/frontier limit {@code K}.</p>
+     */
+    public PaceOptions toPaceOptions() {
+        if (exactMode) {
+            return new PaceOptions(
+                    PaceExecutionPolicy.PACE_X,
+                    theta,
+                    PaceOptions.UNBOUNDED,
+                    PaceOptions.UNBOUNDED,
+                    threadCount,
+                    true);
+        }
+        return new PaceOptions(PaceExecutionPolicy.PACE_B, theta, k, k, threadCount, true);
     }
 }

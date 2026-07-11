@@ -13,15 +13,6 @@ public final class CandidateCombiner {
     }
 
     /**
-     * Combines candidates over their common valid domain.
-     */
-    @Deprecated
-    public static CandidateProfile combine(CandidateProfile left, Edge edge, CandidateProfile right) {
-        throw new UnsupportedOperationException(
-                "PACE temporal stitching requires graph, root domain, and budget; use combine(graph,left,edge,right,domain,budget)");
-    }
-
-    /**
      * Combines candidates with PACE TemporalStitch semantics.
      */
     public static CandidateProfile combine(
