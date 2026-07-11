@@ -1,0 +1,24 @@
+{
+  "experiment_name": "main-comparison",
+  "datasets": [{"id": "region", "path": "data/input/out_ny_td"}],
+  "query_manifest": "experiments/manifests/main.jsonl",
+  "algorithms": [
+    {"id": "pace-b"}, {"id": "pl-exact"},
+    {"id": "rpq", "parameters": {"rpq_step_minutes": 1}},
+    {"id": "rpq", "parameters": {"rpq_step_minutes": 5}},
+    {"id": "rpq", "parameters": {"rpq_step_minutes": 15}},
+    {"id": "ksp-profile", "parameters": {"baseline_k": 16}},
+    {"id": "ksp-profile", "parameters": {"baseline_k": 32}},
+    {"id": "interval-best"}
+  ],
+  "ablations": ["none"],
+  "repetitions": 3,
+  "warmups": 1,
+  "timeout_seconds": 600,
+  "memory_limit_mb": 8192,
+  "threads": 8,
+  "parameter_grid": [{"theta": 2, "anchor_limit": 32, "k": 16, "max_enumerated_paths": 100000, "max_labels": 1000000, "max_expansions": 5000000}],
+  "output_location": "results/raw/main_comparison",
+  "reference_algorithm": null,
+  "seed": 42
+}

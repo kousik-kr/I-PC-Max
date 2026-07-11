@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pace.example/schemas/result_record.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run", "system", "dataset", "query", "configuration", "status", "timing_ns", "memory_bytes", "counters", "output", "quality", "error"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run": {"$ref": "#/$defs/run"},
+    "system": {"$ref": "#/$defs/system"},
+    "dataset": {"$ref": "#/$defs/dataset"},
+    "query": {"$ref": "#/$defs/query"},
+    "configuration": {"$ref": "#/$defs/configuration"},
+    "status": {"$ref": "#/$defs/status"},
+    "timing_ns": {"$ref": "#/$defs/timing"},
+    "memory_bytes": {"$ref": "#/$defs/memory"},
+    "counters": {"$ref": "#/$defs/counters"},
+    "output": {"$ref": "#/$defs/output"},
+    "quality": {"$ref": "#/$defs/quality"},
+    "error": {"$ref": "#/$defs/error"}
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "required": ["run_id", "experiment_name", "timestamp_utc", "repetition", "warmup", "git_commit", "git_dirty", "executable_version", "build_type", "command_line", "config_hash"]
+    },
+    "system": {
+      "type": "object",
+      "required": ["hostname", "operating_system", "kernel", "cpu_model", "physical_cores", "logical_cores", "total_memory_bytes", "compiler", "compiler_version", "runtime_version", "thread_count", "process_id"]
+    },
+    "dataset": {
+      "type": "object",
+      "required": ["dataset_id", "dataset_path", "graph_checksum", "vertices", "edges", "parallel_edges", "average_out_degree", "maximum_out_degree", "temporal_horizon_start", "temporal_horizon_end", "travel_time_piece_count", "score_piece_count", "average_travel_time_pieces_per_edge", "average_score_pieces_per_edge", "anchor_count", "anchor_density", "zero_score_edge_fraction", "topology_seed", "temporal_seed", "score_seed"]
+    },
+    "query": {
+      "type": "object",
+      "required": ["query_id", "source", "destination", "interval_start", "interval_end", "window_length", "budget", "budget_slack", "budget_policy", "distance_bin", "lower_bound_distance", "fastest_travel_time_min", "fastest_travel_time_max", "query_seed"]
+    },
+    "configuration": {
+      "type": "object",
+      "required": ["algorithm", "ablation", "execution_mode", "preprocessing_accounting", "theta", "anchor_limit", "k", "rpq_step_minutes", "baseline_k", "threads", "deterministic", "timeout_seconds", "memory_limit_bytes", "max_enumerated_paths", "max_labels", "max_expansions", "max_frontier_fragments", "anchor_decomposition_enabled", "safe_dominance_enabled", "memoization_enabled", "per_cell_retention_enabled", "representative_retention_enabled", "anchor_lower_bound_filter_enabled", "compression_enabled", "adjacent_merge_enabled", "parallel_enabled", "exhaustive_connectors", "exhaustive_anchors", "exhaustive_frontier"]
+    },
+    "status": {
+      "type": "object",
+      "required": ["status_code", "completed", "reference_available", "output_verified", "exit_code"],
+      "properties": {
+        "status_code": {"enum": ["COMPLETED", "NO_FEASIBLE_PATH", "TIMEOUT", "OUT_OF_MEMORY", "LIMIT_EXCEEDED", "FUNCTION_HORIZON_EXCEEDED", "INVALID_QUERY", "INVALID_CONFIGURATION", "ERROR"]},
+        "completed": {"type": "boolean"},
+        "reference_available": {"type": "boolean"},
+        "output_verified": {"type": "boolean"},
+        "exit_code": {"type": "integer"}
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["preprocessing_total", "lower_bound_preprocessing", "anchor_index_preprocessing", "query_total", "horizon_validation", "anchor_retrieval", "anchor_ranking", "connector_generation", "recursive_generation", "memo_lookup", "memo_compute", "temporal_stitching", "breakpoint_construction", "duplicate_removal", "safe_dominance", "bounded_retention", "fragment_merging", "feasibility_validation", "envelope_extraction", "profile_serialization", "reference_comparison"],
+      "additionalProperties": {"type": ["integer", "null"], "minimum": 0}
+    },
+    "memory": {
+      "type": "object",
+      "required": ["peak_rss", "start_rss", "end_rss", "memoization_peak", "frontier_peak_estimate", "serialized_output_size"],
+      "additionalProperties": {"type": ["integer", "null"], "minimum": 0}
+    },
+    "counters": {
+      "type": "object",
+      "required": ["anchors_total", "anchors_examined", "anchors_rejected_valid_domain", "anchors_rejected_lower_bound", "anchors_retained", "connector_paths_enumerated", "connectors_rejected_lower_bound", "connectors_rejected_empty_domain", "connectors_retained", "recursive_calls", "memo_hits", "memo_misses", "memo_entries", "repeated_subproblems", "stitch_attempts", "stitch_rejected_path_consistency", "stitch_rejected_anchor_domain", "stitch_rejected_right_domain", "stitch_rejected_budget", "stitch_successes", "candidates_generated", "candidates_before_compression", "duplicate_fragments_removed", "extension_dominated_fragments_removed", "bounded_fragments_removed", "temporal_cells_created", "frontier_count", "frontier_size_sum", "frontier_size_max", "retained_fragments_total", "profile_breakpoints_total", "envelope_cells", "point_queries", "labels_created", "labels_expanded", "simple_paths_enumerated", "ksp_paths_retained"]
+    },
+    "output": {
+      "type": "object",
+      "required": ["feasible", "feasible_interval_measure", "infeasible_interval_measure", "feasible_coverage_fraction", "elementary_envelope_cells", "final_profile_intervals", "distinct_selected_paths", "path_changes", "average_interval_length", "minimum_interval_length", "selected_departure_time", "selected_path_id", "selected_score", "selected_travel_time", "profile_checksum", "profile_file"]
+    },
+    "quality": {
+      "type": "object",
+      "required": ["path_agreement_fraction", "feasibility_disagreement_fraction", "breakpoint_precision", "breakpoint_recall", "exact_breakpoint_agreement", "integrated_score_regret", "mean_absolute_score_gap", "maximum_score_gap", "p95_score_gap", "mean_travel_time_gap_on_score_ties", "missed_path_switches", "reference_profile_checksum"]
+    },
+    "error": {
+      "type": "object",
+      "required": ["type", "message", "stack_trace_or_context", "failing_phase"]
+    }
+  }
+}

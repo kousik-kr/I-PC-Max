@@ -1,0 +1,10 @@
+{
+  "experiment_name": "sensitivity-theta", "datasets": [{"id":"region","path":"data/input/out_ny_td"}],
+  "query_manifest": "experiments/manifests/main.jsonl", "algorithms": ["pace-b"], "ablations": ["none"],
+  "repetitions": 3, "warmups": 1, "timeout_seconds": 600, "memory_limit_mb": 8192, "threads": 8,
+  "parameter_grid": [
+    {"theta":0,"anchor_limit":32,"k":16}, {"theta":1,"anchor_limit":32,"k":16},
+    {"theta":2,"anchor_limit":32,"k":16}, {"theta":3,"anchor_limit":32,"k":16}
+  ],
+  "output_location": "results/raw/sensitivity_theta", "reference_algorithm": null, "seed": 42
+}

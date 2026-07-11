@@ -1,0 +1,8 @@
+{
+  "experiment_name": "ablation-appendix", "datasets": [{"id":"demo","path":"demo"}],
+  "query_manifest": "experiments/manifests/tiny.jsonl", "algorithms": ["pace-b"],
+  "ablations": ["all-anchors", "no-anchor-lb", "no-compression", "no-merge"],
+  "repetitions": 1, "warmups": 0, "timeout_seconds": 60, "memory_limit_mb": 2048, "threads": 1,
+  "parameter_grid": [{"theta":2,"anchor_limit":8,"k":8,"max_frontier_fragments":100000}],
+  "output_location": "results/raw/ablation_appendix", "reference_algorithm": "exh-profile", "seed": 42
+}

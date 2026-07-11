@@ -69,7 +69,9 @@ public final class PaceFrontierGenerator {
                 options.anchorLimit(),
                 options.frontierLimit(),
                 options.threadCount(),
-                options.memoizationEnabled());
+                options.memoizationEnabled(),
+                options.features(),
+                options.maxFrontierFragments());
         return execute(source, destination, domain, budget, ell, runOptions);
     }
 
@@ -229,6 +231,12 @@ public final class PaceFrontierGenerator {
                 domain,
                 budget,
                 remainingAnchors);
+        if (canonical.size() > context.options().maxFrontierFragments()) {
+            throw new PaceException(
+                    PaceStatus.LIMIT_EXCEEDED,
+                    "frontier guard exceeded: " + canonical.size() + " > "
+                            + context.options().maxFrontierFragments());
+        }
         return FrontierCompressor.compress(
                 graph,
                 canonical,
@@ -237,7 +245,8 @@ public final class PaceFrontierGenerator {
                 context.options().effectiveFrontierLimit(),
                 context.options().policy(),
                 source,
-                destination);
+                destination,
+                context.options().features());
     }
 
     private CandidateSet canonicalizeGeneratedPaths(

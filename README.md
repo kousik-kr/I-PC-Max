@@ -65,6 +65,9 @@ mvn clean test
 mvn package
 ```
 
+The unified paper experiment runner, manifests, schemas, matrix configurations, and reproduction
+commands are documented in [experiments/README.md](experiments/README.md).
+
 On Windows PowerShell the same commands are:
 
 ```powershell

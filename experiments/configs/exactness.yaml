@@ -1,0 +1,17 @@
+{
+  "experiment_name": "exactness",
+  "datasets": [{"id": "demo", "path": "demo"}],
+  "query_manifest": "experiments/manifests/tiny.jsonl",
+  "algorithms": ["exh-profile", "pace-x", "pl-exact"],
+  "ablations": ["none"],
+  "repetitions": 2,
+  "warmups": 0,
+  "timeout_seconds": 30,
+  "memory_limit_mb": 0,
+  "threads": 1,
+  "parameter_grid": [{"theta": 4, "anchor_limit": 32, "k": 32, "max_enumerated_paths": 100000, "max_labels": 100000, "max_expansions": 500000}],
+  "output_location": "results/raw/exactness",
+  "reference_algorithm": "exh-profile",
+  "verify_output": true,
+  "seed": 42
+}

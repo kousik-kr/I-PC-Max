@@ -1,0 +1,11 @@
+{
+  "experiment_name": "sensitivity-l", "datasets": [{"id":"region","path":"data/input/out_ny_td"}],
+  "query_manifest": "experiments/manifests/main.jsonl", "algorithms": ["pace-b"], "ablations": ["none"],
+  "repetitions": 3, "warmups": 1, "timeout_seconds": 600, "memory_limit_mb": 8192, "threads": 8,
+  "parameter_grid": [
+    {"theta":2,"anchor_limit":8,"k":16}, {"theta":2,"anchor_limit":16,"k":16},
+    {"theta":2,"anchor_limit":32,"k":16}, {"theta":2,"anchor_limit":64,"k":16},
+    {"theta":2,"anchor_limit":"unbounded","k":16}
+  ],
+  "output_location": "results/raw/sensitivity_l", "reference_algorithm": null, "seed": 42
+}

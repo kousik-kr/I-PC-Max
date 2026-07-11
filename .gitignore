@@ -1,3 +1,16 @@
 target/
 sources.txt
 *.class
+__pycache__/
+*.pyc
+results/raw/*
+results/profiles/*
+results/summaries/*
+results/summary/*
+results/logs/*
+results/manifests/*
+!results/raw/.gitkeep
+!results/profiles/.gitkeep
+!results/summaries/.gitkeep
+!results/logs/.gitkeep
+!results/manifests/.gitkeep

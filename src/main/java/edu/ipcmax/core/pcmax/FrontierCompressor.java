@@ -38,7 +38,23 @@ public final class FrontierCompressor {
             PaceExecutionPolicy policy,
             int subproblemSource,
             int subproblemDestination) {
-        if (graph == null || candidateFrontier == null || subproblemDomain == null || policy == null) {
+        return compress(graph, candidateFrontier, subproblemDomain, budget, k, policy,
+                subproblemSource, subproblemDestination, PaceFeatures.defaults());
+    }
+
+    /** Compresses with explicit experiment feature switches. */
+    public static CandidateSet compress(
+            TDGraph graph,
+            CandidateSet candidateFrontier,
+            Domain subproblemDomain,
+            double budget,
+            int k,
+            PaceExecutionPolicy policy,
+            int subproblemSource,
+            int subproblemDestination,
+            PaceFeatures features) {
+        if (graph == null || candidateFrontier == null || subproblemDomain == null || policy == null
+                || features == null) {
             throw new IllegalArgumentException("graph, frontier, domain, and policy are required");
         }
         if (budget < 0.0 || !Double.isFinite(budget)) {
@@ -54,6 +70,27 @@ public final class FrontierCompressor {
         List<CandidateProfile> normalized = normalizeAndDeduplicate(candidateFrontier, subproblemDomain);
         if (normalized.isEmpty()) {
             return new CandidateSet();
+        }
+
+        if (!features.compressionEnabled()) {
+            CandidateSet exactDuplicatesOnly = new CandidateSet();
+            normalized.forEach(exactDuplicatesOnly::add);
+            return exactDuplicatesOnly;
+        }
+
+        if (policy == PaceExecutionPolicy.PACE_B && !features.perCellRetentionEnabled()) {
+            Domain.Interval whole = new Domain.Interval(
+                    subproblemDomain.intervals().get(0).start(),
+                    subproblemDomain.intervals().get(subproblemDomain.intervals().size() - 1).end());
+            List<CandidateProfile> safe = features.safeDominanceEnabled()
+                    ? safePrune(graph, normalized, whole, subproblemSource, subproblemDestination)
+                    : normalized;
+            List<CandidateProfile> selected = boundedRetain(graph, safe, whole, subproblemDomain,
+                    budget, k, subproblemSource, subproblemDestination,
+                    features.representativeRetentionEnabled());
+            CandidateSet global = new CandidateSet();
+            selected.forEach(global::add);
+            return global;
         }
 
         List<Domain.Interval> cells = ProfileCellPartition.cells(subproblemDomain, normalized, true);
@@ -80,9 +117,12 @@ public final class FrontierCompressor {
                     policy,
                     subproblemSource,
                     subproblemDestination,
+                    features,
                     retained);
         }
-        return mergeAdjacentFragments(retained);
+        return features.adjacentMergeEnabled()
+                ? mergeAdjacentFragments(retained)
+                : fragmentsWithoutMerge(retained);
     }
 
     private static void retainCellExactly(
@@ -96,10 +136,12 @@ public final class FrontierCompressor {
             PaceExecutionPolicy policy,
             int source,
             int destination,
+            PaceFeatures features,
             List<Fragment> output) {
         if (cell.start() == cell.end()) {
             for (CandidateProfile candidate : retainAtPoint(
-                    graph, active, cell.start(), subproblemDomain, budget, k, policy, source, destination)) {
+                    graph, active, cell.start(), subproblemDomain, budget, k, policy, source, destination,
+                    features)) {
                 output.add(new Fragment(candidate, cell));
             }
             return;
@@ -107,11 +149,13 @@ public final class FrontierCompressor {
 
         Domain.Interval interiorCell = new Domain.Interval(
                 cell.start(), cell.end(), false, false);
-        List<CandidateProfile> safelyRetained = safePrune(
-                graph, active, interiorCell, source, destination);
+        List<CandidateProfile> safelyRetained = features.safeDominanceEnabled()
+                ? safePrune(graph, active, interiorCell, source, destination)
+                : active;
         List<CandidateProfile> interior = policy == PaceExecutionPolicy.PACE_B
                 ? boundedRetain(
-                graph, safelyRetained, interiorCell, subproblemDomain, budget, k, source, destination)
+                graph, safelyRetained, interiorCell, subproblemDomain, budget, k, source, destination,
+                features.representativeRetentionEnabled())
                 : safelyRetained;
         List<CandidateProfile> atStart = cell.startInclusive()
                 ? retainAtPoint(
@@ -123,7 +167,8 @@ public final class FrontierCompressor {
                 k,
                 policy,
                 source,
-                destination)
+                destination,
+                features)
                 : List.of();
         List<CandidateProfile> atEnd = cell.endInclusive()
                 ? retainAtPoint(
@@ -135,7 +180,8 @@ public final class FrontierCompressor {
                 k,
                 policy,
                 source,
-                destination)
+                destination,
+                features)
                 : List.of();
 
         Set<CandidateProfile> handled = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
@@ -170,18 +216,21 @@ public final class FrontierCompressor {
             int k,
             PaceExecutionPolicy policy,
             int source,
-            int destination) {
+            int destination,
+            PaceFeatures features) {
         if (active.isEmpty() || policy == PaceExecutionPolicy.PACE_X) {
             if (active.isEmpty()) {
                 return active;
             }
         }
         Domain.Interval singleton = new Domain.Interval(point, point);
-        List<CandidateProfile> safelyRetained = safePrune(
-                graph, active, singleton, source, destination);
+        List<CandidateProfile> safelyRetained = features.safeDominanceEnabled()
+                ? safePrune(graph, active, singleton, source, destination)
+                : active;
         return policy == PaceExecutionPolicy.PACE_B
                 ? boundedRetain(
-                graph, safelyRetained, singleton, subproblemDomain, budget, k, source, destination)
+                graph, safelyRetained, singleton, subproblemDomain, budget, k, source, destination,
+                features.representativeRetentionEnabled())
                 : safelyRetained;
     }
 
@@ -299,7 +348,8 @@ public final class FrontierCompressor {
             double budget,
             int k,
             int source,
-            int destination) {
+            int destination,
+            boolean representativesEnabled) {
         if (candidates.size() <= k) {
             return candidates;
         }
@@ -311,11 +361,13 @@ public final class FrontierCompressor {
         }
 
         List<CandidateProfile> selected = new ArrayList<>(k);
-        addIfNew(selected, minimum(candidates, championComparator(cell)));
-        if (k >= 2) {
+        if (representativesEnabled) {
+            addIfNew(selected, minimum(candidates, championComparator(cell)));
+        }
+        if (representativesEnabled && k >= 2) {
             addIfNew(selected, minimum(candidates, metricComparator(metrics, MetricOrder.EARLIEST)));
         }
-        if (k >= 3) {
+        if (representativesEnabled && k >= 3) {
             addIfNew(selected, minimum(candidates, metricComparator(metrics, MetricOrder.LEAST_RESTRICTIVE)));
         }
         if (selected.size() < k) {
@@ -532,6 +584,14 @@ public final class FrontierCompressor {
         }
         CandidateSet result = new CandidateSet();
         merged.stream().sorted(CandidateSet.STABLE_ORDER).forEach(result::add);
+        return removeExactDuplicates(result);
+    }
+
+    private static CandidateSet fragmentsWithoutMerge(List<Fragment> fragments) {
+        CandidateSet result = new CandidateSet();
+        for (Fragment fragment : fragments) {
+            result.add(restrictAndMarkCompressed(fragment.source(), Domain.of(fragment.cell())));
+        }
         return removeExactDuplicates(result);
     }
 

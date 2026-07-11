@@ -114,21 +114,28 @@ public final class AnchorIndex {
             }
             double routeLowerBound = Domain.canonicalTime(
                     toAnchor + anchor.lowerTravelTime() + fromAnchor);
-            if (routeLowerBound > Domain.canonicalTime(budget)) {
+            if (options.features().anchorLowerBoundFilterEnabled()
+                    && routeLowerBound > Domain.canonicalTime(budget)) {
                 continue;
             }
             double windowStart = Domain.canonicalTime(domainInfimum + toAnchor);
             double windowEnd = Domain.canonicalTime(
                     domainSupremum + budget - anchor.lowerTravelTime() - fromAnchor);
-            if (windowStart > windowEnd) {
+            if (options.features().anchorLowerBoundFilterEnabled() && windowStart > windowEnd) {
                 continue;
             }
-            Domain window = Domain.closed(windowStart, windowEnd);
-            Domain relevantValid = anchor.validDomain().intersection(window);
+            Domain window = options.features().anchorLowerBoundFilterEnabled()
+                    ? Domain.closed(windowStart, windowEnd)
+                    : anchor.validDomain();
+            Domain relevantValid = options.features().anchorLowerBoundFilterEnabled()
+                    ? anchor.validDomain().intersection(window)
+                    : anchor.validDomain();
             if (relevantValid.isEmpty()) {
                 continue;
             }
-            Domain relevantPositive = anchor.positiveDomain().intersection(window);
+            Domain relevantPositive = options.features().anchorLowerBoundFilterEnabled()
+                    ? anchor.positiveDomain().intersection(window)
+                    : anchor.positiveDomain();
             double scorePotential = scoreIntegral(anchor.edge(), relevantPositive);
             double coverage = measure(relevantPositive);
             double slack = Domain.canonicalTime(budget - routeLowerBound);

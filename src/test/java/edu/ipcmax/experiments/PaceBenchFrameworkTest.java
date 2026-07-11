@@ -1,0 +1,128 @@
+package edu.ipcmax.experiments;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+import edu.ipcmax.experiments.framework.QueryManifestIO;
+
+class PaceBenchFrameworkTest {
+    @TempDir
+    Path temporary;
+
+    @Test
+    void writesOneStableSchemaRecordPerQueryAndResumeDoesNotDuplicate() throws Exception {
+        Path output = temporary.resolve("raw/results.jsonl");
+        String[] arguments = {
+                "--algorithm", "exh-profile", "--dataset", "demo",
+                "--query-file", "experiments/manifests/tiny.jsonl",
+                "--output-jsonl", output.toString(), "--experiment-name", "framework-test",
+                "--repetitions", "2", "--deterministic", "--max-enumerated-paths", "100"
+        };
+        assertEquals(0, PaceBench.execute(arguments));
+        List<String> lines = Files.readAllLines(output);
+        assertEquals(6, lines.size());
+        HashSet<String> runIds = new HashSet<>();
+        HashSet<String> configHashes = new HashSet<>();
+        boolean sawNoPath = false;
+        for (String line : lines) {
+            JsonNode record = QueryManifestIO.mapper().readTree(line);
+            assertEquals(1, record.path("schema_version").asInt());
+            for (String section : List.of("run", "system", "dataset", "query", "configuration",
+                    "status", "timing_ns", "memory_bytes", "counters", "output", "quality", "error")) {
+                assertTrue(record.has(section), section);
+            }
+            assertTrue(runIds.add(record.path("run").path("run_id").asText()));
+            configHashes.add(record.path("run").path("config_hash").asText());
+            assertTrue(record.path("configuration").path("theta").isNull());
+            assertTrue(record.path("configuration").path("baseline_k").isNull());
+            assertTrue(record.path("timing_ns").path("query_total").isIntegralNumber());
+            assertFalse(record.toString().contains("NaN"));
+            if (record.path("status").path("status_code").asText().equals("NO_FEASIBLE_PATH")) {
+                sawNoPath = true;
+                assertTrue(record.path("status").path("completed").asBoolean());
+            }
+        }
+        assertEquals(1, configHashes.size());
+        assertTrue(sawNoPath);
+
+        String[] resumed = java.util.Arrays.copyOf(arguments, arguments.length + 1);
+        resumed[arguments.length] = "--resume";
+        assertEquals(0, PaceBench.execute(resumed));
+        assertEquals(6, Files.readAllLines(output).size());
+    }
+
+    @Test
+    void guardFailureStillProducesFormalRecords() throws Exception {
+        Path output = temporary.resolve("guard.jsonl");
+        int exit = PaceBench.execute(new String[] {
+                "--algorithm", "exh-profile", "--dataset", "demo",
+                "--query-file", "experiments/manifests/tiny.jsonl",
+                "--output-jsonl", output.toString(), "--max-enumerated-paths", "1"
+        });
+        assertEquals(1, exit);
+        List<JsonNode> records = Files.readAllLines(output).stream().map(line -> {
+            try {
+                return QueryManifestIO.mapper().readTree(line);
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        }).toList();
+        assertEquals(3, records.size());
+        JsonNode limited = records.stream()
+                .filter(record -> record.path("status").path("status_code").asText().equals("LIMIT_EXCEEDED"))
+                .findFirst().orElseThrow();
+        assertFalse(limited.path("status").path("completed").asBoolean());
+        assertNotNull(limited.path("error").path("message").textValue());
+        assertTrue(limited.path("output").path("profile_checksum").isNull());
+    }
+
+    @Test
+    void timeoutInIsolatedCliProcessProducesAValidRecord() throws Exception {
+        Path output = temporary.resolve("timeout.jsonl");
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        Process process = new ProcessBuilder(java, "-cp", System.getProperty("java.class.path"),
+                PaceBench.class.getName(),
+                "--algorithm", "exh-profile", "--dataset", "timeout-test",
+                "--query-file", "experiments/manifests/tiny.jsonl",
+                "--output-jsonl", output.toString(), "--max-enumerated-paths", "1000000000",
+                "--timeout-seconds", "1", "--fail-fast")
+                .redirectErrorStream(true).start();
+        assertTrue(process.waitFor(10, TimeUnit.SECONDS));
+        assertEquals(1, process.exitValue());
+        List<String> lines = Files.readAllLines(output);
+        assertEquals(1, lines.size());
+        JsonNode record = QueryManifestIO.mapper().readTree(lines.get(0));
+        assertEquals("TIMEOUT", record.path("status").path("status_code").asText());
+        assertFalse(record.path("status").path("completed").asBoolean());
+        assertTrue(record.path("output").path("profile_checksum").isNull());
+    }
+
+    @Test
+    void memoryThresholdProducesFormalOutOfMemoryStatus() throws Exception {
+        Path output = temporary.resolve("memory.jsonl");
+        assertEquals(1, PaceBench.execute(new String[] {
+                "--algorithm", "pace-b", "--dataset", "demo",
+                "--query-file", "experiments/manifests/tiny.jsonl",
+                "--output-jsonl", output.toString(), "--memory-limit-mb", "1",
+                "--fail-fast"
+        }));
+        JsonNode record = QueryManifestIO.mapper().readTree(Files.readString(output).strip());
+        assertEquals("OUT_OF_MEMORY", record.path("status").path("status_code").asText());
+        assertFalse(record.path("status").path("completed").asBoolean());
+        assertFalse(record.path("system").path("process_id").asLong()
+                == ProcessHandle.current().pid());
+    }
+}

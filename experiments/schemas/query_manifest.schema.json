@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pace.example/schemas/query_manifest.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "query_id", "dataset_id", "source", "destination", "interval_start", "interval_end", "window_length", "budget", "budget_slack", "budget_policy", "distance_bin", "lower_bound_distance", "query_seed", "metadata"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "query_id": {"type": "string", "minLength": 1},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "source": {"type": "integer", "minimum": 1},
+    "destination": {"type": "integer", "minimum": 1},
+    "interval_start": {"type": "integer"},
+    "interval_end": {"type": "integer"},
+    "window_length": {"type": "integer", "minimum": 0},
+    "budget": {"type": "number", "minimum": 0},
+    "budget_slack": {"type": ["number", "null"]},
+    "budget_policy": {"enum": ["full-interval-feasible", "tight"]},
+    "distance_bin": {"type": ["integer", "null"]},
+    "lower_bound_distance": {"type": ["number", "null"]},
+    "query_seed": {"type": ["integer", "string"]},
+    "metadata": {"type": "object"}
+  }
+}

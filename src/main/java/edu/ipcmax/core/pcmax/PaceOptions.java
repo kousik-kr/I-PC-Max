@@ -18,13 +18,16 @@ public record PaceOptions(
         int anchorLimit,
         int frontierLimit,
         int threadCount,
-        boolean memoizationEnabled) {
+        boolean memoizationEnabled,
+        PaceFeatures features,
+        int maxFrontierFragments) {
     /** Sentinel used in canonical keys for limits disabled by PACE-X. */
     public static final int UNBOUNDED = Integer.MAX_VALUE;
 
     /** Creates validated PACE options. */
     public PaceOptions {
         Objects.requireNonNull(policy, "policy");
+        Objects.requireNonNull(features, "features");
         if (theta < 0) {
             throw new IllegalArgumentException("theta cannot be negative");
         }
@@ -41,17 +44,35 @@ public record PaceOptions(
         } else {
             anchorLimit = UNBOUNDED;
             frontierLimit = UNBOUNDED;
+            features = PaceFeatures.defaults();
         }
+        if (maxFrontierFragments < 1) {
+            throw new IllegalArgumentException("maximum frontier fragments must be at least 1");
+        }
+    }
+
+    /** Source-compatible constructor for the finalized, non-ablated implementation. */
+    public PaceOptions(
+            PaceExecutionPolicy policy,
+            int theta,
+            int anchorLimit,
+            int frontierLimit,
+            int threadCount,
+            boolean memoizationEnabled) {
+        this(policy, theta, anchorLimit, frontierLimit, threadCount, memoizationEnabled,
+                PaceFeatures.defaults(), Integer.MAX_VALUE);
     }
 
     /** Exhaustive validation configuration. */
     public static PaceOptions exhaustive(int theta) {
-        return new PaceOptions(PaceExecutionPolicy.PACE_X, theta, UNBOUNDED, UNBOUNDED, 1, true);
+        return new PaceOptions(PaceExecutionPolicy.PACE_X, theta, UNBOUNDED, UNBOUNDED, 1, true,
+                PaceFeatures.defaults(), Integer.MAX_VALUE);
     }
 
     /** Deterministically bounded configuration. */
     public static PaceOptions bounded(int theta, int anchorLimit, int frontierLimit) {
-        return new PaceOptions(PaceExecutionPolicy.PACE_B, theta, anchorLimit, frontierLimit, 1, true);
+        return new PaceOptions(PaceExecutionPolicy.PACE_B, theta, anchorLimit, frontierLimit, 1, true,
+                PaceFeatures.defaults(), Integer.MAX_VALUE);
     }
 
     /** Effective anchor limit included in memoization keys. */
