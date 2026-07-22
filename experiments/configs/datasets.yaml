@@ -1,0 +1,14 @@
+schema_version: 1
+datasets:
+  NY:
+    path: data/input/NY
+    enabled: true
+  FLA:
+    path: data/input/FLA
+    enabled: true
+  CAL:
+    path: data/input/CAL
+    enabled: true
+  USA:
+    path: data/input/USA
+    enabled: true

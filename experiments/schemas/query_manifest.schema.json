@@ -1,24 +1,81 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://pace.example/schemas/query_manifest.schema.json",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "query_id", "dataset_id", "source", "destination", "interval_start", "interval_end", "window_length", "budget", "budget_slack", "budget_policy", "distance_bin", "lower_bound_distance", "query_seed", "metadata"],
-  "properties": {
-    "schema_version": {"const": 1},
-    "query_id": {"type": "string", "minLength": 1},
-    "dataset_id": {"type": "string", "minLength": 1},
-    "source": {"type": "integer", "minimum": 1},
-    "destination": {"type": "integer", "minimum": 1},
-    "interval_start": {"type": "integer"},
-    "interval_end": {"type": "integer"},
-    "window_length": {"type": "integer", "minimum": 0},
-    "budget": {"type": "number", "minimum": 0},
-    "budget_slack": {"type": ["number", "null"]},
-    "budget_policy": {"enum": ["full-interval-feasible", "tight"]},
-    "distance_bin": {"type": ["integer", "null"]},
-    "lower_bound_distance": {"type": ["number", "null"]},
-    "query_seed": {"type": ["integer", "string"]},
-    "metadata": {"type": "object"}
+  "oneOf": [
+    {"$ref": "#/$defs/version_1"},
+    {"$ref": "#/$defs/version_2"}
+  ],
+  "$defs": {
+    "version_1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "query_id", "dataset_id", "source", "destination",
+        "interval_start", "interval_end", "window_length", "budget", "budget_slack",
+        "budget_policy", "distance_bin", "lower_bound_distance", "query_seed", "metadata"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "query_id": {"type": "string", "minLength": 1},
+        "dataset_id": {"type": "string", "minLength": 1},
+        "source": {"type": "integer", "minimum": 1},
+        "destination": {"type": "integer", "minimum": 1},
+        "interval_start": {"type": "integer"},
+        "interval_end": {"type": "integer"},
+        "window_length": {"type": "integer", "minimum": 0},
+        "budget": {"type": "number", "minimum": 0},
+        "budget_slack": {"type": ["number", "null"]},
+        "budget_policy": {"enum": ["full-interval-feasible", "tight"]},
+        "distance_bin": {"type": ["integer", "null"]},
+        "lower_bound_distance": {"type": ["number", "null"]},
+        "query_seed": {"type": ["integer", "string"]},
+        "metadata": {"type": "object"}
+      }
+    },
+    "version_2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "query_id", "query_family_id", "pair_family_id", "dataset_id",
+        "dataset_path", "graph_checksum", "source", "destination", "distance_bin",
+        "temporal_regime", "interval_start", "interval_end", "window_length", "budget",
+        "budget_slack", "budget_policy", "lower_bound_distance", "lower_bound_edge_count",
+        "corridor_anchor_count", "fastest_travel_time_min", "fastest_travel_time_max",
+        "expected_full_interval_feasible", "expected_mixed_feasibility", "query_seed",
+        "generator_version", "generator_config_hash", "metadata"
+      ],
+      "properties": {
+        "schema_version": {"const": 2},
+        "query_id": {"type": "string", "minLength": 1},
+        "query_family_id": {"type": "string", "minLength": 1},
+        "pair_family_id": {"type": "string", "minLength": 1},
+        "dataset_id": {"type": "string", "minLength": 1},
+        "dataset_path": {"type": "string", "minLength": 1},
+        "graph_checksum": {"type": "string", "minLength": 1},
+        "source": {"type": "integer", "minimum": 1},
+        "destination": {"type": "integer", "minimum": 1},
+        "distance_bin": {"enum": ["Q1", "Q2", "Q3", "Q4"]},
+        "temporal_regime": {
+          "enum": ["MORNING_PEAK", "DAY_OFFPEAK", "EVENING_PEAK", "LATE_OFFPEAK"]
+        },
+        "interval_start": {"type": "integer"},
+        "interval_end": {"type": "integer"},
+        "window_length": {"type": "integer", "minimum": 0},
+        "budget": {"type": "number", "minimum": 0},
+        "budget_slack": {"type": "number", "minimum": 0},
+        "budget_policy": {"enum": ["FULL_INTERVAL_FEASIBLE", "TIGHT"]},
+        "lower_bound_distance": {"type": "number", "minimum": 0},
+        "lower_bound_edge_count": {"type": "integer", "minimum": 0},
+        "corridor_anchor_count": {"type": "integer", "minimum": 0},
+        "fastest_travel_time_min": {"type": "number", "minimum": 0},
+        "fastest_travel_time_max": {"type": "number", "minimum": 0},
+        "expected_full_interval_feasible": {"type": "boolean"},
+        "expected_mixed_feasibility": {"type": "boolean"},
+        "query_seed": {"type": ["integer", "string"]},
+        "generator_version": {"type": "string", "minLength": 1},
+        "generator_config_hash": {"type": "string", "minLength": 1},
+        "metadata": {"type": "object"}
+      }
+    }
   }
 }

@@ -49,7 +49,14 @@ class GeneratedGraphLoaderTest {
                   "num_arcs": 4,
                   "seed": 42,
                   "selected_score_edge_count": 1,
-                  "unlisted_edges_have_score_zero": true
+                  "unlisted_edges_have_score_zero": true,
+                  "rush_windows": {
+                    "morning": [420, 600],
+                    "evening": [1020, 1200]
+                  },
+                  "travel_time_output": {
+                    "format": "travel_time_breakpoints contains points from 0 through 1440"
+                  }
                 }
                 """, StandardCharsets.UTF_8);
 
@@ -65,6 +72,12 @@ class GeneratedGraphLoaderTest {
                 .toList());
         assertEquals(9, graph.edges().get(0).scoreFunction().valueAt(500));
         assertEquals(0, graph.edges().get(1).scoreFunction().valueAt(500));
+        assertEquals(new ManifestSummary.TimeWindow(0, 1440),
+                dataset.manifest().temporalSupport().orElseThrow());
+        assertEquals(new ManifestSummary.TimeWindow(420, 600),
+                dataset.manifest().rushWindow("MORNING").orElseThrow());
+        assertEquals(new ManifestSummary.TimeWindow(1020, 1200),
+                dataset.manifest().rushWindow("evening").orElseThrow());
     }
 
     private void writeGzip(String fileName, String content) throws IOException {

@@ -39,7 +39,7 @@ class PaceBenchFrameworkTest {
         boolean sawNoPath = false;
         for (String line : lines) {
             JsonNode record = QueryManifestIO.mapper().readTree(line);
-            assertEquals(1, record.path("schema_version").asInt());
+            assertEquals(2, record.path("schema_version").asInt());
             for (String section : List.of("run", "system", "dataset", "query", "configuration",
                     "status", "timing_ns", "memory_bytes", "counters", "output", "quality", "error")) {
                 assertTrue(record.has(section), section);
@@ -48,6 +48,8 @@ class PaceBenchFrameworkTest {
             configHashes.add(record.path("run").path("config_hash").asText());
             assertTrue(record.path("configuration").path("theta").isNull());
             assertTrue(record.path("configuration").path("baseline_k").isNull());
+            assertTrue(record.path("status").path("execution_policy").isNull());
+            assertEquals("NOT_CERTIFIED", record.path("status").path("exactness_scope").asText());
             assertTrue(record.path("timing_ns").path("query_total").isIntegralNumber());
             assertFalse(record.toString().contains("NaN"));
             if (record.path("status").path("status_code").asText().equals("NO_FEASIBLE_PATH")) {
@@ -62,6 +64,23 @@ class PaceBenchFrameworkTest {
         resumed[arguments.length] = "--resume";
         assertEquals(0, PaceBench.execute(resumed));
         assertEquals(6, Files.readAllLines(output).size());
+    }
+
+    @Test
+    void paceXSerializesPolicySeparatelyFromRetainedFrontierExactness() throws Exception {
+        Path output = temporary.resolve("pace-x.jsonl");
+        assertEquals(0, PaceBench.execute(new String[] {
+                "--algorithm", "pace-x", "--dataset", "demo",
+                "--query-file", "experiments/manifests/tiny.jsonl",
+                "--output-jsonl", output.toString(), "--theta", "4"
+        }));
+
+        JsonNode record = QueryManifestIO.mapper().readTree(Files.readAllLines(output).get(0));
+        assertEquals(2, record.path("schema_version").asInt());
+        assertEquals("PACE_X_EXHAUSTIVE", record.path("configuration").path("execution_mode").asText());
+        assertTrue(record.path("configuration").path("exhaustive_anchors").isNull());
+        assertEquals("PACE_X", record.path("status").path("execution_policy").asText());
+        assertEquals("RETAINED_FRONTIER", record.path("status").path("exactness_scope").asText());
     }
 
     @Test

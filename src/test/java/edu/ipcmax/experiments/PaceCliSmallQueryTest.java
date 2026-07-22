@@ -32,6 +32,8 @@ class PaceCliSmallQueryTest {
         assertEquals("", stderr.toString(StandardCharsets.UTF_8));
         assertTrue(output.contains("algorithm=pace-b"));
         assertTrue(output.contains("status=SUCCESS"));
+        assertTrue(output.contains("execution_policy=PACE_B"));
+        assertTrue(output.contains("exactness_scope=RETAINED_FRONTIER"));
         assertTrue(output.contains("segments=1"));
         assertTrue(output.contains("segment_0=[420.0,430.0] -> [0, 1]"));
     }
@@ -56,6 +58,24 @@ class PaceCliSmallQueryTest {
         assertEquals("", stdout.toString(StandardCharsets.UTF_8));
         assertTrue(error.contains("algorithm=pace-b"));
         assertTrue(error.contains("status=FUNCTION_HORIZON_EXCEEDED"));
+        assertTrue(error.contains("execution_policy=PACE_B"));
+        assertTrue(error.contains("exactness_scope=NOT_CERTIFIED"));
+    }
+
+    @Test
+    void paceXDoesNotClaimGlobalExactness() throws Exception {
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+
+        int exitCode = PaceCli.execute(new String[]{
+                "--demo", "--algorithm", "pace-x", "--theta", "2"
+        }, printStream(stdout), printStream(stderr));
+
+        String output = stdout.toString(StandardCharsets.UTF_8);
+        assertEquals(0, exitCode);
+        assertEquals("", stderr.toString(StandardCharsets.UTF_8));
+        assertTrue(output.contains("execution_policy=PACE_X"));
+        assertTrue(output.contains("exactness_scope=RETAINED_FRONTIER"));
     }
 
     private static PrintStream printStream(ByteArrayOutputStream output) {

@@ -5,13 +5,13 @@
   "additionalProperties": false,
   "required": ["schema_version", "run", "system", "dataset", "query", "configuration", "status", "timing_ns", "memory_bytes", "counters", "output", "quality", "error"],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"enum": [1, 2]},
     "run": {"$ref": "#/$defs/run"},
     "system": {"$ref": "#/$defs/system"},
     "dataset": {"$ref": "#/$defs/dataset"},
     "query": {"$ref": "#/$defs/query"},
     "configuration": {"$ref": "#/$defs/configuration"},
-    "status": {"$ref": "#/$defs/status"},
+    "status": {"type": "object"},
     "timing_ns": {"$ref": "#/$defs/timing"},
     "memory_bytes": {"$ref": "#/$defs/memory"},
     "counters": {"$ref": "#/$defs/counters"},
@@ -19,6 +19,16 @@
     "quality": {"$ref": "#/$defs/quality"},
     "error": {"$ref": "#/$defs/error"}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"schema_version": {"const": 1}}},
+      "then": {"properties": {"status": {"$ref": "#/$defs/statusV1"}}}
+    },
+    {
+      "if": {"properties": {"schema_version": {"const": 2}}},
+      "then": {"properties": {"status": {"$ref": "#/$defs/statusV2"}}}
+    }
+  ],
   "$defs": {
     "run": {
       "type": "object",
@@ -40,12 +50,25 @@
       "type": "object",
       "required": ["algorithm", "ablation", "execution_mode", "preprocessing_accounting", "theta", "anchor_limit", "k", "rpq_step_minutes", "baseline_k", "threads", "deterministic", "timeout_seconds", "memory_limit_bytes", "max_enumerated_paths", "max_labels", "max_expansions", "max_frontier_fragments", "anchor_decomposition_enabled", "safe_dominance_enabled", "memoization_enabled", "per_cell_retention_enabled", "representative_retention_enabled", "anchor_lower_bound_filter_enabled", "compression_enabled", "adjacent_merge_enabled", "parallel_enabled", "exhaustive_connectors", "exhaustive_anchors", "exhaustive_frontier"]
     },
-    "status": {
+    "statusV1": {
       "type": "object",
       "required": ["status_code", "completed", "reference_available", "output_verified", "exit_code"],
       "properties": {
         "status_code": {"enum": ["COMPLETED", "NO_FEASIBLE_PATH", "TIMEOUT", "OUT_OF_MEMORY", "LIMIT_EXCEEDED", "FUNCTION_HORIZON_EXCEEDED", "INVALID_QUERY", "INVALID_CONFIGURATION", "ERROR"]},
         "completed": {"type": "boolean"},
+        "reference_available": {"type": "boolean"},
+        "output_verified": {"type": "boolean"},
+        "exit_code": {"type": "integer"}
+      }
+    },
+    "statusV2": {
+      "type": "object",
+      "required": ["status_code", "completed", "execution_policy", "exactness_scope", "reference_available", "output_verified", "exit_code"],
+      "properties": {
+        "status_code": {"enum": ["COMPLETED", "NO_FEASIBLE_PATH", "TIMEOUT", "OUT_OF_MEMORY", "LIMIT_EXCEEDED", "FUNCTION_HORIZON_EXCEEDED", "INVALID_QUERY", "INVALID_CONFIGURATION", "ERROR"]},
+        "completed": {"type": "boolean"},
+        "execution_policy": {"enum": ["PACE_X", "PACE_B", null]},
+        "exactness_scope": {"enum": ["GLOBAL_CERTIFIED", "RETAINED_FRONTIER", "NOT_CERTIFIED"]},
         "reference_available": {"type": "boolean"},
         "output_verified": {"type": "boolean"},
         "exit_code": {"type": "integer"}

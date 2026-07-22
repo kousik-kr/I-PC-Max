@@ -103,9 +103,6 @@ public final class FrontierCompressor {
                     .filter(candidate -> candidate.domain().contains(activeSample))
                     .sorted(CandidateSet.STABLE_ORDER)
                     .toList();
-            if (active.isEmpty()) {
-                continue;
-            }
             retainCellExactly(
                     graph,
                     normalized,

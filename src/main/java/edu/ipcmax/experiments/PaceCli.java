@@ -14,6 +14,7 @@ import edu.ipcmax.core.pcmax.PaceOptions;
 import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.core.pcmax.RepeatedFastestPathBaseline;
 import edu.ipcmax.core.pcmax.TinyGraphBruteForceOracle;
+import edu.ipcmax.experiments.framework.ExactnessScope;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
@@ -73,10 +74,12 @@ public final class PaceCli {
                     true);
             try {
                 EnvelopeProfile profile = new PACE(graph, options).run(query);
-                printProfile(out, cli.algorithm, profile);
+                printProfile(out, cli.algorithm, policy, ExactnessScope.RETAINED_FRONTIER, profile);
             } catch (PaceException failure) {
                 err.println("algorithm=" + cli.algorithm);
                 err.println("status=" + failure.status());
+                err.println("execution_policy=" + policy);
+                err.println("exactness_scope=" + ExactnessScope.NOT_CERTIFIED);
                 err.println("reason=" + failure.getMessage());
                 return 2;
             }
@@ -137,9 +140,16 @@ public final class PaceCli {
         out.println("path_arc_ids=" + result.path().arcIds());
     }
 
-    private static void printProfile(PrintStream out, String algorithm, EnvelopeProfile profile) {
+    private static void printProfile(
+            PrintStream out,
+            String algorithm,
+            PaceExecutionPolicy policy,
+            ExactnessScope exactnessScope,
+            EnvelopeProfile profile) {
         out.println("algorithm=" + algorithm);
         out.println("status=SUCCESS");
+        out.println("execution_policy=" + policy);
+        out.println("exactness_scope=" + exactnessScope);
         out.println("segments=" + profile.segments().size());
         for (int index = 0; index < profile.segments().size(); index++) {
             EnvelopeSegment segment = profile.segments().get(index);

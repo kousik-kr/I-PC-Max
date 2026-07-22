@@ -6,7 +6,8 @@ preference path-profile queries on FIFO time-dependent directed graphs.
 PACE exposes two execution policies:
 
 - `PACE_X` exhaustively enumerates safely relevant anchors and all lower-bound-feasible
-  simple anchor-free connectors. It is intended for tiny validation graphs.
+  simple anchor-free connectors within the configured `theta`. It is intended for tiny
+  validation graphs and is not globally certified merely by selecting this policy.
 - `PACE_B` deterministically limits each recursive subproblem to `L` anchors, `K`
   connector profiles, and `K` candidate fragments per temporal cell. Its envelope is
   exact over the retained root frontier; it does not claim unconditional global optimality.
@@ -17,8 +18,10 @@ implementation.
 ## Model
 
 Edge arrival functions are continuous, nondecreasing, and piecewise linear. Edge scores
-are nonnegative and piecewise constant. Profile domains preserve exact open/closed endpoint
-ownership, and every downstream function is evaluated at its actual edge-entry time.
+are nonnegative and piecewise constant. Profile domains preserve explicit open/closed endpoint
+ownership, and every downstream function is evaluated at its actual edge-entry time. Temporal
+endpoints currently use a canonical decimal `double` model; the paper's exact rational-arithmetic
+condition is not yet certified.
 
 For query `(G,s,d,I,B,theta)`, `theta` is the maximum number of explicitly introduced
 anchor-edge occurrences in a candidate - not recursion-tree depth. PACE refuses a query with
@@ -28,8 +31,8 @@ wraps, extrapolates, clamps, or repeats daily functions.
 ## Java API
 
 ```java
-PACE exact = new PACE(graph, PaceOptions.exhaustive(theta));
-EnvelopeProfile exactProfile = exact.run(query);
+PACE exhaustive = new PACE(graph, PaceOptions.exhaustive(theta));
+EnvelopeProfile exhaustiveProfile = exhaustive.run(query);
 
 PaceOptions boundedOptions = PaceOptions.bounded(theta, anchorLimitL, candidateLimitK);
 PACE bounded = new PACE(graph, boundedOptions);
@@ -85,6 +88,21 @@ java -cp target/classes edu.ipcmax.experiments.DatasetSmokeRunner data/input/out
 
 The copied synthetic NY input has been regenerated with FIFO-preserving travel-time profiles. The smoke runner
 reports `non_fifo_edges` explicitly so input suitability is visible before algorithmic execution.
+
+## Deterministic query sets
+
+Build the shaded JAR, then run the dedicated generator in dry-run mode before writing manifests:
+
+```bash
+mvn package
+java -cp target/pace-bench.jar edu.ipcmax.experiments.querygen.QuerySetGenerator \
+  --dataset NY --dry-run --verbose
+```
+
+The current large dataset manifests do not record a conversion from the DIMACS arbitrary transit-weight
+unit to minutes. The generator therefore rejects horizon-incompatible candidate pools with a detailed
+`function_horizon_exceeded` balance report. Regenerate the payloads with an explicit, documented unit
+conversion before producing experiment manifests; the loader deliberately does not guess or rescale them.
 
 ## Small query sanity check
 

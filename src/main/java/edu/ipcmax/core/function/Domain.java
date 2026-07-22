@@ -18,8 +18,15 @@ import java.util.Objects;
  * as the convenient spelling for a closed interval.</p>
  */
 public final class Domain implements Iterable<Integer> {
-    /** Fixed decimal precision used by every temporal-domain boundary. */
-    public static final int TIME_SCALE = 9;
+    /**
+     * Internal decimal precision used by temporal-domain and profile arithmetic.
+     * Guard digits keep composed affine roots stable until the public output
+     * boundary is reached.
+     */
+    public static final int TIME_SCALE = 12;
+
+    /** Decimal scale of serialized query-budget values ({@code 10^-9} minute). */
+    public static final int REPOSITORY_TIME_UNIT_SCALE = 9;
 
     private final List<Interval> intervals;
     private final boolean partition;

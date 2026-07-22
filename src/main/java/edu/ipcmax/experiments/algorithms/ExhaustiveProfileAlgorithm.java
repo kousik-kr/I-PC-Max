@@ -10,6 +10,7 @@ import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.core.profile.CandidateSet;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
+import edu.ipcmax.experiments.framework.ExactnessScope;
 import edu.ipcmax.experiments.framework.ExperimentAlgorithm;
 import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
 import edu.ipcmax.experiments.framework.ExperimentStatus;
@@ -54,6 +55,6 @@ public final class ExhaustiveProfileAlgorithm implements ExperimentAlgorithm {
         boolean feasible = profile.segments().stream().anyMatch(segment -> segment.found());
         return new AlgorithmResult(
                 feasible ? ExperimentStatus.COMPLETED : ExperimentStatus.NO_FEASIBLE_PATH,
-                profile, true, scalars, null, null);
+                profile, ExactnessScope.NOT_CERTIFIED, scalars, null, null);
     }
 }

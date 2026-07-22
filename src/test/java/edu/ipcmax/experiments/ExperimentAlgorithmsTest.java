@@ -16,12 +16,14 @@ import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.experiments.algorithms.ExhaustiveProfileAlgorithm;
 import edu.ipcmax.experiments.algorithms.IntervalBestAlgorithm;
 import edu.ipcmax.experiments.algorithms.KspProfileAlgorithm;
+import edu.ipcmax.experiments.algorithms.PaceExperimentAlgorithm;
 import edu.ipcmax.experiments.algorithms.ProfileLabelingAlgorithm;
 import edu.ipcmax.experiments.algorithms.RpqAlgorithm;
 import edu.ipcmax.experiments.framework.Ablation;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
 import edu.ipcmax.experiments.framework.ExperimentStatus;
+import edu.ipcmax.experiments.framework.ExactnessScope;
 import edu.ipcmax.experiments.framework.LimitExceededException;
 import edu.ipcmax.experiments.framework.ProfileSupport;
 
@@ -38,9 +40,23 @@ class ExperimentAlgorithmsTest {
         var pace = new PACE(graph, PaceOptions.exhaustive(4)).run(QUERY);
 
         assertEquals(ExperimentStatus.COMPLETED, exh.status());
+        assertEquals(ExactnessScope.NOT_CERTIFIED, exh.exactnessScope());
+        assertEquals(ExactnessScope.NOT_CERTIFIED, labeling.exactnessScope());
         assertEquals(ProfileSupport.checksum(exh.profile()), ProfileSupport.checksum(labeling.profile()));
         assertEquals(ProfileSupport.checksum(exh.profile()), ProfileSupport.checksum(pace));
         assertEquals(3, exh.scalars().get("paths_enumerated"));
+    }
+
+    @Test
+    void pacePoliciesReportRetainedFrontierRatherThanGlobalExactness() {
+        var graph = ExperimentDatasets.demo();
+        for (String policy : List.of("pace-x", "pace-b")) {
+            var result = new PaceExperimentAlgorithm(policy).run(
+                    graph, QUERY, config(policy), new ExperimentInstrumentation());
+
+            assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
+            assertFalse(result.completeProfile());
+        }
     }
 
     @Test
@@ -71,6 +87,7 @@ class ExperimentAlgorithmsTest {
         var result = new KspProfileAlgorithm().run(
                 ExperimentDatasets.demo(), QUERY, config("ksp-profile", 0, 2), instrumentation);
         assertEquals(2L, instrumentation.counters().get("ksp_paths_retained"));
+        assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
         assertFalse(result.completeProfile());
         assertThrows(LimitExceededException.class, () -> new KspProfileAlgorithm().run(
                 ExperimentDatasets.demo(), QUERY,
@@ -83,6 +100,7 @@ class ExperimentAlgorithmsTest {
         var result = new IntervalBestAlgorithm().run(
                 ExperimentDatasets.demo(), QUERY, config("interval-best"), new ExperimentInstrumentation());
         assertEquals(ExperimentStatus.COMPLETED, result.status());
+        assertEquals(ExactnessScope.NOT_CERTIFIED, result.exactnessScope());
         assertFalse(result.completeProfile());
         assertNotNull(result.scalars().get("selected_departure_time"));
         assertNotNull(result.scalars().get("selected_path_id"));

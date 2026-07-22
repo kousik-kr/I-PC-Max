@@ -117,6 +117,33 @@ class FrontierCompressorTest {
         assertEquals(pathIds(first), pathIds(second));
     }
 
+    @Test
+    void retainsCandidateOwnedOnlyAtTheStartOfAnOtherwiseEmptyCell() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1).node(2)
+                .edge(1, 2, 1)
+                .build();
+        Domain feasible = Domain.closed(0, 1);
+        CandidateProfile candidate = new CandidateProfile(
+                feasible,
+                TimeProfile.piecewise(feasible, List.of(
+                        new TimeProfile.Breakpoint(0, 2),
+                        new TimeProfile.Breakpoint(1, 4)),
+                        "endpoint-arrival"),
+                ScoreProfile.constant(feasible, 1),
+                PathPointer.of(List.of(0)),
+                0,
+                -1,
+                false);
+
+        CandidateSet compressed = FrontierCompressor.compress(
+                graph, set(candidate), Domain.closed(0, 6), 3, 1,
+                PaceExecutionPolicy.PACE_X, 1, 2);
+
+        assertEquals(1, compressed.size());
+        assertEquals(feasible, compressed.candidates().get(0).domain());
+    }
+
     private static TDGraph twoPathGraph() {
         return new TinyGraphBuilder()
                 .node(1).node(2).node(3)

@@ -12,6 +12,15 @@ import edu.ipcmax.core.function.Domain;
  * Continuous piecewise-linear time-valued profile over an exact root domain.
  */
 public final class TimeProfile {
+    /** Raised when one {@code TimeProfile} cannot represent an exact envelope. */
+    public static final class DiscontinuousEnvelopeException extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+
+        private DiscontinuousEnvelopeException(double minute) {
+            super("pointwise minimum is discontinuous at domain boundary " + minute);
+        }
+    }
+
     /**
      * Exact piecewise-linear breakpoint.
      */
@@ -266,6 +275,207 @@ public final class TimeProfile {
             }
         }
         return new TimeProfile(composedDomain, composed, composedFingerprint);
+    }
+
+    /**
+     * Exact pointwise minimum over the union of both profile domains.
+     */
+    public TimeProfile pointwiseMinimum(TimeProfile other, String minimumFingerprint) {
+        Objects.requireNonNull(other, "other");
+        Objects.requireNonNull(minimumFingerprint, "minimumFingerprint");
+        Domain minimumDomain = domain.union(other.domain);
+        List<Breakpoint> minimum = new ArrayList<>();
+        for (Domain.Interval component : minimumDomain.intervals()) {
+            List<Double> cuts = new ArrayList<>();
+            addCut(cuts, component.start());
+            addInternalCuts(cuts, breakpoints, component);
+            addInternalCuts(cuts, other.breakpoints, component);
+            addDomainCuts(cuts, domain, component);
+            addDomainCuts(cuts, other.domain, component);
+            cuts.sort(Double::compare);
+            requireContinuousMinimum(other, cuts);
+
+            List<Double> crossings = new ArrayList<>();
+            for (int index = 1; index < cuts.size(); index++) {
+                double start = cuts.get(index - 1);
+                double end = cuts.get(index);
+                if (start == end) {
+                    continue;
+                }
+                double middle = Domain.canonicalTime(start + (end - start) / 2.0);
+                if (!domain.contains(middle) || !other.domain.contains(middle)) {
+                    continue;
+                }
+                double startDifference = valueAtClosure(start) - other.valueAtClosure(start);
+                double endDifference = valueAtClosure(end) - other.valueAtClosure(end);
+                int startSign = Double.compare(Domain.canonicalTime(startDifference), 0.0);
+                int endSign = Double.compare(Domain.canonicalTime(endDifference), 0.0);
+                if (startSign == 0 || endSign == 0 || startSign == endSign) {
+                    continue;
+                }
+                double crossing = Domain.canonicalTime(
+                        start - startDifference * (end - start) / (endDifference - startDifference));
+                if (crossing > start && crossing < end) {
+                    addCut(crossings, crossing);
+                }
+            }
+            crossings.forEach(crossing -> addCut(cuts, crossing));
+            cuts.sort(Double::compare);
+
+            List<Breakpoint> componentPoints = new ArrayList<>();
+            for (double cut : cuts) {
+                addBreakpoint(componentPoints, new Breakpoint(cut, minimumValueAtClosure(other, cut)));
+            }
+            reduced(componentPoints).forEach(point -> addBreakpoint(minimum, point));
+        }
+        return new TimeProfile(minimumDomain, minimum, minimumFingerprint);
+    }
+
+    /** True when both profiles have the same domain and exact piecewise values. */
+    public boolean sameValues(TimeProfile other) {
+        if (other == null || !domain.equals(other.domain)) {
+            return false;
+        }
+        List<Double> cuts = new ArrayList<>(domain.breakpoints());
+        breakpoints.forEach(point -> addCut(cuts, point.minute()));
+        other.breakpoints.forEach(point -> addCut(cuts, point.minute()));
+        for (double cut : cuts) {
+            if (!approximatelyEqual(valueAtClosure(cut), other.valueAtClosure(cut))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Minimum exact travel time {@code arrival(t)-t} over a root domain. */
+    public double minimumTravelTime(Domain rootDomain) {
+        return travelTimeExtremum(rootDomain, true);
+    }
+
+    /** Maximum exact travel time {@code arrival(t)-t} over a root domain. */
+    public double maximumTravelTime(Domain rootDomain) {
+        return travelTimeExtremum(rootDomain, false);
+    }
+
+    private double travelTimeExtremum(Domain rootDomain, boolean minimum) {
+        Domain restricted = domain.intersection(Objects.requireNonNull(rootDomain, "rootDomain"));
+        if (restricted.isEmpty()) {
+            throw new IllegalArgumentException("travel-time extremum domain is empty");
+        }
+        double result = minimum ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY;
+        for (LinearSegment segment : segments(restricted)) {
+            double startTravel = Domain.canonicalTime(segment.startValue() - segment.start());
+            double endTravel = Domain.canonicalTime(segment.endValue() - segment.end());
+            result = minimum
+                    ? Math.min(result, Math.min(startTravel, endTravel))
+                    : Math.max(result, Math.max(startTravel, endTravel));
+        }
+        return Domain.canonicalTime(result);
+    }
+
+    private double minimumValueAtClosure(TimeProfile other, double minute) {
+        boolean thisContained = domain.contains(minute);
+        boolean otherContained = other.domain.contains(minute);
+        if (thisContained || otherContained) {
+            if (!thisContained) {
+                return other.valueAt(minute);
+            }
+            if (!otherContained) {
+                return valueAt(minute);
+            }
+            return Math.min(valueAt(minute), other.valueAt(minute));
+        }
+        boolean thisValid = inDomainClosure(minute);
+        boolean otherValid = other.inDomainClosure(minute);
+        if (!thisValid && !otherValid) {
+            throw new IllegalStateException("minimum profile has no value at " + minute);
+        }
+        if (!thisValid) {
+            return other.valueAtClosure(minute);
+        }
+        if (!otherValid) {
+            return valueAtClosure(minute);
+        }
+        return Math.min(valueAtClosure(minute), other.valueAtClosure(minute));
+    }
+
+    private static void addInternalCuts(
+            List<Double> cuts, List<Breakpoint> points, Domain.Interval component) {
+        for (Breakpoint point : points) {
+            if (point.minute() > component.start() && point.minute() < component.end()) {
+                addCut(cuts, point.minute());
+            }
+        }
+        addCut(cuts, component.end());
+    }
+
+    private static void addDomainCuts(List<Double> cuts, Domain source, Domain.Interval component) {
+        for (Domain.Interval interval : source.intervals()) {
+            if (interval.start() > component.start() && interval.start() < component.end()) {
+                addCut(cuts, interval.start());
+            }
+            if (interval.end() > component.start() && interval.end() < component.end()) {
+                addCut(cuts, interval.end());
+            }
+        }
+    }
+
+    private void requireContinuousMinimum(TimeProfile other, List<Double> cuts) {
+        for (int index = 0; index < cuts.size(); index++) {
+            double cut = cuts.get(index);
+            double value = minimumValueAtClosure(other, cut);
+            if (index > 0) {
+                double leftProbe = Domain.canonicalTime(
+                        cuts.get(index - 1) + (cut - cuts.get(index - 1)) / 2.0);
+                requireLimitMatchesValue(other, leftProbe, cut, value);
+            }
+            if (index + 1 < cuts.size()) {
+                double rightProbe = Domain.canonicalTime(
+                        cut + (cuts.get(index + 1) - cut) / 2.0);
+                requireLimitMatchesValue(other, rightProbe, cut, value);
+            }
+        }
+    }
+
+    private void requireLimitMatchesValue(
+            TimeProfile other, double probe, double boundary, double value) {
+        if (probe == boundary) {
+            return;
+        }
+        double limit = minimumLimitAt(other, probe, boundary);
+        if (Double.isFinite(limit) && !approximatelyEqual(limit, value)) {
+            throw new DiscontinuousEnvelopeException(boundary);
+        }
+    }
+
+    private double minimumLimitAt(TimeProfile other, double probe, double boundary) {
+        double result = Double.POSITIVE_INFINITY;
+        if (domain.contains(probe) && inDomainClosure(boundary)) {
+            result = Math.min(result, valueAtClosure(boundary));
+        }
+        if (other.domain.contains(probe) && other.inDomainClosure(boundary)) {
+            result = Math.min(result, other.valueAtClosure(boundary));
+        }
+        return result;
+    }
+
+    private static List<Breakpoint> reduced(List<Breakpoint> source) {
+        List<Breakpoint> result = new ArrayList<>();
+        for (Breakpoint point : source) {
+            while (result.size() >= 2) {
+                Breakpoint left = result.get(result.size() - 2);
+                Breakpoint middle = result.get(result.size() - 1);
+                double alpha = (middle.minute() - left.minute()) / (point.minute() - left.minute());
+                double interpolated = Domain.canonicalTime(
+                        left.value() + alpha * (point.value() - left.value()));
+                if (!approximatelyEqual(interpolated, middle.value())) {
+                    break;
+                }
+                result.remove(result.size() - 1);
+            }
+            result.add(point);
+        }
+        return result;
     }
 
     private Domain preimageOfSegment(LinearSegment segment, Domain target) {

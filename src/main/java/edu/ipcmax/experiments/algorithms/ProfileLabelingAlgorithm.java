@@ -18,6 +18,7 @@ import edu.ipcmax.core.profile.CandidateProfile;
 import edu.ipcmax.core.profile.SafeProfileDominance;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
+import edu.ipcmax.experiments.framework.ExactnessScope;
 import edu.ipcmax.experiments.framework.ExperimentAlgorithm;
 import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
 import edu.ipcmax.experiments.framework.ExperimentStatus;
@@ -93,7 +94,7 @@ public final class ProfileLabelingAlgorithm implements ExperimentAlgorithm {
         boolean feasible = profile.segments().stream().anyMatch(segment -> segment.found());
         return new AlgorithmResult(
                 feasible ? ExperimentStatus.COMPLETED : ExperimentStatus.NO_FEASIBLE_PATH,
-                profile, true, Map.of(), null, null);
+                profile, ExactnessScope.NOT_CERTIFIED, Map.of(), null, null);
     }
 
     private static boolean safelyDominates(

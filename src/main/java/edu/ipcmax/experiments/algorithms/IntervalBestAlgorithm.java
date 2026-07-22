@@ -11,6 +11,7 @@ import edu.ipcmax.core.profile.CandidateSet;
 import edu.ipcmax.core.validate.ExactPathValidator;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
+import edu.ipcmax.experiments.framework.ExactnessScope;
 import edu.ipcmax.experiments.framework.ExperimentAlgorithm;
 import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
 import edu.ipcmax.experiments.framework.ExperimentStatus;
@@ -45,6 +46,6 @@ public final class IntervalBestAlgorithm implements ExperimentAlgorithm {
         var evaluationProfile = EnvelopeExtractor.extract(evaluation, query.departureDomain());
         return new AlgorithmResult(
                 selected.found() ? ExperimentStatus.COMPLETED : ExperimentStatus.NO_FEASIBLE_PATH,
-                evaluationProfile, false, scalars, null, null);
+                evaluationProfile, ExactnessScope.NOT_CERTIFIED, scalars, null, null);
     }
 }

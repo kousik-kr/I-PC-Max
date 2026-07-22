@@ -30,5 +30,6 @@ class TDGraphTest {
         assertEquals(List.of(0, 2), graph.outgoingEdges(1).stream().map(Edge::arcId).toList());
         assertEquals(List.of(0, 2), graph.incomingEdges(2).stream().map(Edge::arcId).toList());
         assertEquals(2, graph.edgesWithPositiveScore(new TimeRange(420, 600)).size());
+        assertEquals(List.of(1, 2, 3), graph.nodeIds());
     }
 }

@@ -44,6 +44,7 @@ import edu.ipcmax.experiments.framework.AlgorithmResult;
 import edu.ipcmax.experiments.framework.ExperimentAlgorithm;
 import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
 import edu.ipcmax.experiments.framework.ExperimentStatus;
+import edu.ipcmax.experiments.framework.ExactnessScope;
 import edu.ipcmax.experiments.framework.LimitExceededException;
 import edu.ipcmax.experiments.framework.ProfileSupport;
 import edu.ipcmax.experiments.framework.QueryManifestEntry;
@@ -367,7 +368,7 @@ public final class PaceBench {
         AlgorithmResult result = outcome.result;
         if (options.verifyOutput && referenceAvailable && !verified
                 && (options.algorithm.equals("pace-x") || options.algorithm.equals("pl-exact"))) {
-            result = new AlgorithmResult(ExperimentStatus.ERROR, result.profile(), result.completeProfile(),
+            result = new AlgorithmResult(ExperimentStatus.ERROR, result.profile(), ExactnessScope.NOT_CERTIFIED,
                     result.scalars(), "VerificationError",
                     "exact profile checksum differs from reference");
         }
@@ -402,7 +403,7 @@ public final class PaceBench {
 
     private static Execution forcedExecution(String status) {
         ExperimentStatus code = ExperimentStatus.valueOf(status);
-        AlgorithmResult result = new AlgorithmResult(code, null, false, Map.of(),
+        AlgorithmResult result = new AlgorithmResult(code, null, ExactnessScope.NOT_CERTIFIED, Map.of(),
                 code == ExperimentStatus.OUT_OF_MEMORY ? "MemoryLimitExceeded" : code.name(),
                 "isolated query worker terminated before returning an algorithm result");
         ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
@@ -445,7 +446,8 @@ public final class PaceBench {
             long observedMemory = usedMemory();
             if (memoryLimitMb > 0 && observedMemory > memoryLimitBytes) {
                 future.cancel(true);
-                result = new AlgorithmResult(ExperimentStatus.OUT_OF_MEMORY, null, false, Map.of(),
+                result = new AlgorithmResult(ExperimentStatus.OUT_OF_MEMORY, null,
+                        ExactnessScope.NOT_CERTIFIED, Map.of(),
                         "MemoryLimitExceeded",
                         "observed JVM heap exceeded configured per-query memory threshold");
                 break;
@@ -501,7 +503,7 @@ public final class PaceBench {
     }
 
     private static AlgorithmResult failure(ExperimentStatus status, Throwable failure) {
-        return new AlgorithmResult(status, null, false, Map.of(),
+        return new AlgorithmResult(status, null, ExactnessScope.NOT_CERTIFIED, Map.of(),
                 failure.getClass().getSimpleName(), failure.getMessage());
     }
 
@@ -522,7 +524,7 @@ public final class PaceBench {
             boolean verified,
             long referenceNanos) {
         Map<String, Object> top = new LinkedHashMap<>();
-        top.put("schema_version", 1);
+        top.put("schema_version", 2);
         Map<String, Object> run = new LinkedHashMap<>();
         run.put("run_id", runId);
         run.put("experiment_name", options.experimentName);
@@ -544,6 +546,8 @@ public final class PaceBench {
         status.put("status_code", result.status().name());
         status.put("completed", result.status() == ExperimentStatus.COMPLETED
                 || result.status() == ExperimentStatus.NO_FEASIBLE_PATH);
+        status.put("execution_policy", executionPolicy(options.algorithm));
+        status.put("exactness_scope", result.exactnessScope().name());
         status.put("reference_available", referenceAvailable);
         status.put("output_verified", verified);
         status.put("exit_code", isFailure(result.status()) ? 1 : 0);
@@ -586,8 +590,10 @@ public final class PaceBench {
         result.put("algorithm", options.algorithm);
         result.put("ablation", options.ablation.id());
         result.put("execution_mode", switch (options.algorithm) {
-            case "pace-x", "exh-profile", "pl-exact" -> "EXACT_GLOBAL";
-            case "pace-b" -> "EXACT_OVER_RETAINED_FRONTIER";
+            case "pace-x" -> "PACE_X_EXHAUSTIVE";
+            case "pace-b" -> "PACE_B_BOUNDED";
+            case "exh-profile" -> "EXHAUSTIVE_PROFILE_ENUMERATION";
+            case "pl-exact" -> "PROFILE_LABELING";
             case "rpq" -> "SAMPLED_LEFT_CLOSED_RIGHT_OPEN";
             case "ksp-profile" -> "EXACT_OVER_RETAINED_K_PATHS";
             default -> "REDUCED_OUTPUT_EVALUATION_PROFILE";
@@ -624,10 +630,18 @@ public final class PaceBench {
         result.put("adjacent_merge_enabled", pace == null ? false : pace.features().adjacentMergeEnabled());
         result.put("parallel_enabled", pace != null && pace.threadCount() > 1);
         result.put("exhaustive_connectors", options.algorithm.equals("pace-x"));
-        result.put("exhaustive_anchors", options.algorithm.equals("pace-x")
-                || options.ablation == edu.ipcmax.experiments.framework.Ablation.ALL_ANCHORS);
+        // Anchor retention is not a certificate that theta covers every feasible anchor sequence.
+        result.put("exhaustive_anchors", null);
         result.put("exhaustive_frontier", options.algorithm.equals("pace-x"));
         return result;
+    }
+
+    private static String executionPolicy(String algorithm) {
+        return switch (algorithm) {
+            case "pace-x" -> "PACE_X";
+            case "pace-b" -> "PACE_B";
+            default -> null;
+        };
     }
 
     private static Map<String, Object> queryRecord(QueryManifestEntry entry) {
@@ -643,8 +657,10 @@ public final class PaceBench {
         result.put("budget_policy", entry.budgetPolicy());
         result.put("distance_bin", entry.distanceBin());
         result.put("lower_bound_distance", entry.lowerBoundDistance());
-        result.put("fastest_travel_time_min", entry.metadata().get("fastest_travel_time_min"));
-        result.put("fastest_travel_time_max", entry.metadata().get("fastest_travel_time_max"));
+        result.put("fastest_travel_time_min", entry.fastestTravelTimeMin() == null
+                ? entry.metadata().get("fastest_travel_time_min") : entry.fastestTravelTimeMin());
+        result.put("fastest_travel_time_max", entry.fastestTravelTimeMax() == null
+                ? entry.metadata().get("fastest_travel_time_max") : entry.fastestTravelTimeMax());
         result.put("query_seed", Long.toUnsignedString(entry.querySeed()));
         return result;
     }

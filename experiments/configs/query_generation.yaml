@@ -1,0 +1,55 @@
+schema_version: 1
+seed: 20260711
+
+candidate_pool:
+  sampled_sources: 256
+  maximum_pairs: 20000
+  minimum_lower_bound_edges: 5
+  minimum_distance: 0
+  require_reachable: true
+  require_anchor_corridor: true
+
+main:
+  pairs_per_distance_bin: 6
+  window_minutes: 120
+  budget_slack: 0.25
+  budget_policy: FULL_INTERVAL_FEASIBLE
+
+pilot:
+  pairs_per_distance_bin: 2
+  disjoint_from_main: true
+
+sensitivity:
+  pairs_per_distance_bin: 3
+  select_from_main: true
+
+appendix:
+  pairs_per_distance_bin: 1
+  select_from_main: true
+
+parallelism:
+  distance_bins: [Q3, Q4]
+  temporal_regimes: [MORNING_PEAK, EVENING_PEAK]
+  pairs_per_cell: 6
+
+tight_budget:
+  slack: 0.05
+  derive_from_main: true
+
+window_sensitivity:
+  values_minutes: [30, 60, 120, 240, 360]
+  derive_from_sensitivity: true
+
+budget_sensitivity:
+  slack_values: [0.05, 0.10, 0.25, 0.50]
+  derive_from_sensitivity: true
+
+temporal_regimes:
+  MORNING_PEAK:
+    preferred_start: 420
+  DAY_OFFPEAK:
+    preferred_start: 720
+  EVENING_PEAK:
+    preferred_start: 1020
+  LATE_OFFPEAK:
+    preferred_start: 60

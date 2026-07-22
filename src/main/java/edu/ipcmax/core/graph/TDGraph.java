@@ -14,6 +14,7 @@ import java.util.Map;
  */
 public final class TDGraph {
     private final Map<Integer, Node> nodes;
+    private final List<Integer> nodeIds;
     private final List<Edge> edges;
     private final Map<Integer, List<Edge>> outgoing;
     private final Map<Integer, List<Edge>> incoming;
@@ -52,6 +53,7 @@ public final class TDGraph {
         }
 
         this.nodes = Map.copyOf(nodeMap);
+        this.nodeIds = nodeMap.keySet().stream().sorted().toList();
         this.edges = List.copyOf(edgeList);
         this.outgoing = freezeAdjacency(out);
         this.incoming = freezeAdjacency(in);
@@ -78,6 +80,13 @@ public final class TDGraph {
      */
     public int edgeCount() {
         return edges.size();
+    }
+
+    /**
+     * All node IDs in stable ascending order.
+     */
+    public List<Integer> nodeIds() {
+        return nodeIds;
     }
 
     /**

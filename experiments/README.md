@@ -40,6 +40,11 @@ PACE-B is exact over its retained frontier, not globally exact. RPQ is sampled w
 right-open cells and a separately evaluated final endpoint. IntervalBest returns one selected
 departure/path and an evaluation-only profile for that path.
 
+Completion, requested PACE policy, and exactness scope are separate fields. Successful PACE-X and
+PACE-B records currently use `RETAINED_FRONTIER`; no algorithm record is `GLOBAL_CERTIFIED` while
+the paper's rational temporal-arithmetic condition remains unresolved. Failures are always
+`NOT_CERTIFIED`.
+
 ## Common command line
 
 General flags: `--algorithm`, `--ablation`, `--dataset`, `--query-file`, `--output-jsonl`,
@@ -59,17 +64,20 @@ configuration is printed at startup and hashed into every result record.
 
 ## Manifests and records
 
-`manifests/*.jsonl` is canonical JSONL schema version 1. Each row has `query_id`, `dataset_id`,
-source/destination, exact integer interval bounds and window length, budget, slack/policy,
-distance bin, lower-bound distance, query seed, and metadata. A manifest is loaded once and never
-regenerated per method. Invalid rows and duplicate query IDs fail before execution.
+The manifest reader accepts legacy schema version 1 and generated schema version 2. New generated
+manifests use version 2 and include deterministic family IDs, dataset/checksum provenance, temporal
+regime, lower-bound and fastest-profile metadata, generator/config identity, and metadata. A
+manifest is loaded once and never regenerated per method. Invalid rows and duplicate query IDs fail
+before execution.
 
-Raw results use `schemas/result_record.schema.json` and contain one record per experiment,
+New raw results use schema version 2 in `schemas/result_record.schema.json`; the schema retains the
+version-1 status shape for compatibility. Records contain one row per experiment,
 algorithm, ablation, query, repetition, and warmup. The top-level sections are `run`, `system`,
 `dataset`, `query`, `configuration`, `status`, `timing_ns`, `memory_bytes`, `counters`, `output`,
 `quality`, and `error`. Timings are integer nanoseconds; unavailable fields are JSON null. Statuses
 include completed/no-path, timeout, out-of-memory, limit, horizon, invalid query/configuration, and
-unexpected error. `NO_FEASIBLE_PATH` is completed. Profile checksums use canonical exact
+unexpected error. Version 2 status also records `execution_policy` and `exactness_scope`.
+`NO_FEASIBLE_PATH` is completed. Profile checksums use canonical
 breakpoints, interval closure, paths, arrival profiles, and score profiles.
 
 When a timeout or memory limit is configured, `pace_bench` automatically runs each logical query
