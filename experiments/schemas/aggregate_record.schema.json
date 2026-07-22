@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pace.example/schemas/aggregate_record.schema.json",
+  "type": "object",
+  "required": ["schema_version", "metric_definition_version", "study_id", "dataset_id", "algorithm_id", "planned", "successful", "completion_rate"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "metric_definition_version": {"type": "string"},
+    "study_id": {"type": "string"},
+    "dataset_id": {"type": "string"},
+    "algorithm_id": {"type": "string"},
+    "planned": {"type": "integer", "minimum": 0},
+    "successful": {"type": "integer", "minimum": 0},
+    "completion_rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "median_wall_time_ns": {"type": ["number", "null"], "minimum": 0},
+    "iqr_wall_time_ns": {"type": ["number", "null"], "minimum": 0},
+    "par2_wall_time_ns": {"type": ["number", "null"], "minimum": 0},
+    "median_peak_rss_bytes": {"type": ["number", "null"], "minimum": 0},
+    "median_profile_cells_total": {"type": ["number", "null"], "minimum": 0},
+    "median_feasible_coverage": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "median_path_agreement": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "median_score_regret": {"type": ["number", "null"], "minimum": 0}
+  }
+}

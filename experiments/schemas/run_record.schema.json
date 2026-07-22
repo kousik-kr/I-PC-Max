@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pace.example/schemas/run_record.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "metric_definition_version", "run_id", "study_id", "job_id", "trial_id", "input_hash", "backend", "timestamp_start_utc", "timestamp_end_utc", "completion_status", "exit_code", "stdout_path", "stderr_path", "java_record"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "metric_definition_version": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "study_id": {"pattern": "^E[0-9]{2}$"},
+    "job_id": {"pattern": "^[0-9a-f]{24}$"},
+    "trial_id": {"type": "integer", "minimum": 0},
+    "input_hash": {"pattern": "^[0-9a-f]{64}$"},
+    "backend": {"enum": ["local", "slurm"]},
+    "timestamp_start_utc": {"type": "string"},
+    "timestamp_end_utc": {"type": "string"},
+    "completion_status": {"enum": ["SUCCESS", "TIMEOUT", "OUT_OF_MEMORY", "FUNCTION_HORIZON_EXCEEDED", "RESOURCE_LIMIT_EXCEEDED", "INVALID_INPUT", "INTERNAL_ERROR", "INFRASTRUCTURE_BLOCKED"]},
+    "exit_code": {"type": "integer"},
+    "stdout_path": {"type": "string"},
+    "stderr_path": {"type": "string"},
+    "java_record": {"type": ["object", "null"]},
+    "error": {"type": ["object", "null"]}
+  }
+}

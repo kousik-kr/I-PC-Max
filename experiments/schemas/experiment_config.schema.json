@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pace.example/schemas/experiment_config.schema.json",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "experiment_id", "datasets", "studies", "seeds", "workload", "protocol", "resources", "paths"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "datasets": {"type": "array", "uniqueItems": true, "items": {"enum": ["NY", "FLA", "CAL", "USA"]}},
+    "studies": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "seeds": {"type": "object"},
+    "workload": {"type": "object"},
+    "protocol": {"type": "object"},
+    "resources": {
+      "type": "object",
+      "required": ["timeout_seconds", "memory_limit_mb", "max_concurrent"],
+      "properties": {
+        "timeout_seconds": {"type": "integer", "minimum": 1},
+        "memory_limit_mb": {"type": ["integer", "null"], "minimum": 256},
+        "max_concurrent": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

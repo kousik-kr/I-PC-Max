@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "$ROOT/target/pace-bench.jar" ]] || mvn -q -f "$ROOT/pom.xml" -DskipTests package
+[[ -f "$ROOT/target/pace-bench.jar" ]] || python "$ROOT/scripts/run_maven.py" -q -f "$ROOT/pom.xml" -DskipTests package
 exec java -jar "$ROOT/target/pace-bench.jar" "$@"

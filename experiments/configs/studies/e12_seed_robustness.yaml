@@ -1,0 +1,11 @@
+{
+  "schema_version":1,"study_id":"E12","stage":"robustness","mode":"execute","datasets":["NY"],
+  "split":"evaluation","pairs_per_dataset":50,"centers":[510,1110],"trials":3,
+  "algorithms":[
+    {"id":"pace-b","variant":"full","parameters":{"theta":2,"resolved_pace_b":true}},
+    {"id":"rpq","parameters":{"rpq_step_minutes":1}},
+    {"id":"pace-b","variant":"no-memo","parameters":{"ablation":"no-memo"}},
+    {"id":"pace-b","variant":"no-compression","parameters":{"ablation":"no-compression"}}
+  ],
+  "axes":[{"graph_seed":42},{"graph_seed":43},{"graph_seed":44}],"requires_graph_variants":true
+}

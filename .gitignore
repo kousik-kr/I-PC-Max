@@ -10,6 +10,11 @@ results/summaries/*
 results/summary/*
 results/logs/*
 results/manifests/*
+experiments/results/
+experiments/manifests/matrices/
+experiments/manifests/queries/
+experiments/manifests/querygen_phase5/
+experiments/configs/resolved/
 !results/raw/.gitkeep
 !results/profiles/.gitkeep
 !results/summaries/.gitkeep

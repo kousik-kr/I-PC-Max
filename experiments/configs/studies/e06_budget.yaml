@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"study_id":"E06","stage":"sensitivity","mode":"execute","datasets":["NY","CAL"],
+  "split":"evaluation","pairs_per_dataset":100,"centers":[510,1110],"trials":3,
+  "algorithms":[{"id":"pace-b","parameters":{"theta":2,"resolved_pace_b":true}}],
+  "axes":[{"budget_overhead":0.10},{"budget_overhead":0.20},{"budget_overhead":0.30},{"budget_overhead":0.40},{"budget_overhead":0.50}]
+}

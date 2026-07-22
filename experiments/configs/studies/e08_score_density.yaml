@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"study_id":"E08","stage":"sensitivity","mode":"execute","datasets":["NY"],
+  "split":"evaluation","pairs_per_dataset":100,"centers":[510,1110],"trials":3,
+  "algorithms":[{"id":"pace-b","parameters":{"theta":2,"resolved_pace_b":true}}],
+  "axes":[{"score_density":0.05},{"score_density":0.10},{"score_density":0.20},{"score_density":0.40}],
+  "requires_graph_variants":true
+}

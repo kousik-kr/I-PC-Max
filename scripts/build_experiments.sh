@@ -18,7 +18,7 @@ done
 echo "java=$(java -version 2>&1 | head -n 1)"
 echo "maven=$(mvn -version | head -n 1)"
 echo "build_type=$profile sanitizers=$sanitizers"
-$clean && mvn -f "$ROOT/pom.xml" clean
+$clean && python "$ROOT/scripts/run_maven.py" -f "$ROOT/pom.xml" clean
 extra=()
 $sanitizers && extra+=(-Psanitizers)
-mvn -f "$ROOT/pom.xml" -Dpace.build.type="$profile" "${extra[@]}" test package
+python "$ROOT/scripts/run_maven.py" -f "$ROOT/pom.xml" -Dpace.build.type="$profile" "${extra[@]}" test package

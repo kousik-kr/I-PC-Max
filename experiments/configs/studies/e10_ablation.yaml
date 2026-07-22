@@ -1,0 +1,13 @@
+{
+  "schema_version":1,"study_id":"E10","stage":"ablation","mode":"execute","datasets":["NY","CAL"],
+  "split":"evaluation","pairs_per_dataset":100,"centers":[510,1110],"trials":3,
+  "algorithms":[
+    {"id":"pace-b","variant":"full","parameters":{"ablation":"none"}},
+    {"id":"pace-b","variant":"no-compression","parameters":{"ablation":"no-compression"}},
+    {"id":"pace-b","variant":"no-memo","parameters":{"ablation":"no-memo"}},
+    {"id":"pace-b","variant":"no-safe-dom","parameters":{"ablation":"no-safe-dom"}},
+    {"id":"pace-b","variant":"theta0","parameters":{"theta":0}},
+    {"id":"pace-b","variant":"serial","parameters":{"ablation":"serial","threads":1}}
+  ],
+  "axes":[{}]
+}

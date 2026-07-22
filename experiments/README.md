@@ -1,5 +1,34 @@
 # PACE experimental framework
 
+## Q1 single-command workflow
+
+The publication controller is `experiments/scripts/run_all.py`. The supported paper datasets are
+NY, FLA, CAL, and USA; OL is intentionally excluded. Python orchestrates Java and validates its
+records but never loads or reimplements the road graph.
+
+```sh
+make paper-preflight
+make paper-smoke
+make paper-plan RUN_ID=pace_q1_review
+make paper-reproduce RUN_ID=pace_q1_final BACKEND=local MAX_CONCURRENT=1
+```
+
+`paper-preflight` is read-only and performs stable file/checksum/count/support checks.
+`paper-plan` writes the exact E00-E13 matrix and starts no algorithm. `paper-smoke` runs the Maven
+suite plus a tiny/demo end-to-end workflow. `paper-reproduce` is the only full execution target;
+it refuses the default planning run ID and is safe to resume only when the config, Git state, and
+backend identity match.
+
+Generated state lives under `experiments/results/<run-id>/` with separate plan, raw, log,
+normalized, summary, table, figure, provenance, marker, and release directories. Use
+`make paper-clean RUN_ID=<id>` to remove exactly one generated run. Large data and all generated
+experiment state are ignored by Git.
+
+Before a full run, fill the fields in `experiments/configs/SERVER_PROFILE_TEMPLATE.yaml` and apply
+the resolved memory/concurrency values to `paper_q1.yaml`. Current dataset manifests declare only
+one day of temporal support; preflight therefore blocks the paper run until horizon-safe assets are
+materialized. The exact known gaps are tracked in `docs/experiments/Q1_REUSE_AND_GAP_MAP.md`.
+
 This directory contains the reproducible experiment layer for PACE. All methods use the same
 `ExperimentAlgorithm` interface, graph implementation, `QuerySpec`, exact path replay, envelope
 extractor, manifest reader, result writer, and matrix scheduler. PACE-X and PACE-B remain the two

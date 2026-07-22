@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"study_id":"E05","stage":"sensitivity","mode":"execute","datasets":["NY","CAL"],
+  "split":"evaluation","pairs_per_dataset":100,"centers":[510,1110],"trials":3,
+  "algorithms":[{"id":"pace-b","parameters":{"theta":2,"resolved_pace_b":true}}],
+  "axes":[{"window_minutes":120},{"window_minutes":180},{"window_minutes":240},{"window_minutes":300},{"window_minutes":360}]
+}

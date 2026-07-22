@@ -1,0 +1,10 @@
+{
+  "schema_version":1,"study_id":"E01","stage":"correctness","mode":"execute","datasets":["demo"],
+  "manifest":"experiments/manifests/tiny.jsonl","pairs_per_dataset":3,"centers":[420],"trials":1,
+  "algorithms":[
+    {"id":"exh-profile","parameters":{"max_enumerated_paths":10000}},
+    {"id":"pace-x","parameters":{"theta":4,"anchor_limit":2147483647,"k":2147483647}}
+  ],
+  "axes":[{"compression":"enabled"}],"reference_algorithm":"exh-profile","hard_gate":true,
+  "required_seeded_tiny_graphs":1000,"requires_uncompressed_pace_x":true
+}

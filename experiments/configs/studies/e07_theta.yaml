@@ -1,0 +1,6 @@
+{
+  "schema_version":1,"study_id":"E07","stage":"sensitivity","mode":"execute","datasets":["NY","CAL"],
+  "split":"evaluation","pairs_per_dataset":100,"centers":[510,1110],"trials":3,
+  "algorithms":[{"id":"pace-b","parameters":{"resolved_pace_b":true}}],
+  "axes":[{"theta":0},{"theta":1},{"theta":2},{"theta":3}]
+}

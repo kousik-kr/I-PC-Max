@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "profile_id": "replace-with-server-name",
+  "scheduler": "local-or-slurm",
+  "cpu_model": "REQUIRED",
+  "sockets": null,
+  "physical_cores": null,
+  "logical_cores": null,
+  "numa_nodes": null,
+  "memory_gib": null,
+  "per_query_memory_limit_mb": null,
+  "max_concurrent_dataset_processes": null,
+  "java_home": "REQUIRED",
+  "java_version": "REQUIRED",
+  "operating_system": "REQUIRED",
+  "slurm_partition": null,
+  "slurm_account": null,
+  "notes": "Do not start the full matrix until every REQUIRED/null execution field is resolved."
+}

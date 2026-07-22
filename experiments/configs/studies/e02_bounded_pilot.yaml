@@ -1,0 +1,12 @@
+{
+  "schema_version":1,"study_id":"E02","stage":"pilot","mode":"execute","datasets":["NY"],
+  "split":"pilot","pairs_per_dataset":20,"centers":[510,1110],"trials":1,
+  "algorithms":[{"id":"pace-b","parameters":{"theta":2}}],
+  "axes":[
+    {"anchor_limit":4,"k":8},{"anchor_limit":4,"k":16},{"anchor_limit":4,"k":32},{"anchor_limit":4,"k":64},
+    {"anchor_limit":8,"k":8},{"anchor_limit":8,"k":16},{"anchor_limit":8,"k":32},{"anchor_limit":8,"k":64},
+    {"anchor_limit":16,"k":8},{"anchor_limit":16,"k":16},{"anchor_limit":16,"k":32},{"anchor_limit":16,"k":64},
+    {"anchor_limit":32,"k":8},{"anchor_limit":32,"k":16},{"anchor_limit":32,"k":32},{"anchor_limit":32,"k":64}
+  ],
+  "reference_algorithm":"pace-x","hard_gate":true
+}
