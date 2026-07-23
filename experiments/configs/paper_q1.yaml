@@ -59,9 +59,9 @@
   },
   "resources": {
     "timeout_seconds": 1800,
-    "memory_limit_mb": null,
-    "max_concurrent": 1,
-    "parallel_thread_candidates": [1, 2, 4, 8, 16, 32],
+    "memory_limit_mb": 256000,
+    "max_concurrent": 24,
+    "parallel_thread_candidates": [1, 2, 4, 8, 16, 24],
     "require_server_profile_for_full_run": true
   },
   "implementation_gates": {

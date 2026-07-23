@@ -17,10 +17,13 @@ PAPER_SMOKE_CONFIG ?= experiments/configs/paper_smoke.yaml
 RUN_ID ?= pace_q1_plan
 BACKEND ?= local
 MAX_CONCURRENT ?= 1
+PAPER_SERVER_RUN_ID ?= pace_q1_server_24c_250g
+PAPER_SERVER_MAX_CONCURRENT ?= 24
 
 .PHONY: configure build test test-unit test-integration test-experiments benchmark-smoke \
 	validate-results summarize-results clean-experiments run-candidate run-ablation run-matrix
 .PHONY: paper-preflight paper-smoke paper-plan paper-reproduce paper-clean
+.PHONY: paper-reproduce-server
 
 configure:
 	@java -version
@@ -84,6 +87,10 @@ paper-reproduce:
 	fi
 	@python experiments/scripts/run_all.py --config $(PAPER_CONFIG) --run-id $(RUN_ID) \
 		--backend $(BACKEND) --stages all --resume --max-concurrent $(MAX_CONCURRENT)
+
+paper-reproduce-server:
+	@python experiments/scripts/run_all.py --config $(PAPER_CONFIG) --run-id $(PAPER_SERVER_RUN_ID) \
+		--backend $(BACKEND) --stages all --resume --max-concurrent $(PAPER_SERVER_MAX_CONCURRENT)
 
 paper-clean:
 	@python experiments/scripts/clean_run.py --config $(PAPER_CONFIG) --run-id $(RUN_ID) --confirm
