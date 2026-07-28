@@ -33,7 +33,6 @@ public record CandidateProfile(
         if (recursionDepth < 0) {
             throw new IllegalArgumentException("explicit anchor count cannot be negative");
         }
-        pathPointer = PathPointer.of(pathPointer.arcIds());
     }
 
     /**

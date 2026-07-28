@@ -360,11 +360,20 @@ public final class FrontierCompressor {
         List<CandidateProfile> selected = new ArrayList<>(k);
         if (representativesEnabled) {
             addIfNew(selected, minimum(candidates, championComparator(cell)));
-        }
-        if (representativesEnabled && k >= 2) {
+            if (selected.size() == k) {
+                return selected.stream()
+                        .sorted(CandidateSet.STABLE_ORDER).toList();
+            }
             addIfNew(selected, minimum(candidates, metricComparator(metrics, MetricOrder.EARLIEST)));
-        }
-        if (representativesEnabled && k >= 3) {
+            if (selected.size() == k) {
+                return selected.stream()
+                        .sorted(CandidateSet.STABLE_ORDER).toList();
+            }
+            addIfNew(selected, minimum(candidates, metricComparator(metrics, MetricOrder.COVERAGE)));
+            if (selected.size() == k) {
+                return selected.stream()
+                        .sorted(CandidateSet.STABLE_ORDER).toList();
+            }
             addIfNew(selected, minimum(candidates, metricComparator(metrics, MetricOrder.LEAST_RESTRICTIVE)));
         }
         if (selected.size() < k) {
@@ -413,6 +422,17 @@ public final class FrontierCompressor {
                 comparison = Double.compare(l.averageArrival(), r.averageArrival());
                 if (comparison == 0) {
                     comparison = -Double.compare(l.averageScore(), r.averageScore());
+                }
+            } else if (order == MetricOrder.COVERAGE) {
+                comparison = -Double.compare(
+                        l.temporalCoverage(), r.temporalCoverage());
+                if (comparison == 0) {
+                    comparison = -Double.compare(
+                            l.averageScore(), r.averageScore());
+                }
+                if (comparison == 0) {
+                    comparison = Double.compare(
+                            l.averageArrival(), r.averageArrival());
                 }
             } else if (order == MetricOrder.LEAST_RESTRICTIVE) {
                 comparison = Integer.compare(l.omegaSize(), r.omegaSize());
@@ -753,6 +773,7 @@ public final class FrontierCompressor {
 
     private enum MetricOrder {
         EARLIEST,
+        COVERAGE,
         LEAST_RESTRICTIVE,
         FILL
     }

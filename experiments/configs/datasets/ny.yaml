@@ -1,1 +1,1 @@
-{"schema_version":1,"dataset_id":"NY","path":"data/input/NY","enabled":true,"expected_nodes":264346,"expected_edges":733846,"required_support_end":10080,"required_score_density_percent":[5,10,20,40],"required_graph_seeds":[42,43,44]}
+{"schema_version":1,"dataset_id":"NY","path":"data/input/NY","enabled":true,"expected_nodes":264346,"expected_edges":733846,"required_support_end":10080,"required_conversion_contract":"declared_centisecond_normalization-v1","required_score_density_percent":[5,10,20,40],"required_graph_seeds":[42,43,44]}

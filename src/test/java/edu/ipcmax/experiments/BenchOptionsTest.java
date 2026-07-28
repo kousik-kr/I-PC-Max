@@ -13,7 +13,7 @@ class BenchOptionsTest {
         assertThrows(IllegalArgumentException.class, () -> parse(
                 "--algorithm", "exh-profile", "--ablation", "no-memo"));
         assertThrows(IllegalArgumentException.class, () -> parse(
-                "--algorithm", "pace-b", "--anchor-limit", "0"));
+                "--algorithm", "pace-b", "--anchor-limit", "-1"));
     }
 
     @Test

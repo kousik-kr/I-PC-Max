@@ -10,6 +10,18 @@ from .hashing import sha256_file, sha256_json
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SUPPORTED_DATASETS = ("NY", "FLA", "CAL", "USA")
+FINAL_ABLATIONS = {
+    "full",
+    "no-safe-corridor",
+    "no-pivot-diversification",
+    "fast-only-connector",
+    "no-connector-cache",
+    "no-score-upper-bound",
+    "no-memo",
+    "no-frontier-compression",
+    "theta0",
+    "serial",
+}
 
 
 def load_document(path: Path) -> dict[str, Any]:
@@ -32,6 +44,94 @@ def load_document(path: Path) -> dict[str, Any]:
 def repo_path(value: str | Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _validate_final_q1(
+    design: dict[str, Any],
+    studies: list[dict[str, Any]],
+) -> None:
+    workload = design["workload"]
+    if (
+        workload.get("default_window_minutes") != 120
+        or workload.get("default_budget_overhead") != 0.30
+    ):
+        raise ValueError(
+            "final Q1 defaults require W=120 and rho=0.30"
+        )
+    protocol = design["protocol"]
+    if protocol.get("algorithm_comparison_threads") != 1:
+        raise ValueError(
+            "algorithmic comparisons require one worker"
+        )
+    defaults = design.get("pace_b_defaults")
+    if not isinstance(defaults, dict):
+        raise ValueError("paper configuration is missing pace_b_defaults")
+    required_defaults = {
+        "theta",
+        "score_density",
+        "threads",
+        "pilot_resolved_fields",
+        "connector_expansion_cap_mc",
+        "breakpoint_cap_mb",
+        "query_work_cap_mq",
+        "resolved_configuration",
+    }
+    missing = sorted(required_defaults - defaults.keys())
+    if missing:
+        raise ValueError(
+            "pace_b_defaults is missing: " + ", ".join(missing)
+        )
+    if (
+        defaults["theta"] != 2
+        or defaults["score_density"] != 0.20
+        or defaults["threads"] != 1
+    ):
+        raise ValueError(
+            "final PACE-B defaults require theta=2, density=0.20, threads=1"
+        )
+    if set(defaults["pilot_resolved_fields"]) != {
+        "pivot_limit_l",
+        "connector_limit_kc",
+        "frontier_limit_kf",
+    }:
+        raise ValueError(
+            "pilot may resolve only L, K_c, and K_f"
+        )
+    for cap in (
+        "connector_expansion_cap_mc",
+        "breakpoint_cap_mb",
+        "query_work_cap_mq",
+    ):
+        if not isinstance(defaults[cap], int) or defaults[cap] < 1:
+            raise ValueError(f"{cap} must be a positive fixed safety cap")
+    by_id = {study["study_id"]: study for study in studies}
+    pilot_axes = by_id["E02"].get("axes", [])
+    for axis in pilot_axes:
+        if set(axis) != {
+            "pivot_limit_l",
+            "connector_limit_kc",
+            "frontier_limit_kf",
+        }:
+            raise ValueError(
+                "E02 axes must tune exactly L, K_c, and K_f"
+            )
+    variants = {
+        algorithm.get("variant", algorithm["id"])
+        for algorithm in by_id["E10"].get("algorithms", [])
+    }
+    if variants != FINAL_ABLATIONS:
+        raise ValueError(
+            "E10 ablation set mismatch: "
+            f"expected {sorted(FINAL_ABLATIONS)}, got {sorted(variants)}"
+        )
+    if set(by_id["E12"].get("datasets", [])) != {"NY", "CAL"}:
+        raise ValueError("E12 must cover NY and CAL")
+    seeds = {
+        int(axis["graph_seed"])
+        for axis in by_id["E12"].get("axes", [])
+    }
+    if seeds != {42, 43, 44}:
+        raise ValueError("E12 must cover graph seeds 42, 43, and 44")
 
 
 def load_design(path: Path) -> dict[str, Any]:
@@ -71,6 +171,20 @@ def load_design(path: Path) -> dict[str, Any]:
     expected = {"E01"} if design.get("smoke", False) else {f"E{index:02d}" for index in range(14)}
     if study_ids != expected:
         raise ValueError(f"study set mismatch: expected {sorted(expected)}, got {sorted(study_ids)}")
+    if not design.get("smoke", False):
+        _validate_final_q1(design, studies)
+        query_generation = design.get("query_generation")
+        if not isinstance(query_generation, dict):
+            raise ValueError("paper configuration is missing query_generation")
+        query_required = {
+            "java_main_class", "paper_java_main_class", "configuration",
+            "manifest_pattern", "required_contract",
+        }
+        query_missing = sorted(query_required - query_generation.keys())
+        if query_missing:
+            raise ValueError(
+                "query_generation is missing: " + ", ".join(query_missing)
+            )
     effective = dict(design)
     effective["config_path"] = path.relative_to(REPO_ROOT).as_posix()
     effective["dataset_definitions"] = dataset_definitions
@@ -78,6 +192,9 @@ def load_design(path: Path) -> dict[str, Any]:
     query_config = effective.get("query_generation", {}).get("configuration")
     if query_config:
         effective["query_generation_config_hash"] = sha256_file(repo_path(query_config))
+    dataset_generation_config = effective.get("dataset_generation", {}).get("configuration")
+    if dataset_generation_config:
+        effective["dataset_generation_config_hash"] = sha256_file(repo_path(dataset_generation_config))
     effective["config_hash"] = sha256_json({key: value for key, value in effective.items() if key != "config_hash"})
     return effective
 

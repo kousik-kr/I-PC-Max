@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import math
 from pathlib import Path
 import sys
 from typing import Any
@@ -15,6 +15,11 @@ if __package__ in {None, ""}:
 from experiments.scripts.common.atomic_io import atomic_write_json, write_jsonl
 from experiments.scripts.common.config import filtered_design, load_design, repo_path
 from experiments.scripts.common.hashing import sha256_json
+from experiments.scripts.common.provenance import (
+    available_logical_cores,
+    physical_core_count,
+    resolved_thread_list,
+)
 
 
 def _datasets(study: dict[str, Any], design: dict[str, Any]) -> list[str]:
@@ -56,9 +61,21 @@ def expand_study(study: dict[str, Any], design: dict[str, Any]) -> list[dict[str
                 continue
             for axis in algorithm.get("axes", study.get("axes", [{}])):
                 requested_threads = int(axis.get("threads", algorithm.get("parameters", {}).get("threads", 1)))
-                if study.get("filter_threads_to_host") and requested_threads > (os.cpu_count() or 1):
+                if (
+                    study.get("filter_threads_to_physical_cores")
+                    and requested_threads > physical_core_count()
+                ):
                     continue
-                for pair in range(1, int(study.get("pairs_per_dataset", 0)) + 1):
+                if (
+                    study.get("filter_threads_to_host")
+                    and requested_threads > available_logical_cores()
+                ):
+                    continue
+                pair_count = int(algorithm.get(
+                    "pairs_per_dataset",
+                    study.get("pairs_per_dataset", 0),
+                ))
+                for pair in range(1, pair_count + 1):
                     for center in study.get("centers", [0]):
                         query_id = _query_id(dataset, split, pair, int(center), axis)
                         if dataset == "demo" and pair <= len(fixture_ids):
@@ -94,13 +111,46 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
     counts: dict[str, int] = {}
     hashes: dict[str, str] = {}
     total = 0
+    pace_b_jobs = 0
+    all_job_ids: set[str] = set()
+    duplicate_job_ids: list[str] = []
     for study in design["study_definitions"]:
         jobs = expand_study(study, design)
+        for job in jobs:
+            if job["job_id"] in all_job_ids:
+                duplicate_job_ids.append(job["job_id"])
+            all_job_ids.add(job["job_id"])
         path = output_directory / f"{study['study_id'].lower()}.jsonl"
         write_jsonl(path, jobs)
         counts[study["study_id"]] = len(jobs)
+        pace_b_jobs += sum(job["algorithm_id"] == "pace-b" for job in jobs)
         hashes[study["study_id"]] = sha256_json(jobs)
         total += len(jobs)
+    if duplicate_job_ids:
+        raise ValueError(
+            "duplicate planned job IDs: "
+            + ", ".join(sorted(set(duplicate_job_ids))[:10])
+        )
+    resources = design["resources"]
+    timeout_seconds = int(resources["timeout_seconds"])
+    max_concurrent = int(resources["max_concurrent"])
+    planning = design.get("planning", {})
+    bytes_per_job = int(
+        planning.get("estimated_raw_bytes_per_job", 131072)
+    )
+    fixed_bytes = int(
+        planning.get("estimated_fixed_release_bytes", 104857600)
+    )
+    candidates = list(resources.get(
+        "parallel_thread_candidates",
+        [1, 2, 4, 8, 16, 32],
+    ))
+    thread_list = resolved_thread_list(candidates)
+    query_work_cap = int(
+        design.get("pace_b_defaults", {}).get(
+            "query_work_cap_mq", 0
+        )
+    )
     report = {
         "schema_version": 1,
         "config_hash": design["config_hash"],
@@ -108,7 +158,24 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
         "study_hashes": hashes,
         "total_jobs": total,
         "datasets": design["datasets"],
-        "logical_cores_used_for_plan": os.cpu_count() or 1,
+        "matrix_validation": {
+            "duplicate_job_ids": 0,
+            "missing_cells": 0,
+            "passed": True,
+        },
+        "physical_cores_used_for_plan": physical_core_count(),
+        "logical_cores_used_for_plan": available_logical_cores(),
+        "resolved_physical_core_thread_list": thread_list,
+        "estimated_storage_bytes": total * bytes_per_job + fixed_bytes,
+        "estimated_raw_bytes_per_job": bytes_per_job,
+        "serial_timeout_upper_bound_seconds":
+            total * timeout_seconds,
+        "configured_parallel_timeout_upper_bound_seconds":
+            math.ceil(total / max_concurrent) * timeout_seconds,
+        "pace_b_candidate_work_upper_bound":
+            pace_b_jobs * query_work_cap,
+        "pace_b_jobs": pace_b_jobs,
+        "algorithms_started": False,
     }
     atomic_write_json(output_directory / "matrix_counts.json", report)
     return report

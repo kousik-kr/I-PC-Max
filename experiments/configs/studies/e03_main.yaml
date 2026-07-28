@@ -5,8 +5,8 @@
     {"id":"pace-b","parameters":{"theta":2,"resolved_pace_b":true}},
     {"id":"rpq","parameters":{"rpq_step_minutes":1}},
     {"id":"interval-best"},
-    {"id":"pace-x","datasets":["NY"],"parameters":{"theta":2}},
-    {"id":"pl-exact","datasets":["NY"]}
+    {"id":"pace-x","datasets":["NY"],"pairs_per_dataset":20,"parameters":{"theta":2}},
+    {"id":"pl-exact","datasets":["NY"],"pairs_per_dataset":20}
   ],
   "axes":[{"window_minutes":120,"budget_overhead":0.30}],"reference_algorithm":null
 }

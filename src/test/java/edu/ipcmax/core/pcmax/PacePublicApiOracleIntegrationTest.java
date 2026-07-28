@@ -143,6 +143,21 @@ class PacePublicApiOracleIntegrationTest {
     }
 
     @Test
+    void parallelConfigurationStartsParallelTasksAndKeepsOutputChecksumStable() {
+        TDGraph graph = switchingGraph();
+        QuerySpec query = new QuerySpec(1, 4, 0, 10, 10, 1);
+        PACE serial = new PACE(graph, options(PaceExecutionPolicy.PACE_B, 1));
+        PACE parallel = new PACE(graph, options(PaceExecutionPolicy.PACE_B, 4));
+
+        byte[] serialOutput = serialize(serial.run(query));
+        byte[] parallelOutput = serialize(parallel.run(query));
+
+        assertArrayEquals(serialOutput, parallelOutput);
+        assertEquals(0, serial.stats().parallelTasksStarted());
+        assertTrue(parallel.stats().parallelTasksStarted() > 0);
+    }
+
+    @Test
     void paceBBoundsEveryObservedFrontierCellByK() {
         TDGraph graph = new TinyGraphBuilder()
                 .node(1)

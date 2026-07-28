@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 
 import edu.ipcmax.experiments.framework.Ablation;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
+import edu.ipcmax.core.pcmax.PaceEngineMode;
 
 /** Parsed and validated command-line options for {@link PaceBench}. */
 final class BenchOptions {
@@ -34,6 +35,12 @@ final class BenchOptions {
     int theta = 2;
     int anchorLimit = 32;
     int k = 16;
+    int connectorLimitKc = 16;
+    int frontierLimitKf = 16;
+    long connectorExpansionCapMc = 5_000_000;
+    int breakpointCapMb = 1_000_000;
+    long queryWorkCapMq = 5_000_000;
+    PaceEngineMode paceEngineMode = PaceEngineMode.SCALABLE;
     int rpqStepMinutes;
     int baselineK;
     long maxEnumeratedPaths = 100_000;
@@ -87,8 +94,33 @@ final class BenchOptions {
                 case "--fail-fast" -> options.failFast = true;
                 case "--resume" -> options.resume = true;
                 case "--theta" -> options.theta = integer(tokens, ++index, option);
-                case "--anchor-limit" -> options.anchorLimit = integer(tokens, ++index, option);
-                case "--k" -> options.k = integer(tokens, ++index, option);
+                case "--anchor-limit", "--pivot-limit-l" ->
+                        options.anchorLimit = integer(tokens, ++index, option);
+                case "--k" -> {
+                    options.k = integer(tokens, ++index, option);
+                    options.connectorLimitKc = options.k;
+                    options.frontierLimitKf = options.k;
+                }
+                case "--connector-limit-kc" ->
+                        options.connectorLimitKc = integer(tokens, ++index, option);
+                case "--frontier-limit-kf" -> {
+                    options.frontierLimitKf = integer(tokens, ++index, option);
+                    options.k = options.frontierLimitKf;
+                }
+                case "--connector-expansion-cap-mc" ->
+                        options.connectorExpansionCapMc =
+                                positiveLong(tokens, ++index, option);
+                case "--breakpoint-cap-mb" ->
+                        options.breakpointCapMb =
+                                integer(tokens, ++index, option);
+                case "--query-work-cap-mq" ->
+                        options.queryWorkCapMq =
+                                positiveLong(tokens, ++index, option);
+                case "--pace-engine" ->
+                        options.paceEngineMode = PaceEngineMode.valueOf(
+                                value(tokens, ++index, option)
+                                        .trim().toUpperCase(
+                                                java.util.Locale.ROOT));
                 case "--rpq-step-minutes" -> options.rpqStepMinutes = wholeMinutes(tokens, ++index, option);
                 case "--baseline-k" -> options.baselineK = integer(tokens, ++index, option);
                 case "--max-enumerated-paths" -> options.maxEnumeratedPaths = positiveLong(tokens, ++index, option);
@@ -161,8 +193,15 @@ final class BenchOptions {
         if (algorithm.equals("pace-x") && ablation != Ablation.NONE) {
             throw new IllegalArgumentException("PACE-X cannot use heuristic ablations");
         }
-        if (algorithm.equals("pace-b") && (anchorLimit < 1 || k < 1)) {
-            throw new IllegalArgumentException("PACE-B requires --anchor-limit >= 1 and --k >= 1");
+        if (algorithm.equals("pace-b")
+                && (anchorLimit < 0
+                    || connectorLimitKc < 1
+                    || frontierLimitKf < 1
+                    || connectorExpansionCapMc < 1
+                    || breakpointCapMb < 1
+                    || queryWorkCapMq < 1)) {
+            throw new IllegalArgumentException(
+                    "PACE-B requires L >= 0 and positive K_c, K_f, M_c, M_b, M_q");
         }
         if (algorithm.equals("rpq") && rpqStepMinutes < 1) {
             throw new IllegalArgumentException("RPQ requires a positive whole-minute --rpq-step-minutes");
@@ -185,9 +224,26 @@ final class BenchOptions {
     }
 
     AlgorithmConfig algorithmConfig() {
-        return new AlgorithmConfig(algorithm, ablation, theta, anchorLimit, k, threads,
-                rpqStepMinutes, baselineK, maxEnumeratedPaths, maxLabels, maxExpansions,
-                maxFrontierFragments, deterministic, seed);
+        return new AlgorithmConfig(
+                algorithm,
+                ablation,
+                paceEngineMode,
+                theta,
+                anchorLimit,
+                connectorLimitKc,
+                frontierLimitKf,
+                connectorExpansionCapMc,
+                breakpointCapMb,
+                queryWorkCapMq,
+                threads,
+                rpqStepMinutes,
+                baselineK,
+                maxEnumeratedPaths,
+                maxLabels,
+                maxExpansions,
+                maxFrontierFragments,
+                deterministic,
+                seed);
     }
 
     Map<String, Object> normalized() {
@@ -201,6 +257,13 @@ final class BenchOptions {
         result.put("theta", theta);
         result.put("anchor_limit", anchorLimit);
         result.put("k", k);
+        result.put("pivot_limit_l", anchorLimit);
+        result.put("connector_limit_kc", connectorLimitKc);
+        result.put("frontier_limit_kf", frontierLimitKf);
+        result.put("connector_expansion_cap_mc", connectorExpansionCapMc);
+        result.put("breakpoint_cap_mb", breakpointCapMb);
+        result.put("query_work_cap_mq", queryWorkCapMq);
+        result.put("pace_engine", paceEngineMode.name());
         result.put("threads", threads);
         result.put("rpq_step_minutes", rpqStepMinutes == 0 ? null : rpqStepMinutes);
         result.put("baseline_k", baselineK == 0 ? null : baselineK);

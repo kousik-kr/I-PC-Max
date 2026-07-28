@@ -16,7 +16,9 @@ public record AlgorithmResult(
     public AlgorithmResult {
         Objects.requireNonNull(status, "status");
         Objects.requireNonNull(exactnessScope, "exactnessScope");
-        if (status != ExperimentStatus.COMPLETED && status != ExperimentStatus.NO_FEASIBLE_PATH) {
+        if (exactnessScope == ExactnessScope.GLOBAL_CERTIFIED
+                && status != ExperimentStatus.COMPLETED
+                && status != ExperimentStatus.NO_FEASIBLE_PATH) {
             exactnessScope = ExactnessScope.NOT_CERTIFIED;
         }
         scalars = scalars == null ? Map.of() : Map.copyOf(scalars);

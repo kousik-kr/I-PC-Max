@@ -2,6 +2,7 @@ package edu.ipcmax.core.loader;
 
 import edu.ipcmax.core.function.PiecewiseConstFn;
 import edu.ipcmax.core.function.PiecewiseLinearFn;
+import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.Node;
 import edu.ipcmax.core.graph.TDGraph;
@@ -94,6 +95,79 @@ public final class GeneratedGraphLoader {
         return new GeneratedGraphDataset(graph, manifest, directory);
     }
 
+    /**
+     * Loads a preparation dataset and enforces its declared conversion,
+     * temporal support, FIFO, and strictly positive lower-bound invariants.
+     */
+    public GeneratedGraphDataset loadVerified(
+            Path directory,
+            String requiredConversionContract,
+            double requiredSupportEnd) throws IOException {
+        if (requiredConversionContract == null
+                || requiredConversionContract.isBlank()) {
+            throw new IllegalArgumentException(
+                    "required conversion contract is required");
+        }
+        if (!Double.isFinite(requiredSupportEnd) || requiredSupportEnd <= 0) {
+            throw new IllegalArgumentException(
+                    "required support end must be finite and positive");
+        }
+        GeneratedGraphDataset dataset = load(directory);
+        ManifestSummary manifest = dataset.manifest();
+        if (manifest == null) {
+            throw new IOException(directory + ": manifest.json is required");
+        }
+        String declaredContract = manifest.conversionContractId()
+                .orElseThrow(() -> new IOException(
+                        directory + ": manifest does not declare conversion_contract.contract_id"));
+        if (!requiredConversionContract.equals(declaredContract)) {
+            throw new IOException(
+                    directory + ": conversion contract " + declaredContract
+                            + " does not match required "
+                            + requiredConversionContract);
+        }
+        ManifestSummary.TimeWindow support = manifest.temporalSupport()
+                .orElseThrow(() -> new IOException(
+                        directory + ": manifest does not declare temporal support"));
+        if (support.endMinute() < requiredSupportEnd) {
+            throw new IOException(
+                    directory + ": temporal support ends at "
+                            + support.endMinute() + "; requires "
+                            + requiredSupportEnd);
+        }
+        Domain requiredDomain = Domain.closed(
+                support.startMinute(), requiredSupportEnd);
+        for (Edge edge : dataset.graph().edges()) {
+            if (!edge.travelTimeFunction().isFifo()) {
+                throw new IOException(
+                        directory + ": arc_id " + edge.arcId()
+                                + " has a non-FIFO arrival function");
+            }
+            double lowerBound = edge.travelTimeFunction().minTravelTime();
+            if (!Double.isFinite(lowerBound) || lowerBound <= 0) {
+                throw new IOException(
+                        directory + ": arc_id " + edge.arcId()
+                                + " has non-positive lower-bound travel time "
+                                + lowerBound);
+            }
+            if (!requiredDomain.difference(
+                    edge.travelTimeFunction().domain()).isEmpty()) {
+                throw new IOException(
+                        directory + ": arc_id " + edge.arcId()
+                                + " travel-time support does not cover "
+                                + requiredDomain);
+            }
+            if (!requiredDomain.difference(
+                    edge.scoreFunction().domain()).isEmpty()) {
+                throw new IOException(
+                        directory + ": arc_id " + edge.arcId()
+                                + " score support does not cover "
+                                + requiredDomain);
+            }
+        }
+        return dataset;
+    }
+
     private static Map<Integer, Node> readNodes(Path path) throws IOException {
         Map<Integer, Node> nodes = new HashMap<>();
         try (BufferedReader reader = openMaybeGzip(path)) {
@@ -172,6 +246,22 @@ public final class GeneratedGraphLoader {
                 int arcId = intJsonField(line, "arc_id", path, lineNumber);
                 EdgeBuilder builder = builderFor(builders, arcId, path, lineNumber);
                 validateJsonEndpoint(line, builder, path, lineNumber);
+                if (builder.travelTimeFunction != null) {
+                    throw new IOException(
+                            path + ":" + lineNumber
+                                    + ": duplicate travel-time function for arc_id "
+                                    + arcId);
+                }
+                double functionBase = doubleJsonField(
+                        line, "base_travel_time", path, lineNumber);
+                if (Domain.canonicalTime(functionBase)
+                        != Domain.canonicalTime(builder.baseTravelTime)) {
+                    throw new IOException(
+                            path + ":" + lineNumber
+                                    + ": base_travel_time mismatch for arc_id "
+                                    + arcId + ": static=" + builder.baseTravelTime
+                                    + " function=" + functionBase);
+                }
                 String array = jsonArrayField(line, "travel_time_breakpoints", path, lineNumber);
                 builder.travelTimeFunction = new PiecewiseLinearFn(parseBreakpoints(array, path, lineNumber));
             }
@@ -193,6 +283,12 @@ public final class GeneratedGraphLoader {
                 int arcId = intJsonField(line, "arc_id", path, lineNumber);
                 EdgeBuilder builder = builderFor(builders, arcId, path, lineNumber);
                 validateJsonEndpoint(line, builder, path, lineNumber);
+                if (builder.scoreFunction != null) {
+                    throw new IOException(
+                            path + ":" + lineNumber
+                                    + ": duplicate score function for arc_id "
+                                    + arcId);
+                }
                 String array = jsonArrayField(line, "score_intervals", path, lineNumber);
                 builder.scoreFunction = new PiecewiseConstFn(parseScoreIntervals(array, path, lineNumber));
             }
@@ -209,13 +305,17 @@ public final class GeneratedGraphLoader {
         }
         try {
             return new ManifestSummary(
+                    optionalInt(root, "schema_version", 1, path),
                     requiredInt(root, "num_nodes", path),
                     requiredInt(root, "num_arcs", path),
                     requiredLong(root, "seed", path),
                     requiredInt(root, "selected_score_edge_count", path),
                     requiredBoolean(root, "unlisted_edges_have_score_zero", path),
                     readTemporalSupport(root, path),
-                    readRushWindows(root, path));
+                    readRushWindows(root, path),
+                    conversionContractId(root, path),
+                    optionalText(root, "dataset_checksum", path),
+                    optionalText(root, "temporal_attribute_checksum", path));
         } catch (IllegalArgumentException failure) {
             throw new IOException(path + ": invalid manifest: " + failure.getMessage(), failure);
         }
@@ -298,6 +398,48 @@ public final class GeneratedGraphLoader {
             throw new IOException(path + ": integer field out of range: " + field);
         }
         return (int) value;
+    }
+
+    private static int optionalInt(
+            JsonNode root,
+            String field,
+            int defaultValue,
+            Path path) throws IOException {
+        JsonNode value = root.get(field);
+        if (value == null || value.isNull()) {
+            return defaultValue;
+        }
+        if (!value.isIntegralNumber() || !value.canConvertToInt()) {
+            throw new IOException(path + ": invalid integer JSON field " + field);
+        }
+        return value.intValue();
+    }
+
+    private static Optional<String> conversionContractId(
+            JsonNode root,
+            Path path) throws IOException {
+        JsonNode conversion = root.get("conversion_contract");
+        if (conversion == null || conversion.isNull()) {
+            return Optional.empty();
+        }
+        if (!conversion.isObject()) {
+            throw new IOException(path + ": conversion_contract must be an object");
+        }
+        return optionalText(conversion, "contract_id", path);
+    }
+
+    private static Optional<String> optionalText(
+            JsonNode root,
+            String field,
+            Path path) throws IOException {
+        JsonNode value = root.get(field);
+        if (value == null || value.isNull()) {
+            return Optional.empty();
+        }
+        if (!value.isTextual() || value.textValue().isBlank()) {
+            throw new IOException(path + ": invalid text JSON field " + field);
+        }
+        return Optional.of(value.textValue());
     }
 
     private static long requiredLong(JsonNode root, String field, Path path) throws IOException {
@@ -420,6 +562,29 @@ public final class GeneratedGraphLoader {
             throw new IOException(path + ":" + lineNumber + ": missing integer JSON field " + field);
         }
         return Long.parseLong(matcher.group(1));
+    }
+
+    private static double doubleJsonField(
+            String text,
+            String field,
+            Path path,
+            long lineNumber) throws IOException {
+        Pattern pattern = Pattern.compile(
+                "\"" + Pattern.quote(field)
+                        + "\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)");
+        Matcher matcher = pattern.matcher(text);
+        if (!matcher.find()) {
+            throw new IOException(
+                    path + ":" + lineNumber
+                            + ": missing numeric JSON field " + field);
+        }
+        double value = Double.parseDouble(matcher.group(1));
+        if (!Double.isFinite(value)) {
+            throw new IOException(
+                    path + ":" + lineNumber
+                            + ": non-finite JSON field " + field);
+        }
+        return value;
     }
 
     private static boolean booleanJsonField(String text, String field, Path path, long lineNumber) throws IOException {

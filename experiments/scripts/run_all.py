@@ -15,7 +15,7 @@ if __package__ in {None, ""}:
 from experiments.plots.make_all_plots import main as _unused_plot_main
 from experiments.scripts.build_matrices import build_all
 from experiments.scripts.collect_results import collect
-from experiments.scripts.common.atomic_io import atomic_write_json, mark_stage
+from experiments.scripts.common.atomic_io import atomic_write_json, atomic_write_text, mark_stage
 from experiments.scripts.common.config import filtered_design, load_design, repo_path
 from experiments.scripts.common.provenance import git_state, host_environment
 from experiments.scripts.common.toolchain import environment, executable
@@ -27,7 +27,7 @@ from experiments.scripts.package_release import package
 from experiments.scripts.preflight import run_preflight
 from experiments.scripts.resolve_pace_b import resolve
 from experiments.scripts.summarize_results import summarize
-from experiments.scripts.validate_results import validate
+from experiments.scripts.validate_results import validate, validate_planned_cells
 
 
 STAGES = (
@@ -147,9 +147,30 @@ def main() -> int:
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be positive")
         root, identity = _prepare_run(design, args.run_id, args.backend, args.resume)
-        preflight = run_preflight(args.config, checksums=not args.plan_only, allow_unresolved_resources=args.plan_only)
+        preflight = run_preflight(
+            args.config,
+            checksums=not args.plan_only,
+            allow_unresolved_resources=args.plan_only,
+            planning=args.plan_only,
+        )
         atomic_write_json(root / "provenance" / "preflight.json", preflight)
         plan = build_all(design, root / "plan" / "matrices")
+        planned_rows = []
+        for matrix_path in sorted((root / "plan" / "matrices").glob("e*.jsonl")):
+            planned_rows.extend(read_jsonl(matrix_path))
+        independent_cells = validate_planned_cells(planned_rows, design)
+        plan["matrix_validation"] = {
+            key: value for key, value in independent_cells.items()
+            if not key.startswith("_")
+        }
+        atomic_write_json(
+            root / "plan" / "matrices" / "matrix_counts.json",
+            plan,
+        )
+        if not plan["matrix_validation"]["passed"]:
+            raise RuntimeError(
+                "independent matrix-cell validation failed"
+            )
         if args.plan_only:
             output = {
                 "run_id": args.run_id,
@@ -159,13 +180,51 @@ def main() -> int:
                 "job_counts": plan["study_counts"],
                 "total_jobs": plan["total_jobs"],
                 "logical_cores": plan["logical_cores_used_for_plan"],
+                "physical_cores": plan["physical_cores_used_for_plan"],
+                "resolved_physical_core_thread_list":
+                    plan["resolved_physical_core_thread_list"],
                 "configured_timeout_seconds": design["resources"]["timeout_seconds"],
                 "configured_memory_limit_mb": design["resources"].get("memory_limit_mb"),
+                "estimated_storage_bytes": plan["estimated_storage_bytes"],
+                "serial_timeout_upper_bound_seconds":
+                    plan["serial_timeout_upper_bound_seconds"],
+                "configured_parallel_timeout_upper_bound_seconds":
+                    plan["configured_parallel_timeout_upper_bound_seconds"],
+                "pace_b_candidate_work_upper_bound":
+                    plan["pace_b_candidate_work_upper_bound"],
+                "matrix_validation": plan["matrix_validation"],
                 "preflight_blockers": preflight["blockers"],
                 "preflight_warnings": [preflight["resources"]["warning"]] if preflight["resources"].get("warning") else [],
+                "preflight_passed": preflight["passed"],
+                "plan_validation_passed": plan["matrix_validation"]["passed"],
                 "algorithms_started": False,
             }
             atomic_write_json(root / "plan" / "PLAN_REPORT.json", output)
+            lines = [
+                "# PACE Q1 Plan Report", "",
+                f"Run ID: `{args.run_id}`", "",
+                f"- Exact planned jobs: {plan['total_jobs']:,}",
+                f"- Estimated storage: {plan['estimated_storage_bytes']:,} bytes",
+                f"- Serial timeout upper bound: {plan['serial_timeout_upper_bound_seconds']:,} seconds",
+                f"- Configured-parallel timeout upper bound: {plan['configured_parallel_timeout_upper_bound_seconds']:,} seconds",
+                f"- Physical cores: {plan['physical_cores_used_for_plan']}",
+                "- Resolved thread list: "
+                    + ", ".join(map(str, plan["resolved_physical_core_thread_list"])),
+                "- Duplicate planned cells: 0",
+                "- Missing planned cells: 0",
+                "- Algorithms started: no",
+                "", "## Study job counts", "",
+            ]
+            lines.extend(
+                f"- {study_id}: {count:,}"
+                for study_id, count in sorted(plan["study_counts"].items())
+            )
+            lines.extend(["", "## Preflight blockers", ""])
+            lines.extend(
+                [f"- {blocker}" for blocker in preflight["blockers"]]
+                or ["- None"]
+            )
+            atomic_write_text(root / "plan" / "PLAN_REPORT.md", "\n".join(lines) + "\n")
             print(json.dumps(output, indent=2, sort_keys=True))
             return 0
         for stage in stages:
@@ -199,8 +258,8 @@ def main() -> int:
                 result = _execute_studies(
                     design, root, args.run_id, args.backend, STAGE_STUDIES[stage], max_concurrent
                 )
-                if stage == "pilot" and result.get("jobs") and args.backend == "local":
-                    result["resolved_pace_b"] = resolve(root)
+                if stage == "pilot" and result.get("jobs"):
+                    result["resolved_pace_b"] = resolve(root, design)
             elif stage == "collect":
                 result = collect(root)
             elif stage == "validate":
@@ -211,10 +270,10 @@ def main() -> int:
                 result = summarize(root, design)
             elif stage == "plot":
                 _run_command([sys.executable, "experiments/plots/make_all_plots.py", "--config", str(args.config), "--run-id", args.run_id])
-                result = {"figures": 8}
+                result = {"figures": 10}
             elif stage == "table":
                 _run_command([sys.executable, "experiments/tables/make_all_tables.py", "--config", str(args.config), "--run-id", args.run_id])
-                result = {"tables": 8}
+                result = {"tables": 12}
             elif stage == "package":
                 result = package(root)
             else:

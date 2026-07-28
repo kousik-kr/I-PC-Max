@@ -1,1 +1,1 @@
-{"schema_version":1,"dataset_id":"USA","path":"data/input/USA","enabled":true,"expected_nodes":23947347,"expected_edges":58333344,"required_support_end":10080}
+{"schema_version":1,"dataset_id":"USA","path":"data/input/USA","enabled":true,"expected_nodes":23947347,"expected_edges":58333344,"required_support_end":10080,"required_conversion_contract":"declared_centisecond_normalization-v1"}

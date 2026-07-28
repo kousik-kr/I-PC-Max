@@ -3,9 +3,13 @@
   "split":"evaluation","pairs_per_dataset":100,"centers":[510,1110],"trials":3,
   "algorithms":[
     {"id":"pace-b","variant":"full","parameters":{"ablation":"none"}},
-    {"id":"pace-b","variant":"no-compression","parameters":{"ablation":"no-compression"}},
+    {"id":"pace-b","variant":"no-safe-corridor","parameters":{"ablation":"no-safe-corridor"}},
+    {"id":"pace-b","variant":"no-pivot-diversification","parameters":{"ablation":"no-pivot-diversification"}},
+    {"id":"pace-b","variant":"fast-only-connector","parameters":{"ablation":"fast-only-connector"}},
+    {"id":"pace-b","variant":"no-connector-cache","parameters":{"ablation":"no-connector-cache"}},
+    {"id":"pace-b","variant":"no-score-upper-bound","parameters":{"ablation":"no-score-upper-bound"}},
     {"id":"pace-b","variant":"no-memo","parameters":{"ablation":"no-memo"}},
-    {"id":"pace-b","variant":"no-safe-dom","parameters":{"ablation":"no-safe-dom"}},
+    {"id":"pace-b","variant":"no-frontier-compression","parameters":{"ablation":"no-compression"}},
     {"id":"pace-b","variant":"theta0","parameters":{"theta":0}},
     {"id":"pace-b","variant":"serial","parameters":{"ablation":"serial","threads":1}}
   ],

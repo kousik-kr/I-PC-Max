@@ -73,8 +73,15 @@ public final class PaceCli {
                     cli.threadCount,
                     true);
             try {
-                EnvelopeProfile profile = new PACE(graph, options).run(query);
-                printProfile(out, cli.algorithm, policy, ExactnessScope.RETAINED_FRONTIER, profile);
+                PACE pace = new PACE(graph, options);
+                EnvelopeProfile profile = pace.run(query);
+                ExactnessScope scope = switch (
+                        pace.lastGenerationResult().exactnessScope()) {
+                    case GLOBAL_CERTIFIED -> ExactnessScope.GLOBAL_CERTIFIED;
+                    case RETAINED_FRONTIER -> ExactnessScope.RETAINED_FRONTIER;
+                    case NOT_CERTIFIED -> ExactnessScope.NOT_CERTIFIED;
+                };
+                printProfile(out, cli.algorithm, policy, scope, profile);
             } catch (PaceException failure) {
                 err.println("algorithm=" + cli.algorithm);
                 err.println("status=" + failure.status());

@@ -51,12 +51,34 @@ def _query_row(job: dict[str, Any]) -> dict[str, Any]:
     return matches[0]
 
 
-def _resolved_pace_b(run_root: Path) -> dict[str, int]:
-    path = run_root / "provenance" / "resolved_pace_b.json"
+def _resolved_pace_b(
+    run_root: Path,
+    design: dict[str, Any],
+) -> dict[str, int]:
+    path = run_root / "provenance" / "resolved_pace_b.yaml"
     if not path.is_file():
         raise FileNotFoundError("PACE-B parameters are unresolved; run the pilot stage first")
     value = json.loads(path.read_text(encoding="utf-8"))
-    return {"anchor_limit": int(value["anchor_limit"]), "k": int(value["k"])}
+    result = {
+        "pivot_limit_l": int(value["pivot_limit_l"]),
+        "connector_limit_kc": int(value["connector_limit_kc"]),
+        "frontier_limit_kf": int(value["frontier_limit_kf"]),
+        "connector_expansion_cap_mc":
+            int(value["connector_expansion_cap_mc"]),
+        "breakpoint_cap_mb": int(value["breakpoint_cap_mb"]),
+        "query_work_cap_mq": int(value["query_work_cap_mq"]),
+    }
+    defaults = design["pace_b_defaults"]
+    for name in (
+        "connector_expansion_cap_mc",
+        "breakpoint_cap_mb",
+        "query_work_cap_mq",
+    ):
+        if result[name] != int(defaults[name]):
+            raise ValueError(
+                f"frozen {name} differs from configured safety policy"
+            )
+    return result
 
 
 def _command(
@@ -66,10 +88,30 @@ def _command(
     memory = resources.get("memory_limit_mb")
     if memory is None:
         raise ValueError("memory_limit_mb must be resolved before execution")
-    parameters = dict(job.get("algorithm_parameters") or {})
+    parameters: dict[str, Any] = {}
+    if job["algorithm_id"] == "pace-b":
+        defaults = design["pace_b_defaults"]
+        parameters.update({
+            "theta": defaults["theta"],
+            "connector_expansion_cap_mc":
+                defaults["connector_expansion_cap_mc"],
+            "breakpoint_cap_mb": defaults["breakpoint_cap_mb"],
+            "query_work_cap_mq": defaults["query_work_cap_mq"],
+            "threads": defaults["threads"],
+        })
+    algorithm_parameters = dict(
+        job.get("algorithm_parameters") or {}
+    )
+    explicitly_resolved = bool(
+        algorithm_parameters.pop("resolved_pace_b", False)
+    )
+    parameters.update(algorithm_parameters)
+    if (
+        job["algorithm_id"] == "pace-b"
+        and (explicitly_resolved or job["study_id"] != "E02")
+    ):
+        parameters.update(_resolved_pace_b(run_root, design))
     parameters.update(job.get("axis") or {})
-    if parameters.pop("resolved_pace_b", False):
-        parameters.update(_resolved_pace_b(run_root))
     dataset_path = "demo"
     if job["dataset_id"] != "demo":
         dataset_path = str(repo_path(f"data/input/{job['dataset_id']}"))
@@ -98,6 +140,12 @@ def _command(
         command.extend(["--ablation", str(ablation)])
     flags = {
         "theta": "--theta", "anchor_limit": "--anchor-limit", "k": "--k",
+        "pivot_limit_l": "--pivot-limit-l",
+        "connector_limit_kc": "--connector-limit-kc",
+        "frontier_limit_kf": "--frontier-limit-kf",
+        "connector_expansion_cap_mc": "--connector-expansion-cap-mc",
+        "breakpoint_cap_mb": "--breakpoint-cap-mb",
+        "query_work_cap_mq": "--query-work-cap-mq",
         "rpq_step_minutes": "--rpq-step-minutes", "baseline_k": "--baseline-k",
         "max_enumerated_paths": "--max-enumerated-paths", "max_labels": "--max-labels",
         "max_expansions": "--max-expansions", "max_frontier_fragments": "--max-frontier-fragments",
@@ -105,7 +153,14 @@ def _command(
     for name, flag in flags.items():
         if name in parameters:
             command.extend([flag, str(parameters.pop(name))])
-    ignored_workload_axes = {"window_minutes", "budget_overhead", "score_density", "graph_seed", "compression"}
+    ignored_workload_axes = {
+        "window_minutes",
+        "budget_overhead",
+        "score_density",
+        "graph_seed",
+        "compression",
+        "diagnostic",
+    }
     unknown = set(parameters) - ignored_workload_axes
     if unknown:
         raise ValueError(f"unsupported Java parameters for {job['job_id']}: {sorted(unknown)}")

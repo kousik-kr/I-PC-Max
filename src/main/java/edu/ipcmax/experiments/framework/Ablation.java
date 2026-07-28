@@ -14,7 +14,12 @@ public enum Ablation {
     ALL_ANCHORS("all-anchors"),
     NO_ANCHOR_LB("no-anchor-lb"),
     NO_COMPRESSION("no-compression"),
-    NO_MERGE("no-merge");
+    NO_MERGE("no-merge"),
+    NO_SAFE_CORRIDOR("no-safe-corridor"),
+    NO_PIVOT_DIVERSIFICATION("no-pivot-diversification"),
+    FAST_ONLY_CONNECTOR("fast-only-connector"),
+    NO_CONNECTOR_CACHE("no-connector-cache"),
+    NO_SCORE_UPPER_BOUND("no-score-upper-bound");
 
     private final String id;
 

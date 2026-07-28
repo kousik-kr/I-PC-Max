@@ -7,6 +7,15 @@ import edu.ipcmax.core.pcmax.QuerySpec;
 public interface ExperimentAlgorithm {
     String id();
 
+    /**
+     * Builds immutable dataset-wide state outside measured query time.
+     * Algorithms without preprocessing keep the default no-op.
+     */
+    default void prepare(
+            TDGraph graph,
+            AlgorithmConfig config) {
+    }
+
     AlgorithmResult run(
             TDGraph graph,
             QuerySpec query,

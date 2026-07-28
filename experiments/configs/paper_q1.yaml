@@ -44,7 +44,7 @@
     "budget_overheads": [0.10, 0.20, 0.30, 0.40, 0.50],
     "default_budget_overhead": 0.30,
     "evaluation_grid_minutes": 1,
-    "budget_definition": "GRID_MIN_FASTEST_TRAVEL_TIME",
+    "budget_definition": "GRID_FIXED_DEPARTURE_FASTEST_TRAVEL_TIME",
     "require_horizon_fit": true,
     "allow_time_wrapping": false
   },
@@ -55,26 +55,48 @@
     "algorithm_comparison_threads": 1,
     "retry_infrastructure_failures": 1,
     "retry_algorithm_failures": 0,
-    "metric_definition_version": "pace-q1-metrics-v1"
+    "metric_definition_version": "pace-q1-metrics-v2"
+  },
+  "pace_b_defaults": {
+    "theta": 2,
+    "score_density": 0.20,
+    "threads": 1,
+    "pilot_resolved_fields": ["pivot_limit_l", "connector_limit_kc", "frontier_limit_kf"],
+    "connector_expansion_cap_mc": 5000000,
+    "breakpoint_cap_mb": 1000000,
+    "query_work_cap_mq": 5000000,
+    "resolved_configuration": "resolved_pace_b.yaml"
   },
   "resources": {
     "timeout_seconds": 1800,
     "memory_limit_mb": 256000,
     "max_concurrent": 24,
-    "parallel_thread_candidates": [1, 2, 4, 8, 16, 24],
+    "parallel_thread_candidates": [1, 2, 4, 8, 16, 32],
     "require_server_profile_for_full_run": true
   },
+  "planning": {
+    "estimated_raw_bytes_per_job": 131072,
+    "estimated_fixed_release_bytes": 104857600,
+    "runtime_upper_bound_definition": "planned_jobs * timeout_seconds; parallel bound uses configured max_concurrent"
+  },
   "implementation_gates": {
-    "exactness_corpus_has_1000_seeded_graphs": false,
-    "pace_x_uncompressed_variant_available": false,
-    "pace_parallelism_observed_and_checksum_stable": false,
-    "relative_score_gap_metric_available_for_pilot": false
+    "exactness_corpus_has_1000_seeded_graphs": true,
+    "pace_x_uncompressed_variant_available": true,
+    "pace_parallelism_observed_and_checksum_stable": true,
+    "relative_score_gap_metric_available_for_pilot": true,
+    "safe_corridor_property_verified": true,
+    "score_upper_bound_admissible": true
   },
   "query_generation": {
     "java_main_class": "edu.ipcmax.experiments.querygen.QuerySetGenerator",
+    "paper_java_main_class": "edu.ipcmax.experiments.querygen.PaperQuerySetGenerator",
     "configuration": "experiments/configs/query_generation.yaml",
     "manifest_pattern": "experiments/manifests/queries/{dataset}/paper_q1.jsonl",
     "required_contract": "paper-q1-v1"
+  },
+  "dataset_generation": {
+    "configuration": "experiments/configs/dataset_generation.yaml",
+    "required_conversion_contract": "declared_centisecond_normalization-v1"
   },
   "graph_variants": {
     "score_density_pattern": "data/input/{dataset}/variants/score-density-{percent:03d}",

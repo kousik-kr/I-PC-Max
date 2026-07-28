@@ -13,7 +13,7 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from experiments.scripts.common.config import load_design, repo_path
+from experiments.scripts.common.config import load_design, load_document, repo_path
 from experiments.scripts.common.hashing import sha256_file
 from experiments.scripts.common.toolchain import environment, executable
 
@@ -40,6 +40,8 @@ def validate_manifest(path: Path, dataset: str, design: dict[str, Any]) -> dict[
     pair_centers: dict[tuple[str, int, int], set[int]] = collections.defaultdict(set)
     evaluation_bands: dict[str, set[tuple[int, int]]] = collections.defaultdict(set)
     errors: list[str] = []
+    budget_definition_mismatches = 0
+    grid_mismatches = 0
     for row in rows:
         query_id = row.get("query_id")
         if not isinstance(query_id, str) or query_id in ids:
@@ -48,31 +50,84 @@ def validate_manifest(path: Path, dataset: str, design: dict[str, Any]) -> dict[
             ids.add(query_id)
         if row.get("dataset_id") != dataset:
             errors.append(f"query {query_id} has dataset_id {row.get('dataset_id')!r}")
-        metadata = row.get("metadata") or {}
+        source = row.get("source")
+        destination = row.get("destination")
+        if (
+            not isinstance(source, int)
+            or isinstance(source, bool)
+            or source <= 0
+            or not isinstance(destination, int)
+            or isinstance(destination, bool)
+            or destination <= 0
+        ):
+            errors.append(f"query {query_id} has invalid source/destination")
+        elif source == destination:
+            errors.append(f"query {query_id} has identical source and destination")
+        interval_start = row.get("interval_start")
+        interval_end = row.get("interval_end")
+        window_length = row.get("window_length")
+        budget = row.get("budget")
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in (interval_start, interval_end, window_length)
+        ):
+            errors.append(f"query {query_id} has non-integer interval/window fields")
+        elif (
+            interval_start < 0
+            or interval_end <= interval_start
+            or window_length != interval_end - interval_start
+        ):
+            errors.append(f"query {query_id} has an invalid interval/window")
+        if (
+            not isinstance(budget, (int, float))
+            or isinstance(budget, bool)
+            or budget < 0
+        ):
+            errors.append(f"query {query_id} has an invalid budget")
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict):
+            errors.append(f"query {query_id} has invalid metadata")
+            continue
         split = metadata.get("split")
         center = metadata.get("time_center")
         if split not in pairs:
             errors.append(f"query {query_id} has invalid metadata.split {split!r}")
             continue
-        pairs[split].add((row.get("source"), row.get("destination")))
+        pairs[split].add((source, destination))
         if isinstance(center, int):
             centers[split].add(center)
-            pair_centers[(split, row.get("source"), row.get("destination"))].add(center)
+            pair_centers[(split, source, destination)].add(center)
+            if all(isinstance(value, int) for value in (interval_start, interval_end)):
+                if interval_start + interval_end != 2 * center:
+                    errors.append(f"query {query_id} is not centered at {center}")
+        else:
+            errors.append(f"query {query_id} has invalid metadata.time_center {center!r}")
         support_end = metadata.get("function_support_end")
         if not isinstance(support_end, (int, float)):
             errors.append(f"query {query_id} lacks metadata.function_support_end")
-        elif row.get("interval_end", 0) + row.get("budget", 0) > support_end:
+        elif (
+            isinstance(interval_end, (int, float))
+            and isinstance(budget, (int, float))
+            and interval_end + budget > support_end
+        ):
             errors.append(f"query {query_id} exceeds function support")
         if metadata.get("budget_definition") != design["workload"]["budget_definition"]:
-            errors.append(f"query {query_id} has the wrong budget definition")
+            budget_definition_mismatches += 1
         if metadata.get("evaluation_grid_minutes") != design["workload"]["evaluation_grid_minutes"]:
-            errors.append(f"query {query_id} has the wrong evaluation grid")
+            grid_mismatches += 1
+        if metadata.get("validation_source_destination_present") is not True:
+            errors.append(f"query {query_id} lacks graph node validation provenance")
+        if metadata.get("validation_path_expected") is not True:
+            errors.append(f"query {query_id} lacks path validation provenance")
+        graph_checksum = metadata.get("graph_checksum")
+        if not isinstance(graph_checksum, str) or not graph_checksum:
+            errors.append(f"query {query_id} lacks a graph checksum")
         band = metadata.get("distance_band")
         if split == "evaluation":
             if band not in {"B1", "B2", "B3", "B4", "B5"}:
                 errors.append(f"query {query_id} has invalid distance band {band!r}")
             else:
-                evaluation_bands[band].add((row.get("source"), row.get("destination")))
+                evaluation_bands[band].add((source, destination))
     expected = design["workload"]["pair_splits"]
     for split, count in expected.items():
         if len(pairs[split]) != count:
@@ -91,6 +146,15 @@ def validate_manifest(path: Path, dataset: str, design: dict[str, Any]) -> dict[
         overlap = pairs[left] & pairs[right]
         if overlap:
             errors.append(f"{left}/{right} pair leakage: {len(overlap)} pairs")
+    if budget_definition_mismatches:
+        errors.append(
+            f"{budget_definition_mismatches} queries have the wrong "
+            "budget definition"
+        )
+    if grid_mismatches:
+        errors.append(
+            f"{grid_mismatches} queries have the wrong evaluation grid"
+        )
     return {
         "dataset_id": dataset,
         "path": path.as_posix(),
@@ -115,14 +179,71 @@ def validate_all(design: dict[str, Any]) -> dict[str, Any]:
         if not path.is_file():
             records.append({"dataset_id": dataset, "path": path.as_posix(), "errors": ["manifest is missing"]})
         else:
-            record = validate_manifest(path, dataset, design)
-            actual_ids = {row["query_id"] for row in read_jsonl(path)}
+            try:
+                record = validate_manifest(path, dataset, design)
+                actual_ids = {row["query_id"] for row in read_jsonl(path)}
+            except (OSError, ValueError, json.JSONDecodeError) as failure:
+                records.append({
+                    "dataset_id": dataset,
+                    "path": path.as_posix(),
+                    "errors": [f"manifest is invalid: {failure}"],
+                })
+                continue
             missing = required_ids[dataset] - actual_ids
             if missing:
                 record["errors"].append(
                     f"manifest lacks {len(missing)} matrix query variants; first missing ID: {sorted(missing)[0]}"
                 )
             record["required_matrix_query_ids"] = len(required_ids[dataset])
+            sidecars = [
+                (path.with_suffix(".manifest.json"), path, "combined"),
+                *[
+                    (
+                        path.parent / f"{split}.manifest.json",
+                        path.parent / f"{split}.jsonl",
+                        split,
+                    )
+                    for split in ("pilot", "warmup", "evaluation")
+                ],
+            ]
+            for sidecar_path, query_path, split in sidecars:
+                if not sidecar_path.is_file():
+                    record["errors"].append(f"query sidecar is missing: {sidecar_path}")
+                    continue
+                try:
+                    sidecar = load_document(sidecar_path)
+                except (OSError, ValueError, json.JSONDecodeError) as failure:
+                    record["errors"].append(f"invalid query sidecar {sidecar_path}: {failure}")
+                    continue
+                if sidecar.get("dataset_id") != dataset:
+                    record["errors"].append(
+                        f"{sidecar_path} has dataset_id {sidecar.get('dataset_id')!r}"
+                    )
+                if sidecar.get("query_split") != split:
+                    record["errors"].append(
+                        f"{sidecar_path} has query_split {sidecar.get('query_split')!r}"
+                    )
+                if not query_path.is_file():
+                    record["errors"].append(f"split query file is missing: {query_path}")
+                    continue
+                if sidecar.get("output_query_sha256") != sha256_file(query_path):
+                    record["errors"].append(f"query checksum mismatch in {sidecar_path}")
+                split_rows = read_jsonl(query_path)
+                if sidecar.get("number_of_queries") != len(split_rows):
+                    record["errors"].append(
+                        f"query count mismatch in {sidecar_path}"
+                    )
+                if split != "combined":
+                    expected_split_ids = {
+                        row["query_id"]
+                        for row in read_jsonl(path)
+                        if row.get("metadata", {}).get("split") == split
+                    }
+                    actual_split_ids = {row.get("query_id") for row in split_rows}
+                    if actual_split_ids != expected_split_ids:
+                        record["errors"].append(
+                            f"{split} query file does not match the combined manifest"
+                        )
             records.append(record)
     return {"datasets": records, "passed": all(not item["errors"] for item in records)}
 

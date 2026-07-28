@@ -48,14 +48,19 @@ class ExperimentAlgorithmsTest {
     }
 
     @Test
-    void pacePoliciesReportRetainedFrontierRatherThanGlobalExactness() {
+    void pacePoliciesReportPolicySpecificExactness() {
         var graph = ExperimentDatasets.demo();
         for (String policy : List.of("pace-x", "pace-b")) {
             var result = new PaceExperimentAlgorithm(policy).run(
                     graph, QUERY, config(policy), new ExperimentInstrumentation());
 
-            assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
-            assertFalse(result.completeProfile());
+            if (policy.equals("pace-x")) {
+                assertEquals(ExactnessScope.GLOBAL_CERTIFIED, result.exactnessScope());
+                assertTrue(result.completeProfile());
+            } else {
+                assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
+                assertFalse(result.completeProfile());
+            }
         }
     }
 
@@ -105,6 +110,32 @@ class ExperimentAlgorithmsTest {
         assertNotNull(result.scalars().get("selected_departure_time"));
         assertNotNull(result.scalars().get("selected_path_id"));
         assertTrue(result.profile().segments().stream().anyMatch(segment -> segment.found()));
+    }
+
+    @Test
+    void finalAblationsToggleOnlyTheirDeclaredProductionFeatures() {
+        var base = config("pace-b").paceOptions();
+
+        assertFalse(config("pace-b", Ablation.NO_SAFE_CORRIDOR, 4, 8, 8, 1,
+                5, 2, 10_000, 10_000, 50_000).paceOptions().features().safeCorridorEnabled());
+        assertFalse(config("pace-b", Ablation.NO_PIVOT_DIVERSIFICATION, 4, 8, 8, 1,
+                5, 2, 10_000, 10_000, 50_000).paceOptions().features().pivotDiversificationEnabled());
+        assertFalse(config("pace-b", Ablation.FAST_ONLY_CONNECTOR, 4, 8, 8, 1,
+                5, 2, 10_000, 10_000, 50_000).paceOptions().features().connectorPortfolioEnabled());
+        assertFalse(config("pace-b", Ablation.NO_CONNECTOR_CACHE, 4, 8, 8, 1,
+                5, 2, 10_000, 10_000, 50_000).paceOptions().features().connectorCacheEnabled());
+        assertFalse(config("pace-b", Ablation.NO_SCORE_UPPER_BOUND, 4, 8, 8, 1,
+                5, 2, 10_000, 10_000, 50_000).paceOptions().features().scoreUpperBoundEnabled());
+        var noMemo = config("pace-b", Ablation.NO_MEMO, 4, 8, 8, 1,
+                5, 2, 10_000, 10_000, 50_000).paceOptions();
+        assertFalse(noMemo.memoizationEnabled());
+        assertFalse(noMemo.features().connectorCacheEnabled());
+        assertFalse(noMemo.features().profileCacheEnabled());
+        assertTrue(base.features().safeCorridorEnabled());
+        assertTrue(base.features().pivotDiversificationEnabled());
+        assertTrue(base.features().connectorPortfolioEnabled());
+        assertTrue(base.features().connectorCacheEnabled());
+        assertTrue(base.features().scoreUpperBoundEnabled());
     }
 
     private static AlgorithmConfig config(String algorithm) {

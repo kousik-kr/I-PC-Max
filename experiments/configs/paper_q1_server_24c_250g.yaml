@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "experiment_id": "pace_q1_server_24c_250g",
+  "description": "PACE Q1 paper design for the resolved 32-physical-core, 250-GiB execution server",
+  "datasets": ["NY", "FLA", "CAL", "USA"],
+  "dataset_configs": {
+    "NY": "experiments/configs/datasets/ny.yaml",
+    "FLA": "experiments/configs/datasets/fla.yaml",
+    "CAL": "experiments/configs/datasets/cal.yaml",
+    "USA": "experiments/configs/datasets/usa.yaml"
+  },
+  "studies": [
+    "experiments/configs/studies/e00_preflight.yaml",
+    "experiments/configs/studies/e01_correctness.yaml",
+    "experiments/configs/studies/e02_bounded_pilot.yaml",
+    "experiments/configs/studies/e03_main.yaml",
+    "experiments/configs/studies/e04_compactness.yaml",
+    "experiments/configs/studies/e05_window.yaml",
+    "experiments/configs/studies/e06_budget.yaml",
+    "experiments/configs/studies/e07_theta.yaml",
+    "experiments/configs/studies/e08_score_density.yaml",
+    "experiments/configs/studies/e09_lk_tradeoff.yaml",
+    "experiments/configs/studies/e10_ablation.yaml",
+    "experiments/configs/studies/e11_parallel.yaml",
+    "experiments/configs/studies/e12_seed_robustness.yaml",
+    "experiments/configs/studies/e13_release.yaml"
+  ],
+  "seeds": {
+    "graph_main": 42,
+    "query_evaluation": 20260722,
+    "query_pilot": 20260723,
+    "query_warmup": 20260724,
+    "schedule": 20260725,
+    "bootstrap": 20260726,
+    "tiny_graph_properties": 20260727,
+    "robustness_graphs": [42, 43, 44]
+  },
+  "workload": {
+    "pair_splits": {"pilot": 20, "warmup": 10, "evaluation": 100},
+    "distance_bands": 5,
+    "time_centers_minutes": [510, 1110],
+    "window_lengths_minutes": [120, 180, 240, 300, 360],
+    "default_window_minutes": 120,
+    "budget_overheads": [0.10, 0.20, 0.30, 0.40, 0.50],
+    "default_budget_overhead": 0.30,
+    "evaluation_grid_minutes": 1,
+    "budget_definition": "GRID_FIXED_DEPARTURE_FASTEST_TRAVEL_TIME",
+    "require_horizon_fit": true,
+    "allow_time_wrapping": false
+  },
+  "protocol": {
+    "warmup_passes": 1,
+    "measured_trials": 3,
+    "process_isolation": true,
+    "algorithm_comparison_threads": 1,
+    "retry_infrastructure_failures": 1,
+    "retry_algorithm_failures": 0,
+    "metric_definition_version": "pace-q1-metrics-v2"
+  },
+  "pace_b_defaults": {
+    "theta": 2,
+    "score_density": 0.20,
+    "threads": 1,
+    "pilot_resolved_fields": ["pivot_limit_l", "connector_limit_kc", "frontier_limit_kf"],
+    "connector_expansion_cap_mc": 5000000,
+    "breakpoint_cap_mb": 1000000,
+    "query_work_cap_mq": 5000000,
+    "resolved_configuration": "resolved_pace_b.yaml"
+  },
+  "resources": {
+    "timeout_seconds": 1800,
+    "memory_limit_mb": 256000,
+    "max_concurrent": 24,
+    "parallel_thread_candidates": [1, 2, 4, 8, 16, 32],
+    "require_server_profile_for_full_run": true
+  },
+  "planning": {
+    "estimated_raw_bytes_per_job": 131072,
+    "estimated_fixed_release_bytes": 104857600,
+    "runtime_upper_bound_definition": "planned_jobs * timeout_seconds; parallel bound uses configured max_concurrent"
+  },
+  "implementation_gates": {
+    "exactness_corpus_has_1000_seeded_graphs": true,
+    "pace_x_uncompressed_variant_available": true,
+    "pace_parallelism_observed_and_checksum_stable": true,
+    "relative_score_gap_metric_available_for_pilot": true,
+    "safe_corridor_property_verified": true,
+    "score_upper_bound_admissible": true
+  },
+  "query_generation": {
+    "java_main_class": "edu.ipcmax.experiments.querygen.QuerySetGenerator",
+    "paper_java_main_class": "edu.ipcmax.experiments.querygen.PaperQuerySetGenerator",
+    "configuration": "experiments/configs/query_generation.yaml",
+    "manifest_pattern": "experiments/manifests/queries/{dataset}/paper_q1.jsonl",
+    "required_contract": "paper-q1-v1"
+  },
+  "dataset_generation": {
+    "configuration": "experiments/configs/dataset_generation.yaml",
+    "required_conversion_contract": "declared_centisecond_normalization-v1"
+  },
+  "graph_variants": {
+    "score_density_pattern": "data/input/{dataset}/variants/score-density-{percent:03d}",
+    "graph_seed_pattern": "data/input/{dataset}/variants/seed-{seed}"
+  },
+  "paths": {
+    "data_root": "data/input",
+    "results_root": "experiments/results",
+    "matrix_root": "experiments/manifests/matrices",
+    "query_root": "experiments/manifests/queries",
+    "jar": "target/pace-bench.jar"
+  }
+}

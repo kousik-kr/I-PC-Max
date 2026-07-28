@@ -36,10 +36,45 @@ final class CanonicalPathProfileBuilder {
             double budget,
             int pivotId,
             boolean compressed) {
-        if (graph == null || anchors == null || arcIds == null || requestedDomain == null) {
+        if (anchors == null) {
+            throw new IllegalArgumentException("anchor index is required");
+        }
+        return replay(
+                graph,
+                anchors.queryHorizon(),
+                anchors.anchorArcIds(),
+                arcIds,
+                source,
+                destination,
+                requestedDomain,
+                budget,
+                pivotId,
+                compressed);
+    }
+
+    /**
+     * Replays a path for the layered engine using only the selected query-wide
+     * pivot set. Non-selected score-bearing arcs remain ordinary scored arcs.
+     */
+    static Optional<CandidateProfile> replay(
+            TDGraph graph,
+            Domain queryHorizon,
+            Set<Integer> selectedPivotArcIds,
+            List<Integer> arcIds,
+            int source,
+            int destination,
+            Domain requestedDomain,
+            double budget,
+            int pivotId,
+            boolean compressed) {
+        if (graph == null
+                || queryHorizon == null
+                || selectedPivotArcIds == null
+                || arcIds == null
+                || requestedDomain == null) {
             throw new IllegalArgumentException("graph, anchor index, path, and requested domain are required");
         }
-        Domain rootDomain = requestedDomain.intersection(anchors.queryHorizon());
+        Domain rootDomain = requestedDomain.intersection(queryHorizon);
         if (rootDomain.isEmpty()) {
             return Optional.empty();
         }
@@ -67,11 +102,12 @@ final class CanonicalPathProfileBuilder {
             if (!vertices.add(edge.target())) {
                 throw new IllegalArgumentException("candidate path is not vertex-simple: " + arcIds);
             }
-            if (anchors.isAnchorArc(arcId)) {
+            if (selectedPivotArcIds.contains(arcId)) {
                 explicitAnchorCount++;
             }
 
-            Domain validEntry = PaceProfiles.validEntryDomain(edge, anchors.queryHorizon());
+            Domain validEntry = PaceProfiles.validEntryDomain(
+                    edge, queryHorizon);
             Domain entryDomain = arrival.preimage(validEntry, arrival.domain());
             if (entryDomain.isEmpty()) {
                 return Optional.empty();
@@ -104,7 +140,8 @@ final class CanonicalPathProfileBuilder {
                             + " instead of subproblem destination " + destination);
         }
 
-        Domain withinHorizon = arrival.preimage(anchors.queryHorizon(), arrival.domain());
+        Domain withinHorizon = arrival.preimage(
+                queryHorizon, arrival.domain());
         if (withinHorizon.isEmpty()) {
             return Optional.empty();
         }

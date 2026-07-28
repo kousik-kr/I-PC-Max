@@ -1,14 +1,28 @@
 {
   "schema_version":1,"study_id":"E09","stage":"sensitivity","mode":"execute","datasets":["NY"],
   "split":"evaluation","pairs_per_dataset":20,"centers":[510,1110],"trials":3,
-  "algorithms":[
-    {"id":"pace-b","parameters":{"theta":2}},
-    {"id":"pace-x","parameters":{"theta":2},"axes":[{}]}
-  ],
+  "algorithms":[{"id":"pace-b","parameters":{"theta":2,"resolved_pace_b":true}}],
   "axes":[
-    {"anchor_limit":4,"k":8},{"anchor_limit":4,"k":16},{"anchor_limit":4,"k":32},{"anchor_limit":4,"k":64},
-    {"anchor_limit":8,"k":8},{"anchor_limit":8,"k":16},{"anchor_limit":8,"k":32},{"anchor_limit":8,"k":64},
-    {"anchor_limit":16,"k":8},{"anchor_limit":16,"k":16},{"anchor_limit":16,"k":32},{"anchor_limit":16,"k":64},
-    {"anchor_limit":32,"k":8},{"anchor_limit":32,"k":16},{"anchor_limit":32,"k":32},{"anchor_limit":32,"k":64}
-  ]
+    {"diagnostic":"pivot_limit","pivot_limit_l":4},
+    {"diagnostic":"pivot_limit","pivot_limit_l":8},
+    {"diagnostic":"pivot_limit","pivot_limit_l":32},
+    {"diagnostic":"connector_limit","connector_limit_kc":8},
+    {"diagnostic":"connector_limit","connector_limit_kc":32},
+    {"diagnostic":"connector_limit","connector_limit_kc":64},
+    {"diagnostic":"frontier_limit","frontier_limit_kf":8},
+    {"diagnostic":"frontier_limit","frontier_limit_kf":32},
+    {"diagnostic":"frontier_limit","frontier_limit_kf":64},
+    {"diagnostic":"high_budget_connector","budget_overhead":0.10},
+    {"diagnostic":"high_budget_connector","budget_overhead":0.20},
+    {"diagnostic":"high_budget_connector","budget_overhead":0.30},
+    {"diagnostic":"high_budget_connector","budget_overhead":0.40},
+    {"diagnostic":"high_budget_connector","budget_overhead":0.50},
+    {"diagnostic":"connector_cap_stress","budget_overhead":0.50,"connector_expansion_cap_mc":1000},
+    {"diagnostic":"connector_cap_stress","budget_overhead":0.50,"connector_expansion_cap_mc":10000},
+    {"diagnostic":"connector_cap_stress","budget_overhead":0.50,"connector_expansion_cap_mc":100000},
+    {"diagnostic":"query_work_cap_stress","query_work_cap_mq":100},
+    {"diagnostic":"query_work_cap_stress","query_work_cap_mq":1000},
+    {"diagnostic":"query_work_cap_stress","query_work_cap_mq":10000}
+  ],
+  "high_budget_metrics":["connector_expansions","valid_connectors","connector_cap_hits","query_runtime","peak_rss","relative_score_gap_percent"]
 }

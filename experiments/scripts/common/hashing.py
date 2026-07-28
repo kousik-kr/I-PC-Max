@@ -47,10 +47,14 @@ def sha256_files(paths: Iterable[Path], base: Path | None = None) -> str:
     return digest.hexdigest()
 
 
-def graph_checksum(directory: Path, filenames: Iterable[str]) -> str:
-    """Match ManifestChecksum's domain-, name-, and length-framed graph hash."""
+def framed_file_checksum(
+    directory: Path,
+    filenames: Iterable[str],
+    domain_text: str,
+) -> str:
+    """Hash named files with Java ManifestChecksum's framing contract."""
     digest = hashlib.sha256()
-    domain = b"PACE-GRAPH-CHECKSUM-v1"
+    domain = domain_text.encode("utf-8")
     digest.update(struct.pack(">I", len(domain)))
     digest.update(domain)
     for filename in filenames:
@@ -63,3 +67,30 @@ def graph_checksum(directory: Path, filenames: Iterable[str]) -> str:
             while chunk := stream.read(1024 * 1024):
                 digest.update(chunk)
     return digest.hexdigest()
+
+
+def graph_checksum(directory: Path, filenames: Iterable[str]) -> str:
+    """Match ManifestChecksum.graphChecksum."""
+    return framed_file_checksum(
+        directory,
+        filenames,
+        "PACE-GRAPH-CHECKSUM-v1",
+    )
+
+
+def dataset_checksum(directory: Path) -> str:
+    """Stable checksum of nodes and directed static edges."""
+    return framed_file_checksum(
+        directory,
+        ("edges_static.csv.gz", "nodes.csv.gz"),
+        "PACE-DATASET-STRUCTURE-CHECKSUM-v1",
+    )
+
+
+def temporal_attribute_checksum(directory: Path) -> str:
+    """Stable checksum of travel-time and score-function payloads."""
+    return framed_file_checksum(
+        directory,
+        ("score_functions.jsonl.gz", "travel_time_functions.jsonl.gz"),
+        "PACE-TEMPORAL-ATTRIBUTE-CHECKSUM-v1",
+    )

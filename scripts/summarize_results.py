@@ -42,7 +42,13 @@ def flat(record: dict) -> dict:
         "query_id": record["query"]["query_id"], "algorithm": record["configuration"]["algorithm"],
         "ablation": record["configuration"]["ablation"], "threads": record["configuration"]["threads"],
         "repetition": record["run"]["repetition"], "status": record["status"]["status_code"],
-        "runtime_ns": record["timing_ns"].get("query_total"), "peak_memory_bytes": record["memory_bytes"].get("peak_rss"),
+        "runtime_ns": record["timing_ns"].get("query_total"),
+        "cpu_time_ns": record["timing_ns"].get("cpu_total"),
+        "peak_memory_bytes": record["memory_bytes"].get("peak_rss")
+        if record["memory_bytes"].get("peak_rss") is not None
+        else record["memory_bytes"].get("peak_heap"),
+        "generation_completion": record["status"].get("generation_completion"),
+        "cap_triggered": ",".join(record["status"].get("cap_triggered") or []),
         "profile_checksum": record["output"].get("profile_checksum"),
         "path_agreement_fraction": record["quality"].get("path_agreement_fraction"),
         "integrated_score_regret": record["quality"].get("integrated_score_regret"),

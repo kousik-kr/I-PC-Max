@@ -11,10 +11,12 @@ import java.util.Objects;
 import java.util.SplittableRandom;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Function;
 
 import edu.ipcmax.core.function.Domain;
-import edu.ipcmax.core.graph.LowerBoundGraph;
 import edu.ipcmax.core.graph.TDGraph;
+import edu.ipcmax.core.index.ExactDijkstraLowerBoundOracle;
+import edu.ipcmax.core.index.LowerBoundOracle;
 import edu.ipcmax.core.loader.GeneratedGraphDataset;
 import edu.ipcmax.core.loader.GeneratedGraphLoader;
 
@@ -40,14 +42,23 @@ public final class QueryCandidateSampler {
             SELECTED);
 
     private final GeneratedGraphLoader loader;
+    private final Function<TDGraph, LowerBoundOracle> lowerBoundFactory;
 
     /** Uses the repository's generated-graph loader. */
     public QueryCandidateSampler() {
-        this(new GeneratedGraphLoader());
+        this(new GeneratedGraphLoader(), ExactDijkstraLowerBoundOracle::new);
     }
 
     QueryCandidateSampler(GeneratedGraphLoader loader) {
+        this(loader, ExactDijkstraLowerBoundOracle::new);
+    }
+
+    QueryCandidateSampler(
+            GeneratedGraphLoader loader,
+            Function<TDGraph, LowerBoundOracle> lowerBoundFactory) {
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.lowerBoundFactory = Objects.requireNonNull(
+                lowerBoundFactory, "lowerBoundFactory");
     }
 
     /**
@@ -101,7 +112,7 @@ public final class QueryCandidateSampler {
         List<Integer> sampledSources = sampleWithoutReplacement(
                 eligibleSources, configuration.sampledSources(), datasetSeed);
 
-        LowerBoundGraph lowerBound = new LowerBoundGraph(graph);
+        LowerBoundOracle lowerBound = lowerBoundFactory.apply(graph);
         List<Integer> destinations = graph.nodeIds();
         List<QueryPairCandidate> accepted = new ArrayList<>(configuration.maximumPairs());
         TreeSet<OrderedPair> seen = new TreeSet<>();
@@ -111,7 +122,7 @@ public final class QueryCandidateSampler {
 
         for (int sampledSourceIndex = 0; sampledSourceIndex < sampledSources.size(); sampledSourceIndex++) {
             int source = sampledSources.get(sampledSourceIndex);
-            LowerBoundGraph.Distances distances = lowerBound.distancesFromSource(source);
+            LowerBoundOracle.Labels distances = lowerBound.distancesFrom(source);
             shortestPathRuns++;
 
             int remainingSources = sampledSources.size() - sampledSourceIndex;
@@ -178,9 +189,9 @@ public final class QueryCandidateSampler {
     }
 
     private static long temporalFunctionComplexity(
-            TDGraph graph, LowerBoundGraph.Distances distances, int destination) {
+            TDGraph graph, LowerBoundOracle.Labels distances, int destination) {
         long complexity = 0;
-        for (int arcId : distances.pathTo(destination).arcIds()) {
+        for (int arcId : distances.witnessPath(destination).arcIds()) {
             complexity = Math.addExact(
                     complexity,
                     graph.edges().get(arcId).travelTimeFunction().breakpoints().size());

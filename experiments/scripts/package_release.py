@@ -20,8 +20,28 @@ def package(run_root: Path) -> dict:
     release = run_root / "release"
     validation_path = release / "validation_report.json"
     validation = json.loads(validation_path.read_text(encoding="utf-8"))
+    effective_config = json.loads(
+        (run_root / "provenance" / "effective_config.json").read_text(
+            encoding="utf-8"
+        )
+    )
     if not validation.get("passed"):
         raise ValueError("release packaging is blocked because validation did not pass")
+    for figure_id in range(1, 11):
+        for suffix in (".pdf", ".svg", ".png", ".json"):
+            path = run_root / "figures" / f"f{figure_id}{suffix}"
+            if not path.is_file():
+                raise FileNotFoundError(f"required figure artifact is missing: {path}")
+        sidecar = json.loads(
+            (run_root / "figures" / f"f{figure_id}.json").read_text(encoding="utf-8")
+        )
+        if sidecar.get("figure_id") != f"F{figure_id}":
+            raise ValueError(f"figure provenance ID mismatch for F{figure_id}")
+    for table_id in range(1, 13):
+        for suffix in (".csv", ".tex"):
+            path = run_root / "tables" / f"t{table_id}{suffix}"
+            if not path.is_file():
+                raise FileNotFoundError(f"required table artifact is missing: {path}")
     for name in ("summaries", "tables", "figures"):
         source = run_root / name
         if not source.is_dir():
@@ -32,6 +52,7 @@ def package(run_root: Path) -> dict:
         (run_root / "provenance" / "environment.json", release / "environment.json"),
         (run_root / "plan" / "matrices" / "matrix_counts.json", release / "matrix_counts.json"),
         (run_root / "tables" / "manuscript_macros.tex", release / "manuscript_macros.tex"),
+        (run_root / "provenance" / "resolved_pace_b.yaml", release / "resolved_pace_b.yaml"),
     ):
         if source.is_file():
             shutil.copy2(source, target)
@@ -39,14 +60,23 @@ def package(run_root: Path) -> dict:
         "# Claim Support Matrix", "",
         "This file identifies evidence locations only. It does not infer positive conclusions.", "",
         "| Research question | Evidence | Required interpretation |", "|---|---|---|",
-        "| RQ1 correctness | T5 and E01 raw records | State the certified scope and every mismatch. |",
-        "| RQ2 efficiency | F1, F2, T6 | Report completion rates with runtime and memory. |",
-        "| RQ3 compactness | F3, T7 | Separate feasible and bottom cells. |",
-        "| RQ4 parameters | F4, F5 | Treat results as one-factor sensitivity. |",
-        "| RQ5 components | F6, T8 | Report paired effects; do not claim interactions. |",
-        "| RQ6 parallelism | F7 | Require observed concurrency and checksum equality. |",
-        "| RQ7 robustness | F8 | State the synthetic-data external-validity limit. |", "",
+        "| RQ1 correctness | T5 and E01 raw records | State certified scope, corridor/score-bound checks, deterministic checksums, and every mismatch. |",
+        "| RQ2 efficiency | F1-F3 and T7 | Report completion, timeout, OOM, cap rates, runtime/PAR-2, and absolute/incremental RSS together. |",
+        "| RQ3 compactness | F4 and T8 | Separate profile cells, paths, feasible coverage, compression, and score outcomes. |",
+        "| RQ4 bounded calibration | F5 and T6 | Use only the disjoint NY pilot and frozen resolved_pace_b.yaml; caps are policy, not tuned outcomes. |",
+        "| RQ5 parameter sensitivity | F6 and E05-E08 summaries | Treat one-factor sweeps as sensitivity evidence, not interaction evidence. |",
+        "| RQ6 connector work bounds | F7 and T9 | Show expansions, valid connectors, cap hits, runtime, memory, and quality across budget. |",
+        "| RQ7 components | F8 and T10 | Report paired ablation effects and all failures/caps. |",
+        "| RQ8 parallelism | F9 and T11 | Require observed workers, speedup, efficiency, utilization, and checksum identity. |",
+        "| RQ9 robustness | F10 and T12 | State the NY/CAL seed scope and fixed-pair design. |",
+        "| Reproducibility | T1-T4, VALIDATION_REPORT, MANIFEST | Bind every manuscript value to this single validated run ID. |", "",
     ]
+    if effective_config.get("smoke"):
+        claim_lines[3:3] = [
+            "**SMOKE FIXTURE ONLY:** figures/tables marked `sample_only` validate the "
+            "rendering and packaging path and are not paper evidence.",
+            "",
+        ]
     atomic_write_text(release / "CLAIM_SUPPORT_MATRIX.md", "\n".join(claim_lines))
     files = sorted(path for path in release.rglob("*") if path.is_file() and path.name != "MANIFEST.json")
     manifest = {

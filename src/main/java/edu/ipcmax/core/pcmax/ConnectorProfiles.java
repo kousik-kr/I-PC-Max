@@ -67,10 +67,16 @@ public final class ConnectorProfiles {
 
         List<WeightedPath> paths = options.policy() == PaceExecutionPolicy.PACE_X
                 ? enumerateExhaustive(source, destination, budget)
-                : enumerateBounded(source, destination, domain, budget, options.frontierLimit());
+                : enumerateBounded(
+                        source,
+                        destination,
+                        domain,
+                        budget,
+                        options.connectorLimitKc());
         for (WeightedPath path : paths) {
             buildCandidate(path.path(), domain, budget).ifPresent(result::add);
-            if (options.policy() == PaceExecutionPolicy.PACE_B && result.size() >= options.frontierLimit()) {
+            if (options.policy() == PaceExecutionPolicy.PACE_B
+                    && result.size() >= options.connectorLimitKc()) {
                 break;
             }
         }

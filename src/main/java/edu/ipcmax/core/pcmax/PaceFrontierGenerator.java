@@ -3,6 +3,7 @@ package edu.ipcmax.core.pcmax;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 
 import edu.ipcmax.core.cache.CandidateCache;
@@ -65,9 +66,14 @@ public final class PaceFrontierGenerator {
             int ell) {
         PaceOptions runOptions = new PaceOptions(
                 options.policy(),
+                options.engineMode(),
                 ell,
-                options.anchorLimit(),
-                options.frontierLimit(),
+                options.pivotLimitL(),
+                options.connectorLimitKc(),
+                options.frontierLimitKf(),
+                options.connectorExpansionCapMc(),
+                options.breakpointCapMb(),
+                options.queryWorkCapMq(),
                 options.threadCount(),
                 options.memoizationEnabled(),
                 options.features(),
@@ -118,7 +124,8 @@ public final class PaceFrontierGenerator {
                 lowerBounds,
                 connectors,
                 counters,
-                "graph-edges=" + graph.edgeCount() + ":nodes=" + graph.nodeCount());
+                "graph-edges=" + graph.edgeCount() + ":nodes=" + graph.nodeCount(),
+                ell);
         CandidateSet result = generate(context, source, destination, domain, budget, ell);
         lastStats = new PaceGenerationStats(
                 counters.recursionCalls.get(),
@@ -127,7 +134,8 @@ public final class PaceFrontierGenerator {
                 counters.connectorCandidates.get(),
                 counters.stitchedCandidates.get(),
                 memo.hits() - hitsBefore,
-                memo.misses() - missesBefore);
+                memo.misses() - missesBefore,
+                counters.parallelTasksStarted.get());
         return result;
     }
 
@@ -181,45 +189,38 @@ public final class PaceFrontierGenerator {
                     context.lowerBounds(),
                     context.options());
             context.counters().anchorsRetained.addAndGet(relevant.size());
-            for (RelevantAnchor relevantAnchor : relevant) {
-                Anchor anchor = relevantAnchor.anchor();
-                for (int leftBudget = 0; leftBudget < remainingAnchors; leftBudget++) {
-                    int rightBudget = remainingAnchors - 1 - leftBudget;
-                    CandidateSet leftFrontier = generate(
+            if (context.options().threadCount() > 1
+                    && remainingAnchors == context.rootAnchorBudget()
+                    && relevant.size() > 1) {
+                try (IPCMaxParallelExecutor executor =
+                             new IPCMaxParallelExecutor(context.options().threadCount())) {
+                    List<Callable<CandidateSet>> tasks = relevant.stream()
+                            .<Callable<CandidateSet>>map(relevantAnchor -> () -> {
+                                context.counters().parallelTasksStarted.incrementAndGet();
+                                return stitchForAnchor(
+                                        context,
+                                        relevantAnchor,
+                                        source,
+                                        destination,
+                                        domain,
+                                        budget,
+                                        remainingAnchors);
+                            })
+                            .toList();
+                    for (CandidateSet generated : executor.invokeAllDeterministic(tasks)) {
+                        frontier.addAll(generated);
+                    }
+                }
+            } else {
+                for (RelevantAnchor relevantAnchor : relevant) {
+                    frontier.addAll(stitchForAnchor(
                             context,
+                            relevantAnchor,
                             source,
-                            anchor.source(),
+                            destination,
                             domain,
                             budget,
-                            leftBudget);
-                    for (CandidateProfile left : leftFrontier.candidates()) {
-                        Domain leftAnchorDomain = leftAnchorDomain(left, anchor, domain);
-                        if (leftAnchorDomain.isEmpty()) {
-                            continue;
-                        }
-                        Domain rightDomain = imageDomainAfterAnchor(left, anchor, leftAnchorDomain);
-                        if (rightDomain.isEmpty()) {
-                            continue;
-                        }
-                        CandidateSet rightFrontier = generate(
-                                context,
-                                anchor.target(),
-                                destination,
-                                rightDomain,
-                                budget,
-                                rightBudget);
-                        for (CandidateProfile right : rightFrontier.candidates()) {
-                            TemporalStitch.stitch(graph, left, anchor, right, domain, budget)
-                                    .ifPresent(candidate -> {
-                                        if (candidate.explicitAnchorCount() > remainingAnchors) {
-                                            throw new IllegalStateException(
-                                                    "generated candidate exceeds explicit-anchor budget");
-                                        }
-                                        frontier.add(candidate);
-                                        context.counters().stitchedCandidates.incrementAndGet();
-                                    });
-                        }
-                    }
+                            remainingAnchors));
                 }
             }
         }
@@ -247,6 +248,57 @@ public final class PaceFrontierGenerator {
                 source,
                 destination,
                 context.options().features());
+    }
+
+    private CandidateSet stitchForAnchor(
+            RunContext context,
+            RelevantAnchor relevantAnchor,
+            int source,
+            int destination,
+            Domain domain,
+            double budget,
+            int remainingAnchors) {
+        CandidateSet stitched = new CandidateSet();
+        Anchor anchor = relevantAnchor.anchor();
+        for (int leftBudget = 0; leftBudget < remainingAnchors; leftBudget++) {
+            int rightBudget = remainingAnchors - 1 - leftBudget;
+            CandidateSet leftFrontier = generate(
+                    context,
+                    source,
+                    anchor.source(),
+                    domain,
+                    budget,
+                    leftBudget);
+            for (CandidateProfile left : leftFrontier.candidates()) {
+                Domain leftAnchorDomain = leftAnchorDomain(left, anchor, domain);
+                if (leftAnchorDomain.isEmpty()) {
+                    continue;
+                }
+                Domain rightDomain = imageDomainAfterAnchor(left, anchor, leftAnchorDomain);
+                if (rightDomain.isEmpty()) {
+                    continue;
+                }
+                CandidateSet rightFrontier = generate(
+                        context,
+                        anchor.target(),
+                        destination,
+                        rightDomain,
+                        budget,
+                        rightBudget);
+                for (CandidateProfile right : rightFrontier.candidates()) {
+                    TemporalStitch.stitch(graph, left, anchor, right, domain, budget)
+                            .ifPresent(candidate -> {
+                                if (candidate.explicitAnchorCount() > remainingAnchors) {
+                                    throw new IllegalStateException(
+                                            "generated candidate exceeds explicit-anchor budget");
+                                }
+                                stitched.add(candidate);
+                                context.counters().stitchedCandidates.incrementAndGet();
+                            });
+                }
+            }
+        }
+        return stitched;
     }
 
     private CandidateSet canonicalizeGeneratedPaths(
@@ -350,7 +402,8 @@ public final class PaceFrontierGenerator {
             QueryLowerBounds lowerBounds,
             ConnectorProfiles connectors,
             RunCounters counters,
-            String graphVersion) {
+            String graphVersion,
+            int rootAnchorBudget) {
     }
 
     private static final class RunCounters {
@@ -359,5 +412,6 @@ public final class PaceFrontierGenerator {
         private final AtomicLong anchorsRetained = new AtomicLong();
         private final AtomicLong connectorCandidates = new AtomicLong();
         private final AtomicLong stitchedCandidates = new AtomicLong();
+        private final AtomicLong parallelTasksStarted = new AtomicLong();
     }
 }

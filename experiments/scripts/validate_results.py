@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
 
 from experiments.scripts.common.atomic_io import atomic_write_json, atomic_write_text
 from experiments.scripts.common.config import load_design, repo_path
+from experiments.scripts.common.provenance import physical_core_count
 from experiments.scripts.common.status import TERMINAL_STATUSES
 
 
@@ -30,6 +31,72 @@ def _jsonl(paths: list[Path]) -> list[dict[str, Any]]:
     return rows
 
 
+def _expected_cells(design: dict[str, Any]) -> collections.Counter[tuple[Any, ...]]:
+    """Independently enumerate the declarative study Cartesian products."""
+    result: collections.Counter[tuple[Any, ...]] = collections.Counter()
+    for study in design["study_definitions"]:
+        if study.get("mode") != "execute":
+            continue
+        configured = study.get("datasets", "all")
+        datasets = design["datasets"] if configured == "all" else configured
+        for dataset in datasets:
+            if dataset != "demo" and dataset not in design["datasets"]:
+                continue
+            for algorithm in study.get("algorithms", []):
+                if algorithm.get("datasets") and dataset not in algorithm["datasets"]:
+                    continue
+                for axis in algorithm.get("axes", study.get("axes", [{}])):
+                    threads = int(axis.get(
+                        "threads", algorithm.get("parameters", {}).get("threads", 1)
+                    ))
+                    if study.get("filter_threads_to_physical_cores") and threads > physical_core_count():
+                        continue
+                    pair_count = int(algorithm.get(
+                        "pairs_per_dataset", study.get("pairs_per_dataset", 0)
+                    ))
+                    for pair in range(1, pair_count + 1):
+                        for center in study.get("centers", [0]):
+                            for trial in range(int(study.get("trials", 1))):
+                                result[(
+                                    study["study_id"], dataset, algorithm["id"],
+                                    algorithm.get("variant", algorithm["id"]),
+                                    json.dumps(axis, sort_keys=True, separators=(",", ":")),
+                                    pair, center, trial,
+                                )] += 1
+    return result
+
+
+def validate_planned_cells(
+    planned: list[dict[str, Any]],
+    design: dict[str, Any],
+) -> dict[str, Any]:
+    actual = collections.Counter(
+        (
+            job["study_id"], job["dataset_id"], job["algorithm_id"],
+            job["variant_id"],
+            json.dumps(job.get("axis", {}), sort_keys=True, separators=(",", ":")),
+            job["pair_index"], job["time_center"], job["trial_id"],
+        )
+        for job in planned
+    )
+    expected = _expected_cells(design)
+    missing = expected - actual
+    extra = actual - expected
+    duplicates = sum(count - 1 for count in actual.values() if count > 1)
+    return {
+        "expected_formula_cells": sum(expected.values()),
+        "actual_planned_cells": len(planned),
+        "duplicate_planned_cells": duplicates,
+        "missing_formula_cells": sum(missing.values()),
+        "unexpected_formula_cells": sum(extra.values()),
+        "passed": not duplicates and not missing and not extra,
+        "_actual": actual,
+        "_expected": expected,
+        "_missing": missing,
+        "_extra": extra,
+    }
+
+
 def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     plan_files = sorted((run_root / "plan" / "matrices").glob("e*.jsonl"))
     raw_files = sorted((run_root / "raw").rglob("*.jsonl")) if (run_root / "raw").is_dir() else []
@@ -40,6 +107,15 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     plans = {job["job_id"]: job for job in planned}
     if len(plans) != len(planned):
         errors.append("duplicate job_id in matrix manifests")
+    cell_validation = validate_planned_cells(planned, design)
+    actual_cells = cell_validation["_actual"]
+    expected_cells = cell_validation["_expected"]
+    missing_cells = cell_validation["_missing"]
+    extra_cells = cell_validation["_extra"]
+    if missing_cells:
+        errors.append(f"missing {sum(missing_cells.values())} independently enumerated planned cells")
+    if extra_cells:
+        errors.append(f"found {sum(extra_cells.values())} unexpected planned cells")
     by_job: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for record in records:
         by_job[record.get("job_id")].append(record)
@@ -74,6 +150,7 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         dataset = java.get("dataset", {})
         configuration = java.get("configuration", {})
         status = java.get("status", {})
+        counters = java.get("counters", {})
         output = java.get("output", {})
         values = [value for section in java.values() if isinstance(section, dict) for value in section.values()]
         if any(isinstance(value, float) and not math.isfinite(value) for value in values):
@@ -101,6 +178,18 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             thread_determinism[thread_key].add(checksum)
             if plan["study_id"] == "E01" and plan["algorithm_id"] in {"exh-profile", "pace-x"}:
                 exact_checksums[(plan["dataset_id"], plan["query_id"])][plan["algorithm_id"]] = checksum
+        cap_mapping = {
+            "CONNECTOR_M_C": "connector_cap_hits",
+            "BREAKPOINT_M_B": "breakpoint_cap_hits",
+            "QUERY_WORK_M_Q": "query_work_cap_hits",
+        }
+        triggered = set(status.get("cap_triggered") or [])
+        for cap, counter in cap_mapping.items():
+            value = counters.get(counter)
+            if isinstance(value, (int, float)) and value > 0 and cap not in triggered:
+                errors.append(f"{job_id} has {counter}>0 without {cap} status")
+        if triggered and status.get("generation_completion") != "RESOURCE_TRUNCATED":
+            errors.append(f"{job_id} has cap flags without RESOURCE_TRUNCATED generation status")
     for key, checksums in deterministic.items():
         if len(checksums) > 1:
             errors.append(f"trial output checksum mismatch: {key}")
@@ -123,6 +212,11 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         "run_id": run_root.name,
         "planned_jobs": len(planned),
         "terminal_records": len(records),
+        "expected_formula_cells": sum(expected_cells.values()),
+        "missing_formula_cells": sum(missing_cells.values()),
+        "unexpected_formula_cells": sum(extra_cells.values()),
+        "duplicate_planned_cells":
+            cell_validation["duplicate_planned_cells"],
         "status_counts": dict(sorted(failures.items())),
         "errors": errors,
         "warnings": warnings,
@@ -133,6 +227,10 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     lines = [
         "# PACE Q1 Validation Report", "", f"Run: `{run_root.name}`", "",
         f"Planned jobs: {len(planned)}", f"Terminal records: {len(records)}", "",
+        f"Independently enumerated formula cells: {sum(expected_cells.values())}",
+        f"Duplicate planned cells: {report['duplicate_planned_cells']}",
+        f"Missing formula cells: {report['missing_formula_cells']}",
+        f"Unexpected formula cells: {report['unexpected_formula_cells']}", "",
         "## Status Counts", "",
     ]
     lines.extend(f"- {key}: {value}" for key, value in sorted(failures.items()))

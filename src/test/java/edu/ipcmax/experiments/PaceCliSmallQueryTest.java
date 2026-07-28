@@ -63,7 +63,7 @@ class PaceCliSmallQueryTest {
     }
 
     @Test
-    void paceXDoesNotClaimGlobalExactness() throws Exception {
+    void paceXReportsGlobalExactnessAfterExhaustiveConditionsAreVerified() throws Exception {
         ByteArrayOutputStream stdout = new ByteArrayOutputStream();
         ByteArrayOutputStream stderr = new ByteArrayOutputStream();
 
@@ -75,7 +75,7 @@ class PaceCliSmallQueryTest {
         assertEquals(0, exitCode);
         assertEquals("", stderr.toString(StandardCharsets.UTF_8));
         assertTrue(output.contains("execution_policy=PACE_X"));
-        assertTrue(output.contains("exactness_scope=RETAINED_FRONTIER"));
+        assertTrue(output.contains("exactness_scope=GLOBAL_CERTIFIED"));
     }
 
     private static PrintStream printStream(ByteArrayOutputStream output) {

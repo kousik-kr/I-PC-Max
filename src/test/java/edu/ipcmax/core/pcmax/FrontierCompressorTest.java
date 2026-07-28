@@ -86,7 +86,7 @@ class FrontierCompressorTest {
     }
 
     @Test
-    void boundedRetentionKeepsChampionEarliestAndLeastRestrictiveRepresentatives() {
+    void boundedRetentionUsesChampionEarliestCoverageThenLeastRestrictiveOrder() {
         TDGraph graph = representativeGraph();
         CandidateProfile champion = candidate(List.of(0, 1, 2), 8, ScoreProfile.constant(ROOT, 10));
         CandidateProfile earliest = candidate(List.of(3, 4), 2, ScoreProfile.constant(ROOT, 2));
@@ -115,6 +115,38 @@ class FrontierCompressorTest {
         assertEquals(3, first.size());
         assertEquals(Set.of(List.of(0, 1, 2), List.of(3, 4), List.of(5)), Set.copyOf(pathIds(first)));
         assertEquals(pathIds(first), pathIds(second));
+
+        CandidateSet four = FrontierCompressor.compress(
+                graph,
+                set(fillOnly, leastRestrictive, earliest, champion),
+                ROOT,
+                20,
+                4,
+                PaceExecutionPolicy.PACE_B,
+                1,
+                5);
+        assertEquals(Set.of(
+                List.of(0, 1, 2),
+                List.of(3, 4),
+                List.of(5),
+                List.of(6)), Set.copyOf(pathIds(four)));
+
+        List<List<Integer>> previous = List.of();
+        for (int k = 1; k <= 4; k++) {
+            CandidateSet retained = FrontierCompressor.compress(
+                    graph,
+                    set(fillOnly, leastRestrictive, earliest, champion),
+                    ROOT,
+                    20,
+                    k,
+                    PaceExecutionPolicy.PACE_B,
+                    1,
+                    5);
+            assertTrue(pathIds(retained).containsAll(previous),
+                    "K_f=" + k + " must include the K_f=" + (k - 1)
+                            + " prefix");
+            previous = pathIds(retained);
+        }
     }
 
     @Test

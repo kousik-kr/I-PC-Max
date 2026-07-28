@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "generator_version": "pace-dataset-assets-v2",
+  "conversion_contract": {
+    "contract_id": "declared_centisecond_normalization-v1",
+    "input_weight_unit": "declared_centisecond_normalization",
+    "internal_time_unit": "minutes",
+    "minutes_per_dimacs_weight": {"numerator": 1, "denominator": 6000},
+    "formula": "minutes = DIMACS_weight * 1 / 6000",
+    "rounding_policy": "exact rational arithmetic internally where possible; deterministic decimal serialization with up to 9 digits after decimal, trimming trailing zeros",
+    "provenance": "author release decision for this paper artifact. DIMACS documentation says transit weights are arbitrary, so this is a declared experimental normalization, not an official DIMACS physical-unit claim."
+  },
+  "temporal_support": {
+    "start": 0,
+    "first_day_end": 1440,
+    "end": 10080,
+    "extension_policy": "preserve first-day rush-window behavior over [0,1440]; extend travel time flat from 1440 to 10080 using the converted static travel time; extend score as zero over [1440,10080]; no periodic repetition; no query-time extrapolation"
+  },
+  "defaults": {
+    "morning_rush": [420, 600],
+    "evening_rush": [1020, 1200],
+    "morning_multiplier_min": 1.10,
+    "morning_multiplier_max": 2.00,
+    "evening_multiplier_min": 1.15,
+    "evening_multiplier_max": 2.50,
+    "integer_travel_times": false,
+    "travel_time_decimals": 9,
+    "score_edge_fraction": 0.20,
+    "score_min": 1,
+    "score_max": 15,
+    "score_intervals_per_rush": 3,
+    "materialize_zero_score_edges": false
+  },
+  "datasets": {
+    "NY": {
+      "coords": "../Synthetic-data-generator/datasets/NY/USA-road-d.NY.co",
+      "travel_time": "../Synthetic-data-generator/datasets/NY/USA-road-t.NY.gr",
+      "distance": "../Synthetic-data-generator/datasets/NY/USA-road-d.NY.gr"
+    },
+    "FLA": {
+      "coords": "../Synthetic-data-generator/datasets/FLA/USA-road-d.FLA.co.gz",
+      "travel_time": "../Synthetic-data-generator/datasets/FLA/USA-road-t.FLA.gr.gz",
+      "distance": "../Synthetic-data-generator/datasets/FLA/USA-road-d.FLA.gr.gz"
+    },
+    "CAL": {
+      "coords": "../Synthetic-data-generator/datasets/CAL/USA-road-d.CAL.co.gz",
+      "travel_time": "../Synthetic-data-generator/datasets/CAL/USA-road-t.CAL.gr.gz",
+      "distance": "../Synthetic-data-generator/datasets/CAL/USA-road-d.CAL.gr.gz"
+    },
+    "USA": {
+      "coords": "../Synthetic-data-generator/datasets/USA/USA-road-d.USA.co.gz",
+      "travel_time": "../Synthetic-data-generator/datasets/USA/USA-road-t.USA.gr.gz",
+      "distance": "../Synthetic-data-generator/datasets/USA/USA-road-d.USA.gr.gz"
+    }
+  }
+}

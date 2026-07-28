@@ -78,10 +78,55 @@ public interface PathPointer {
      * Concatenates path pointers without exposing mutable state.
      */
     static PathPointer concat(PathPointer... pointers) {
-        List<Integer> arcs = new ArrayList<>();
-        for (PathPointer pointer : pointers) {
-            arcs.addAll(Objects.requireNonNull(pointer, "path pointer").arcIds());
+        if (pointers == null || pointers.length == 0) {
+            return empty();
         }
-        return of(arcs);
+        PathPointer result = Objects.requireNonNull(
+                pointers[0], "path pointer");
+        for (int index = 1; index < pointers.length; index++) {
+            result = new CompositePathPointer(
+                    result,
+                    Objects.requireNonNull(
+                            pointers[index], "path pointer"));
+        }
+        return result;
+    }
+
+    /**
+     * Persistent predecessor pair. The complete arc sequence is materialized
+     * lazily and cached only when a stable ID or final replay needs it.
+     */
+    final class CompositePathPointer implements PathPointer {
+        private final PathPointer prefix;
+        private final PathPointer suffix;
+        private final int edgeCount;
+        private volatile List<Integer> materialized;
+
+        CompositePathPointer(
+                PathPointer prefix,
+                PathPointer suffix) {
+            this.prefix = prefix;
+            this.suffix = suffix;
+            this.edgeCount = Math.addExact(
+                    prefix.edgeCount(), suffix.edgeCount());
+        }
+
+        @Override
+        public List<Integer> arcIds() {
+            List<Integer> value = materialized;
+            if (value == null) {
+                List<Integer> combined = new ArrayList<>(edgeCount);
+                combined.addAll(prefix.arcIds());
+                combined.addAll(suffix.arcIds());
+                value = List.copyOf(combined);
+                materialized = value;
+            }
+            return value;
+        }
+
+        @Override
+        public int edgeCount() {
+            return edgeCount;
+        }
     }
 }

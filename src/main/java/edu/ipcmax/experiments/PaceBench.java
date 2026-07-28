@@ -55,7 +55,7 @@ public final class PaceBench {
     private static final ObjectMapper JSON = QueryManifestIO.mapper();
     private static final List<String> TIMINGS = List.of(
             "preprocessing_total", "lower_bound_preprocessing", "anchor_index_preprocessing",
-            "query_total", "horizon_validation", "anchor_retrieval", "anchor_ranking",
+            "query_total", "cpu_total", "horizon_validation", "anchor_retrieval", "anchor_ranking",
             "connector_generation", "recursive_generation", "memo_lookup", "memo_compute",
             "temporal_stitching", "breakpoint_construction", "duplicate_removal", "safe_dominance",
             "bounded_retention", "fragment_merging", "feasibility_validation",
@@ -72,7 +72,15 @@ public final class PaceBench {
             "bounded_fragments_removed", "temporal_cells_created", "frontier_count",
             "frontier_size_sum", "frontier_size_max", "retained_fragments_total",
             "profile_breakpoints_total", "envelope_cells", "point_queries", "labels_created",
-            "labels_expanded", "simple_paths_enumerated", "ksp_paths_retained");
+            "labels_expanded", "simple_paths_enumerated", "ksp_paths_retained",
+            "corridor_nodes", "corridor_edges", "corridor_cells",
+            "score_relevant_edges", "selected_pivots", "connector_calls",
+            "connector_expansions", "valid_connectors", "invalid_connectors",
+            "connector_cap_hits", "candidates_retained",
+            "breakpoint_cap_hits", "total_candidate_work",
+            "query_work_cap_hits", "frontier_cells", "peak_frontier_size",
+            "memo_lookups", "memo_waits", "requested_workers",
+            "observed_workers");
 
     private PaceBench() {
     }
@@ -118,6 +126,15 @@ public final class PaceBench {
         ExperimentAlgorithm algorithm = AlgorithmRegistry.create(options.algorithm);
         ExperimentAlgorithm reference = options.referenceAlgorithm == null
                 ? null : AlgorithmRegistry.create(options.referenceAlgorithm);
+        long algorithmPreparationStarted = System.nanoTime();
+        algorithm.prepare(loaded.graph, options.algorithmConfig());
+        if (reference != null) {
+            reference.prepare(
+                    loaded.graph,
+                    referenceConfig(options, reference.id()));
+        }
+        preprocessingNanos +=
+                System.nanoTime() - algorithmPreparationStarted;
         Map<String, Object> datasetRecord = datasetRecord(loaded);
         Map<String, Object> systemRecord = systemRecord(options.threads);
         Files.createDirectories(parent(options.outputJsonl));
@@ -408,13 +425,23 @@ public final class PaceBench {
                 "isolated query worker terminated before returning an algorithm result");
         ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
         instrumentation.setTiming("query_total", 0);
-        return new Execution(result, instrumentation, 0, 0, 0);
+        return new Execution(result, instrumentation, 0, 0, 0, 0, -1, -1, -1);
     }
 
     private static AlgorithmConfig referenceConfig(BenchOptions options, String id) {
         AlgorithmConfig base = options.algorithmConfig();
-        return new AlgorithmConfig(id, edu.ipcmax.experiments.framework.Ablation.NONE,
-                base.theta(), Math.max(1, base.anchorLimit()), Math.max(1, base.k()), 1,
+        return new AlgorithmConfig(
+                id,
+                edu.ipcmax.experiments.framework.Ablation.NONE,
+                base.paceEngineMode(),
+                base.theta(),
+                Math.max(1, base.pivotLimitL()),
+                Math.max(1, base.connectorLimitKc()),
+                Math.max(1, base.frontierLimitKf()),
+                base.connectorExpansionCapMc(),
+                base.breakpointCapMb(),
+                base.queryWorkCapMq(),
+                1,
                 id.equals("rpq") ? Math.max(1, base.rpqStepMinutes()) : base.rpqStepMinutes(),
                 id.equals("ksp-profile") ? Math.max(1, base.baselineK()) : base.baselineK(),
                 base.maxEnumeratedPaths(), base.maxLabels(), base.maxExpansions(),
@@ -430,7 +457,11 @@ public final class PaceBench {
             int memoryLimitMb) {
         ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
         long startMemory = usedMemory();
+        long peakMemory = startMemory;
+        long startRss = processRssBytes();
+        long peakRss = startRss;
         long started = System.nanoTime();
+        long startedCpu = processCpuTime();
         ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "pace-query-worker");
             thread.setDaemon(true);
@@ -444,6 +475,9 @@ public final class PaceBench {
         while (result == null) {
             long elapsed = System.nanoTime() - started;
             long observedMemory = usedMemory();
+            peakMemory = Math.max(peakMemory, observedMemory);
+            long observedRss = processRssBytes();
+            peakRss = Math.max(peakRss, observedRss);
             if (memoryLimitMb > 0 && observedMemory > memoryLimitBytes) {
                 future.cancel(true);
                 result = new AlgorithmResult(ExperimentStatus.OUT_OF_MEMORY, null,
@@ -476,9 +510,24 @@ public final class PaceBench {
         }
         executor.shutdownNow();
         long runtime = System.nanoTime() - started;
+        long cpuTime = processCpuTime();
         long endMemory = usedMemory();
+        long endRss = processRssBytes();
+        peakRss = Math.max(peakRss, endRss);
         instrumentation.setTiming("query_total", runtime);
-        return new Execution(result, instrumentation, runtime, startMemory, endMemory);
+        if (startedCpu >= 0 && cpuTime >= startedCpu) {
+            instrumentation.setTiming("cpu_total", cpuTime - startedCpu);
+        }
+        return new Execution(
+                result,
+                instrumentation,
+                runtime,
+                startMemory,
+                endMemory,
+                Math.max(peakMemory, endMemory),
+                startRss,
+                endRss,
+                peakRss);
     }
 
     private static AlgorithmResult classify(Throwable failure) {
@@ -524,7 +573,7 @@ public final class PaceBench {
             boolean verified,
             long referenceNanos) {
         Map<String, Object> top = new LinkedHashMap<>();
-        top.put("schema_version", 2);
+        top.put("schema_version", 3);
         Map<String, Object> run = new LinkedHashMap<>();
         run.put("run_id", runId);
         run.put("experiment_name", options.experimentName);
@@ -548,6 +597,32 @@ public final class PaceBench {
                 || result.status() == ExperimentStatus.NO_FEASIBLE_PATH);
         status.put("execution_policy", executionPolicy(options.algorithm));
         status.put("exactness_scope", result.exactnessScope().name());
+        status.put(
+                "generation_completion",
+                result.scalars().get("generation_completion"));
+        status.put(
+                "cap_triggered",
+                result.scalars().getOrDefault(
+                        "cap_triggered", List.of()));
+        status.put(
+                "partial_output_policy",
+                options.algorithm.equals("pace-x")
+                        ? "FAIL_CLOSED"
+                        : options.algorithm.equals("pace-b")
+                            ? "DETERMINISTIC_RETAINED_FRONTIER"
+                            : null);
+        status.put(
+                "certificate_conditions",
+                result.exactnessScope()
+                        == ExactnessScope.GLOBAL_CERTIFIED
+                        ? List.of(
+                                "PACE_X",
+                                "UNBOUNDED_CONNECTORS",
+                                "UNBOUNDED_FRONTIERS",
+                                "ALL_SCORE_PIVOTS",
+                                "THETA_COVERS_SELECTED_PIVOTS",
+                                "NO_CAP_REACHED")
+                        : List.of());
         status.put("reference_available", referenceAvailable);
         status.put("output_verified", verified);
         status.put("exit_code", isFailure(result.status()) ? 1 : 0);
@@ -560,9 +635,12 @@ public final class PaceBench {
         }
         top.put("timing_ns", timings);
         Map<String, Object> memory = new LinkedHashMap<>();
-        memory.put("peak_rss", null);
-        memory.put("start_rss", null);
-        memory.put("end_rss", null);
+        memory.put("peak_rss", outcome.peakRss() < 0 ? null : outcome.peakRss());
+        memory.put("start_rss", outcome.startRss() < 0 ? null : outcome.startRss());
+        memory.put("end_rss", outcome.endRss() < 0 ? null : outcome.endRss());
+        memory.put("peak_heap", outcome.peakMemory());
+        memory.put("start_heap", outcome.startMemory());
+        memory.put("end_heap", outcome.endMemory());
         memory.put("memoization_peak", null);
         memory.put("frontier_peak_estimate", null);
         memory.put("serialized_output_size", null);
@@ -603,6 +681,25 @@ public final class PaceBench {
         result.put("anchor_limit", pace == null ? null
                 : (pace.anchorLimit() == Integer.MAX_VALUE ? "unbounded" : pace.anchorLimit()));
         result.put("k", pace == null ? null : pace.frontierLimit());
+        result.put("pace_engine", pace == null ? null : pace.engineMode().name());
+        result.put("pivot_limit_l", pace == null ? null
+                : (pace.pivotLimitL() == Integer.MAX_VALUE
+                        ? "unbounded" : pace.pivotLimitL()));
+        result.put("connector_limit_kc", pace == null ? null
+                : (pace.connectorLimitKc() == Integer.MAX_VALUE
+                        ? "unbounded" : pace.connectorLimitKc()));
+        result.put("frontier_limit_kf", pace == null ? null
+                : (pace.frontierLimitKf() == Integer.MAX_VALUE
+                        ? "unbounded" : pace.frontierLimitKf()));
+        result.put("connector_expansion_cap_mc", pace == null ? null
+                : (pace.connectorExpansionCapMc() == Long.MAX_VALUE
+                        ? "unbounded" : pace.connectorExpansionCapMc()));
+        result.put("breakpoint_cap_mb", pace == null ? null
+                : (pace.breakpointCapMb() == Integer.MAX_VALUE
+                        ? "unbounded" : pace.breakpointCapMb()));
+        result.put("query_work_cap_mq", pace == null ? null
+                : (pace.queryWorkCapMq() == Long.MAX_VALUE
+                        ? "unbounded" : pace.queryWorkCapMq()));
         result.put("rpq_step_minutes", options.algorithm.equals("rpq") ? options.rpqStepMinutes : null);
         result.put("baseline_k", options.algorithm.equals("ksp-profile") ? options.baselineK : null);
         result.put("threads", pace == null ? options.threads : pace.threadCount());
@@ -628,6 +725,18 @@ public final class PaceBench {
                 : pace.features().anchorLowerBoundFilterEnabled());
         result.put("compression_enabled", pace == null ? false : pace.features().compressionEnabled());
         result.put("adjacent_merge_enabled", pace == null ? false : pace.features().adjacentMergeEnabled());
+        result.put("safe_corridor_enabled", pace == null ? false
+                : pace.features().safeCorridorEnabled());
+        result.put("pivot_diversification_enabled", pace == null ? false
+                : pace.features().pivotDiversificationEnabled());
+        result.put("connector_portfolio_enabled", pace == null ? false
+                : pace.features().connectorPortfolioEnabled());
+        result.put("connector_cache_enabled", pace == null ? false
+                : pace.features().connectorCacheEnabled());
+        result.put("profile_cache_enabled", pace == null ? false
+                : pace.features().profileCacheEnabled());
+        result.put("score_upper_bound_enabled", pace == null ? false
+                : pace.features().scoreUpperBoundEnabled());
         result.put("parallel_enabled", pace != null && pace.threadCount() > 1);
         result.put("exhaustive_connectors", options.algorithm.equals("pace-x"));
         // Anchor retention is not a certificate that theta covers every feasible anchor sequence.
@@ -731,7 +840,14 @@ public final class PaceBench {
             return new LoadedDataset(ExperimentDatasets.timeoutStress(), "demo", "timeout-test", 42L);
         }
         GeneratedGraphDataset loaded = new GeneratedGraphLoader().load(Path.of(value));
-        return new LoadedDataset(loaded.graph(), loaded.directory().getFileName().toString(),
+        Path directory = loaded.directory().toAbsolutePath().normalize();
+        String datasetId = directory.getFileName().toString();
+        Path parent = directory.getParent();
+        if (parent != null && "variants".equals(parent.getFileName().toString())
+                && parent.getParent() != null) {
+            datasetId = parent.getParent().getFileName().toString();
+        }
+        return new LoadedDataset(loaded.graph(), datasetId,
                 loaded.directory().toAbsolutePath().normalize().toString(), loaded.manifest().seed());
     }
 
@@ -927,6 +1043,34 @@ public final class PaceBench {
         return runtime.totalMemory() - runtime.freeMemory();
     }
 
+    private static long processRssBytes() {
+        Path status = Path.of("/proc/self/status");
+        if (!Files.isRegularFile(status)) {
+            return -1;
+        }
+        try {
+            for (String line : Files.readAllLines(status, StandardCharsets.US_ASCII)) {
+                if (line.startsWith("VmRSS:")) {
+                    String[] fields = line.trim().split("\\s+");
+                    return fields.length >= 2 ? Long.parseLong(fields[1]) * 1024L : -1;
+                }
+            }
+        } catch (IOException | NumberFormatException ignored) {
+            // RSS is optional on operating systems without Linux procfs.
+        }
+        return -1;
+    }
+
+    private static long processCpuTime() {
+        java.lang.management.OperatingSystemMXBean bean =
+                java.lang.management.ManagementFactory
+                        .getOperatingSystemMXBean();
+        return bean instanceof com.sun.management.OperatingSystemMXBean
+                ? ((com.sun.management.OperatingSystemMXBean) bean)
+                        .getProcessCpuTime()
+                : -1;
+    }
+
     private static Path parent(Path path) {
         Path absolute = path.toAbsolutePath().normalize();
         return absolute.getParent() == null ? Path.of(".") : absolute.getParent();
@@ -953,6 +1097,10 @@ public final class PaceBench {
             ExperimentInstrumentation instrumentation,
             long runtime,
             long startMemory,
-            long endMemory) {
+            long endMemory,
+            long peakMemory,
+            long startRss,
+            long endRss,
+            long peakRss) {
     }
 }

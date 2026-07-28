@@ -3,7 +3,10 @@ package edu.ipcmax.experiments.algorithms;
 import java.util.Map;
 
 import edu.ipcmax.core.graph.TDGraph;
+import edu.ipcmax.core.index.QueryPreparationIndexes;
 import edu.ipcmax.core.pcmax.PACE;
+import edu.ipcmax.core.pcmax.PaceCompletion;
+import edu.ipcmax.core.pcmax.PaceExactnessScope;
 import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
@@ -15,6 +18,8 @@ import edu.ipcmax.experiments.framework.ExperimentStatus;
 /** Adapter preserving the finalized shared PACE-X/PACE-B implementation. */
 public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
     private final String id;
+    private volatile TDGraph preparedGraph;
+    private volatile QueryPreparationIndexes preparedIndexes;
 
     public PaceExperimentAlgorithm(String id) {
         this.id = id;
@@ -26,11 +31,27 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
     }
 
     @Override
+    public synchronized void prepare(
+            TDGraph graph,
+            AlgorithmConfig config) {
+        if (preparedGraph == graph && preparedIndexes != null) {
+            return;
+        }
+        preparedIndexes = PACE.preparedIndexes(graph);
+        preparedGraph = graph;
+    }
+
+    @Override
     public AlgorithmResult run(
             TDGraph graph, QuerySpec query, AlgorithmConfig config,
             ExperimentInstrumentation instrumentation) {
-        PACE pace = new PACE(graph, config.paceOptions());
+        prepare(graph, config);
+        PACE pace = new PACE(
+                graph,
+                config.paceOptions(),
+                preparedIndexes);
         var profile = pace.run(query);
+        var generation = pace.lastGenerationResult();
         var stats = pace.stats();
         instrumentation.addCounter("recursive_calls", stats.recursionCalls());
         instrumentation.addCounter("anchors_examined", stats.anchorsConsidered());
@@ -39,9 +60,58 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
         instrumentation.addCounter("stitch_successes", stats.stitchedCandidates());
         instrumentation.addCounter("memo_hits", stats.cacheHits());
         instrumentation.addCounter("memo_misses", stats.cacheMisses());
+        instrumentation.addCounter("parallel_tasks_started", stats.parallelTasksStarted());
+        instrumentation.addCounter("corridor_nodes", stats.corridorNodes());
+        instrumentation.addCounter("corridor_edges", stats.corridorEdges());
+        instrumentation.addCounter("corridor_cells", stats.corridorCells());
+        instrumentation.addCounter("score_relevant_edges", stats.scoreRelevantEdges());
+        instrumentation.addCounter("selected_pivots", stats.selectedPivots());
+        instrumentation.addCounter("connector_calls", stats.connectorCalls());
+        instrumentation.addCounter("connector_expansions", stats.connectorExpansions());
+        instrumentation.addCounter("valid_connectors", stats.validConnectors());
+        instrumentation.addCounter("invalid_connectors", stats.invalidConnectors());
+        instrumentation.addCounter("connector_cap_hits", stats.connectorCapHits());
+        instrumentation.addCounter("candidates_generated", stats.candidatesGenerated());
+        instrumentation.addCounter("candidates_retained", stats.candidatesRetained());
+        instrumentation.addCounter("breakpoint_cap_hits", stats.breakpointCapHits());
+        instrumentation.addCounter("total_candidate_work", stats.totalWork());
+        instrumentation.addCounter("query_work_cap_hits", stats.queryWorkCapHits());
+        instrumentation.addCounter("frontier_cells", stats.frontierCells());
+        instrumentation.addCounter("peak_frontier_size", stats.peakFrontierSize());
+        instrumentation.addCounter("memo_lookups", stats.cacheLookups());
+        instrumentation.addCounter("memo_waits", stats.cacheWaits());
+        instrumentation.addCounter("requested_workers", stats.requestedWorkers());
+        instrumentation.addCounter("observed_workers", stats.observedWorkers());
         boolean feasible = profile.segments().stream().anyMatch(segment -> segment.found());
+        ExperimentStatus status = switch (generation.completion()) {
+            case COMPLETE -> feasible
+                    ? ExperimentStatus.COMPLETED
+                    : ExperimentStatus.NO_FEASIBLE_PATH;
+            case NO_FEASIBLE_PATH -> ExperimentStatus.NO_FEASIBLE_PATH;
+            case RESOURCE_TRUNCATED, ABORTED ->
+                    ExperimentStatus.LIMIT_EXCEEDED;
+        };
+        ExactnessScope exactness = switch (generation.exactnessScope()) {
+            case GLOBAL_CERTIFIED -> ExactnessScope.GLOBAL_CERTIFIED;
+            case RETAINED_FRONTIER -> ExactnessScope.RETAINED_FRONTIER;
+            case NOT_CERTIFIED -> ExactnessScope.NOT_CERTIFIED;
+        };
+        Map<String, Object> scalars = new java.util.LinkedHashMap<>();
+        scalars.put("generation_completion", generation.completion().name());
+        scalars.put("cap_triggered", generation.capStatus().triggered().stream()
+                .map(Enum::name).sorted().toList());
+        scalars.put("first_cap_work_item",
+                generation.capStatus().firstCanonicalWorkItem());
+        scalars.put("corridor_checksum", generation.corridorChecksum());
+        scalars.put("selected_pivot_arc_ids",
+                generation.selectedPivotArcIds());
+        scalars.put("output_checksum", generation.outputChecksum());
         return new AlgorithmResult(
-                feasible ? ExperimentStatus.COMPLETED : ExperimentStatus.NO_FEASIBLE_PATH,
-                profile, ExactnessScope.RETAINED_FRONTIER, Map.of(), null, null);
+                status,
+                profile,
+                exactness,
+                scalars,
+                null,
+                null);
     }
 }

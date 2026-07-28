@@ -55,6 +55,8 @@ public final class ProfileSupport {
         EnvelopeProfile profile = result.profile();
         double total = measure(profile.domain());
         double feasible = 0;
+        double integratedScore = 0;
+        int bestScore = 0;
         int paths = 0;
         int pathChanges = 0;
         String previousAssignment = null;
@@ -65,6 +67,16 @@ public final class ProfileSupport {
             if (segment.found()) {
                 feasible += length;
                 distinct.add(segment.path().arcIds().toString());
+                for (var piece : segment.candidate().scoreProfile().intervals()) {
+                    double overlap = Math.max(0, Math.min(segment.interval().end(), piece.endMinute())
+                            - Math.max(segment.interval().start(), piece.startMinute()));
+                    integratedScore += overlap * piece.value();
+                    if (overlap > 0 || (length == 0
+                            && piece.startMinute() <= segment.interval().start()
+                            && piece.endMinute() >= segment.interval().end())) {
+                        bestScore = Math.max(bestScore, piece.value());
+                    }
+                }
             }
             String assignment = segment.found() ? segment.path().arcIds().toString() : "NO_PATH";
             if (previousAssignment != null && !previousAssignment.equals(assignment)) {
@@ -87,6 +99,8 @@ public final class ProfileSupport {
         output.put("average_interval_length", profile.segments().isEmpty()
                 ? null : total / profile.segments().size());
         output.put("minimum_interval_length", Double.isFinite(min) ? min : 0.0);
+        output.put("average_selected_score", feasible == 0 ? null : integratedScore / feasible);
+        output.put("best_selected_score", paths == 0 ? null : bestScore);
         output.put("selected_departure_time", result.scalars().get("selected_departure_time"));
         output.put("selected_path_id", result.scalars().get("selected_path_id"));
         output.put("selected_score", result.scalars().get("selected_score"));
@@ -100,7 +114,8 @@ public final class ProfileSupport {
         for (String name : List.of("feasible", "feasible_interval_measure", "infeasible_interval_measure",
                 "feasible_coverage_fraction", "elementary_envelope_cells", "final_profile_intervals",
                 "distinct_selected_paths", "path_changes", "average_interval_length",
-                "minimum_interval_length", "selected_departure_time", "selected_path_id",
+                "minimum_interval_length", "average_selected_score", "best_selected_score",
+                "selected_departure_time", "selected_path_id",
                 "selected_score", "selected_travel_time", "profile_checksum", "profile_file")) {
             output.put(name, null);
         }
@@ -122,6 +137,7 @@ public final class ProfileSupport {
         double absoluteGap = 0;
         double maxGap = 0;
         double observedMeasure = 0;
+        double scoreAgreementMeasure = 0;
         double tieTravelGapIntegral = 0;
         double tieTravelMeasure = 0;
         List<WeightedGap> scoreGaps = new ArrayList<>();
@@ -150,6 +166,9 @@ public final class ProfileSupport {
                 absoluteGap += Math.abs(referenceScore - candidateScore) * length;
                 maxGap = Math.max(maxGap, Math.abs(referenceScore - candidateScore));
                 observedMeasure += length;
+                if (left.found() && candidateScore == referenceScore) {
+                    scoreAgreementMeasure += length;
+                }
                 scoreGaps.add(new WeightedGap(Math.abs(referenceScore - candidateScore), length));
                 if (left.found() && candidateScore == referenceScore) {
                     double leftStart = travelTime(left, start);
@@ -168,6 +187,8 @@ public final class ProfileSupport {
         quality.put("path_agreement_fraction", intervalMeasure == 0
                 ? (samePath(candidate.segmentAt(sorted.get(0)), reference.segmentAt(sorted.get(0))) ? 1.0 : 0.0)
                 : agreement / intervalMeasure);
+        quality.put("score_agreement_fraction", observedMeasure == 0
+                ? 1.0 : scoreAgreementMeasure / observedMeasure);
         quality.put("feasibility_disagreement_fraction", intervalMeasure == 0 ? 0.0
                 : feasibilityDisagreement / intervalMeasure);
         quality.put("breakpoint_precision", candidateBreaks.isEmpty() ? 1.0
@@ -177,6 +198,8 @@ public final class ProfileSupport {
         quality.put("exact_breakpoint_agreement", candidateBreaks.equals(referenceBreaks));
         quality.put("integrated_score_regret", regretDenominator == 0 ? 0.0
                 : regretNumerator / regretDenominator);
+        quality.put("relative_score_gap_percent", regretDenominator == 0 ? 0.0
+                : 100.0 * regretNumerator / regretDenominator);
         quality.put("mean_absolute_score_gap", observedMeasure == 0 ? null : absoluteGap / observedMeasure);
         quality.put("maximum_score_gap", observedMeasure == 0 ? null : maxGap);
         quality.put("p95_score_gap", weightedPercentile(scoreGaps, observedMeasure, 0.95));
@@ -189,10 +212,12 @@ public final class ProfileSupport {
 
     public static Map<String, Object> emptyQuality() {
         Map<String, Object> result = new LinkedHashMap<>();
-        for (String name : List.of("path_agreement_fraction", "feasibility_disagreement_fraction",
+        for (String name : List.of("path_agreement_fraction", "score_agreement_fraction",
+                "feasibility_disagreement_fraction",
                 "breakpoint_precision", "breakpoint_recall", "exact_breakpoint_agreement",
-                "integrated_score_regret", "mean_absolute_score_gap", "maximum_score_gap",
-                "p95_score_gap", "mean_travel_time_gap_on_score_ties", "missed_path_switches",
+                "integrated_score_regret", "relative_score_gap_percent",
+                "mean_absolute_score_gap", "maximum_score_gap", "p95_score_gap",
+                "mean_travel_time_gap_on_score_ties", "missed_path_switches",
                 "reference_profile_checksum")) {
             result.put(name, null);
         }

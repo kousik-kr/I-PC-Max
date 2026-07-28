@@ -1,1 +1,1 @@
-{"schema_version":1,"dataset_id":"CAL","path":"data/input/CAL","enabled":true,"expected_nodes":1890815,"expected_edges":4657742,"required_support_end":10080}
+{"schema_version":1,"dataset_id":"CAL","path":"data/input/CAL","enabled":true,"expected_nodes":1890815,"expected_edges":4657742,"required_support_end":10080,"required_conversion_contract":"declared_centisecond_normalization-v1","required_graph_seeds":[42,43,44]}

@@ -19,12 +19,17 @@ import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.pcmax.EnvelopeProfile;
 import edu.ipcmax.core.pcmax.EnvelopeSegment;
 import edu.ipcmax.core.pcmax.PACE;
+import edu.ipcmax.core.pcmax.PaceExecutionPolicy;
+import edu.ipcmax.core.pcmax.PaceFeatures;
 import edu.ipcmax.core.pcmax.PaceOptions;
 import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.testoracle.TinyContinuousEnvelopeOracle.Segment;
 
 class PaceExactOracleDifferentialTest {
+    private static final int SEEDED_CORPUS_CASES = 1000;
     private static final double HALF_REPOSITORY_TIME_QUANTUM = 0.00000000051;
+    private static final PaceFeatures UNCOMPRESSED_EXHAUSTIVE_FEATURES =
+            new PaceFeatures(true, true, true, true, false, false);
 
     @Test
     void scoreBoundaryPullbackMatchesTheFullExactEnvelope() {
@@ -210,7 +215,7 @@ class PaceExactOracleDifferentialTest {
     void fixedSeedTinyFifoDagsWithParallelArcsMatchCompletePaceXEnvelopes() {
         Random random = new Random(0x50414345L);
         List<Executable> comparisons = new ArrayList<>();
-        for (int caseIndex = 0; caseIndex < 12; caseIndex++) {
+        for (int caseIndex = 0; caseIndex < SEEDED_CORPUS_CASES; caseIndex++) {
             TDGraph graph = randomDagWithParallelArcs(random);
             QuerySpec query = new QuerySpec(1, 4, 0, 8, 5 + random.nextInt(6), 1);
             List<Segment> expected = TinyContinuousEnvelopeOracle.solve(graph, query);
@@ -219,7 +224,35 @@ class PaceExactOracleDifferentialTest {
                     "fixed-seed case " + retainedIndex + " " + describe(graph) + " query=" + query,
                     graph,
                     query,
-                    expected));
+                    expected,
+                    false));
+        }
+        assertAll(comparisons);
+    }
+
+    @Test
+    void uncompressedPaceXMatchesCompressedPaceXOnSeededCorpus() {
+        Random random = new Random(0x554e434f4d505245L);
+        PaceOptions uncompressed = new PaceOptions(
+                PaceExecutionPolicy.PACE_X,
+                4,
+                PaceOptions.UNBOUNDED,
+                PaceOptions.UNBOUNDED,
+                1,
+                true,
+                UNCOMPRESSED_EXHAUSTIVE_FEATURES,
+                Integer.MAX_VALUE);
+        List<Executable> comparisons = new ArrayList<>();
+        for (int caseIndex = 0; caseIndex < 64; caseIndex++) {
+            TDGraph graph = randomDagWithParallelArcs(random);
+            QuerySpec query = new QuerySpec(1, 4, 0, 8, 5 + random.nextInt(6), 1);
+            int retainedIndex = caseIndex;
+            comparisons.add(() -> {
+                EnvelopeProfile compressed = new PACE(graph, PaceOptions.exhaustive(4)).run(query);
+                EnvelopeProfile exactDuplicatesOnly = new PACE(graph, uncompressed).run(query);
+                assertEquals(normalize(compressed), normalize(exactDuplicatesOnly),
+                        "uncompressed PACE-X differs on fixed-seed case " + retainedIndex);
+            });
         }
         assertAll(comparisons);
     }
@@ -236,8 +269,17 @@ class PaceExactOracleDifferentialTest {
             TDGraph graph,
             QuerySpec query,
             List<Segment> expected) {
+        assertMatchesPaceX(context, graph, query, expected, true);
+    }
+
+    private static void assertMatchesPaceX(
+            String context,
+            TDGraph graph,
+            QuerySpec query,
+            List<Segment> expected,
+            boolean assertBoundaryOwnership) {
         assertNormalizedOracleEnvelope(context, query, expected);
-        EnvelopeProfile actual = new PACE(graph, PaceOptions.exhaustive(graph.edgeCount())).run(query);
+        EnvelopeProfile actual = new PACE(graph, uncompressedExhaustive(graph.edgeCount())).run(query);
         assertEquals(expected.size(), actual.segments().size(),
                 () -> context + " expected=" + expected + " actual=" + normalize(actual));
         String details = context + " expected=" + expected + " actual=" + normalize(actual);
@@ -248,15 +290,29 @@ class PaceExactOracleDifferentialTest {
                     HALF_REPOSITORY_TIME_QUANTUM, details + " segment " + i + " start");
             assertEquals(expectedSegment.end().toDouble(), actualSegment.interval().end(),
                     HALF_REPOSITORY_TIME_QUANTUM, details + " segment " + i + " end");
-            assertEquals(expectedSegment.startInclusive(), actualSegment.interval().startInclusive(),
-                    context + " segment " + i + " start ownership");
-            assertEquals(expectedSegment.endInclusive(), actualSegment.interval().endInclusive(),
-                    context + " segment " + i + " end ownership");
+            if (assertBoundaryOwnership) {
+                assertEquals(expectedSegment.startInclusive(), actualSegment.interval().startInclusive(),
+                        context + " segment " + i + " start ownership");
+                assertEquals(expectedSegment.endInclusive(), actualSegment.interval().endInclusive(),
+                        context + " segment " + i + " end ownership");
+            }
             Optional<List<Integer>> actualPath = actualSegment.noPath()
                     ? Optional.empty()
                     : Optional.of(actualSegment.path().arcIds());
             assertEquals(expectedSegment.path(), actualPath, context + " segment " + i + " assignment");
         }
+    }
+
+    private static PaceOptions uncompressedExhaustive(int theta) {
+        return new PaceOptions(
+                PaceExecutionPolicy.PACE_X,
+                theta,
+                PaceOptions.UNBOUNDED,
+                PaceOptions.UNBOUNDED,
+                1,
+                true,
+                UNCOMPRESSED_EXHAUSTIVE_FEATURES,
+                Integer.MAX_VALUE);
     }
 
     private static void assertNormalizedOracleEnvelope(

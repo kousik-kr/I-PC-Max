@@ -16,6 +16,10 @@ import java.util.Objects;
 /** Stable checksums and dataset-specific seed derivation for generated graphs. */
 public final class ManifestChecksum {
     private static final String CHECKSUM_DOMAIN = "PACE-GRAPH-CHECKSUM-v1";
+    private static final String DATASET_CHECKSUM_DOMAIN =
+            "PACE-DATASET-STRUCTURE-CHECKSUM-v1";
+    private static final String TEMPORAL_CHECKSUM_DOMAIN =
+            "PACE-TEMPORAL-ATTRIBUTE-CHECKSUM-v1";
     private static final String SEED_DOMAIN = "PACE-DATASET-SEED-v1";
     private static final int BUFFER_SIZE = 64 * 1024;
 
@@ -24,6 +28,12 @@ public final class ManifestChecksum {
             "edges_static.csv.gz",
             "nodes.csv.gz",
             "manifest.json",
+            "score_functions.jsonl.gz",
+            "travel_time_functions.jsonl.gz");
+    public static final List<String> STRUCTURAL_GRAPH_FILES = List.of(
+            "edges_static.csv.gz",
+            "nodes.csv.gz");
+    public static final List<String> TEMPORAL_ATTRIBUTE_FILES = List.of(
             "score_functions.jsonl.gz",
             "travel_time_functions.jsonl.gz");
 
@@ -35,15 +45,40 @@ public final class ManifestChecksum {
      * Text is UTF-8, text lengths are 32-bit big-endian, and file lengths are 64-bit big-endian.
      */
     public static String graphChecksum(Path datasetDirectory) throws IOException {
+        return framedChecksum(
+                datasetDirectory, CHECKSUM_DOMAIN, REQUIRED_GRAPH_FILES);
+    }
+
+    /** Hash of stable graph structure, excluding temporal attributes and manifest metadata. */
+    public static String datasetChecksum(Path datasetDirectory) throws IOException {
+        return framedChecksum(
+                datasetDirectory,
+                DATASET_CHECKSUM_DOMAIN,
+                STRUCTURAL_GRAPH_FILES);
+    }
+
+    /** Hash of travel-time and score-function payload bytes. */
+    public static String temporalAttributeChecksum(Path datasetDirectory)
+            throws IOException {
+        return framedChecksum(
+                datasetDirectory,
+                TEMPORAL_CHECKSUM_DOMAIN,
+                TEMPORAL_ATTRIBUTE_FILES);
+    }
+
+    private static String framedChecksum(
+            Path datasetDirectory,
+            String domain,
+            List<String> filenames) throws IOException {
         Objects.requireNonNull(datasetDirectory, "datasetDirectory");
         if (!Files.isDirectory(datasetDirectory)) {
             throw new IOException("graph dataset directory does not exist: " + datasetDirectory);
         }
 
         MessageDigest digest = sha256();
-        updateFramedText(digest, CHECKSUM_DOMAIN);
+        updateFramedText(digest, domain);
         byte[] buffer = new byte[BUFFER_SIZE];
-        for (String filename : REQUIRED_GRAPH_FILES) {
+        for (String filename : filenames) {
             Path file = datasetDirectory.resolve(filename);
             if (!Files.isRegularFile(file)) {
                 throw new IOException("required graph file does not exist or is not a regular file: " + file);

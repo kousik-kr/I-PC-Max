@@ -7,9 +7,11 @@ import edu.ipcmax.core.validate.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.Set;
 
 /**
  * Point-departure earliest-arrival labeling for FIFO time-dependent graphs.
@@ -28,9 +30,55 @@ public final class PointForwardLabeling {
      * Computes earliest arrivals from a source at a fixed departure time.
      */
     public Result run(int source, int departureTime, double maxTravelTime) {
+        return run(source, departureTime, maxTravelTime, null);
+    }
+
+    /**
+     * Computes an exact fixed-departure fastest path and stops after the
+     * requested target receives its final FIFO label.
+     */
+    public Result runToTarget(
+            int source,
+            int target,
+            int departureTime,
+            double maxTravelTime) {
+        graph.node(target);
+        return run(source, departureTime, maxTravelTime, Set.of(target));
+    }
+
+    /**
+     * Computes exact fixed-departure fastest paths to a target set and stops
+     * after every requested target receives its final FIFO label.
+     */
+    public Result runToTargets(
+            int source,
+            Set<Integer> targets,
+            int departureTime,
+            double maxTravelTime) {
+        if (targets == null || targets.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "at least one target is required");
+        }
+        for (int target : targets) {
+            graph.node(target);
+        }
+        return run(
+                source,
+                departureTime,
+                maxTravelTime,
+                Set.copyOf(targets));
+    }
+
+    private Result run(
+            int source,
+            int departureTime,
+            double maxTravelTime,
+            Set<Integer> targets) {
         Map<Integer, Double> arrival = new HashMap<>();
         Map<Integer, Integer> predecessorArc = new HashMap<>();
         PriorityQueue<Label> queue = new PriorityQueue<>();
+        Set<Integer> remainingTargets = targets == null
+                ? null : new HashSet<>(targets);
         arrival.put(source, (double) departureTime);
         queue.add(new Label(source, departureTime));
         double deadline = departureTime + maxTravelTime;
@@ -39,6 +87,11 @@ public final class PointForwardLabeling {
             Label label = queue.poll();
             if (label.arrivalTime > arrival.getOrDefault(label.node, Double.POSITIVE_INFINITY)) {
                 continue;
+            }
+            if (remainingTargets != null
+                    && remainingTargets.remove(label.node)
+                    && remainingTargets.isEmpty()) {
+                break;
             }
             for (Edge edge : graph.outgoingEdges(label.node)) {
                 double nextArrival;

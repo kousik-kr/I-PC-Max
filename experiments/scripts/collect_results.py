@@ -28,6 +28,13 @@ def read_records(directory: Path) -> list[dict[str, Any]]:
 
 def flatten(record: dict[str, Any]) -> dict[str, Any]:
     java = record.get("java_record") or {}
+    configuration = java.get("configuration", {})
+    status = java.get("status", {})
+    counters = java.get("counters", {})
+    memory = java.get("memory_bytes", {})
+    output = java.get("output", {})
+    peak_rss = memory.get("peak_rss")
+    start_rss = memory.get("start_rss")
     return {
         "run_id": record["run_id"],
         "study_id": record["study_id"],
@@ -36,14 +43,51 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
         "completion_status": record["completion_status"],
         "dataset_id": java.get("dataset", {}).get("dataset_id"),
         "query_id": java.get("query", {}).get("query_id"),
-        "algorithm_id": java.get("configuration", {}).get("algorithm"),
-        "variant_id": java.get("configuration", {}).get("ablation"),
-        "threads": java.get("configuration", {}).get("threads"),
+        "algorithm_id": configuration.get("algorithm"),
+        "variant_id": configuration.get("ablation"),
+        "pace_engine": configuration.get("pace_engine"),
+        "pivot_limit_l": configuration.get("pivot_limit_l"),
+        "connector_limit_kc": configuration.get("connector_limit_kc"),
+        "frontier_limit_kf": configuration.get("frontier_limit_kf"),
+        "connector_expansion_cap_mc": configuration.get("connector_expansion_cap_mc"),
+        "breakpoint_cap_mb": configuration.get("breakpoint_cap_mb"),
+        "query_work_cap_mq": configuration.get("query_work_cap_mq"),
+        "threads": configuration.get("threads"),
+        "generation_completion": status.get("generation_completion"),
+        "exactness_scope": status.get("exactness_scope"),
+        "cap_triggered": ",".join(status.get("cap_triggered") or []),
         "wall_time_ns": java.get("timing_ns", {}).get("query_total"),
-        "peak_rss_bytes": java.get("memory_bytes", {}).get("peak_rss"),
-        "profile_cells_total": java.get("output", {}).get("final_profile_intervals"),
-        "feasible_coverage": java.get("output", {}).get("feasible_coverage_fraction"),
+        "cpu_time_ns": java.get("timing_ns", {}).get("cpu_total"),
+        "peak_rss_bytes": memory.get("peak_rss"),
+        "start_rss_bytes": start_rss,
+        "end_rss_bytes": memory.get("end_rss"),
+        "incremental_rss_bytes": (
+            max(0, peak_rss - start_rss)
+            if isinstance(peak_rss, (int, float))
+            and isinstance(start_rss, (int, float))
+            else None
+        ),
+        "peak_heap_bytes": memory.get("peak_heap"),
+        "corridor_nodes": counters.get("corridor_nodes"),
+        "corridor_edges": counters.get("corridor_edges"),
+        "selected_pivots": counters.get("selected_pivots"),
+        "connector_calls": counters.get("connector_calls"),
+        "connector_expansions": counters.get("connector_expansions"),
+        "valid_connectors": counters.get("valid_connectors"),
+        "candidates_generated": counters.get("candidates_generated"),
+        "candidates_retained": counters.get("candidates_retained"),
+        "total_candidate_work": counters.get("total_candidate_work"),
+        "memo_lookups": counters.get("memo_lookups"),
+        "memo_hits": counters.get("memo_hits"),
+        "memo_misses": counters.get("memo_misses"),
+        "memo_waits": counters.get("memo_waits"),
+        "observed_workers": counters.get("observed_workers"),
+        "profile_cells_total": output.get("final_profile_intervals"),
+        "feasible_coverage": output.get("feasible_coverage_fraction"),
+        "average_selected_score": output.get("average_selected_score"),
+        "best_selected_score": output.get("best_selected_score"),
         "path_agreement": java.get("quality", {}).get("path_agreement_fraction"),
+        "score_agreement": java.get("quality", {}).get("score_agreement_fraction"),
         "score_regret": java.get("quality", {}).get("integrated_score_regret"),
         "output_checksum": java.get("output", {}).get("profile_checksum"),
         "input_hash": record["input_hash"],

@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.StreamSupport;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -39,7 +40,7 @@ class PaceBenchFrameworkTest {
         boolean sawNoPath = false;
         for (String line : lines) {
             JsonNode record = QueryManifestIO.mapper().readTree(line);
-            assertEquals(2, record.path("schema_version").asInt());
+            assertEquals(3, record.path("schema_version").asInt());
             for (String section : List.of("run", "system", "dataset", "query", "configuration",
                     "status", "timing_ns", "memory_bytes", "counters", "output", "quality", "error")) {
                 assertTrue(record.has(section), section);
@@ -67,7 +68,7 @@ class PaceBenchFrameworkTest {
     }
 
     @Test
-    void paceXSerializesPolicySeparatelyFromRetainedFrontierExactness() throws Exception {
+    void paceXSerializesVerifiedExhaustiveExactnessAndCompletion() throws Exception {
         Path output = temporary.resolve("pace-x.jsonl");
         assertEquals(0, PaceBench.execute(new String[] {
                 "--algorithm", "pace-x", "--dataset", "demo",
@@ -76,11 +77,55 @@ class PaceBenchFrameworkTest {
         }));
 
         JsonNode record = QueryManifestIO.mapper().readTree(Files.readAllLines(output).get(0));
-        assertEquals(2, record.path("schema_version").asInt());
+        assertEquals(3, record.path("schema_version").asInt());
         assertEquals("PACE_X_EXHAUSTIVE", record.path("configuration").path("execution_mode").asText());
         assertTrue(record.path("configuration").path("exhaustive_anchors").isNull());
         assertEquals("PACE_X", record.path("status").path("execution_policy").asText());
-        assertEquals("RETAINED_FRONTIER", record.path("status").path("exactness_scope").asText());
+        assertEquals("GLOBAL_CERTIFIED", record.path("status").path("exactness_scope").asText());
+        assertEquals("COMPLETE", record.path("status").path("generation_completion").asText());
+        assertTrue(record.path("status").path("cap_triggered").isEmpty());
+    }
+
+    @Test
+    void paceBSerializesTypedCapAndRetainedFrontierStatus() throws Exception {
+        Path output = temporary.resolve("pace-b-cap.jsonl");
+        assertEquals(1, PaceBench.execute(new String[] {
+                "--algorithm", "pace-b", "--dataset", "demo",
+                "--query-file", "experiments/manifests/tiny.jsonl",
+                "--output-jsonl", output.toString(),
+                "--theta", "4", "--pivot-limit-l", "32",
+                "--connector-limit-kc", "16",
+                "--frontier-limit-kf", "16",
+                "--connector-expansion-cap-mc", "10000",
+                "--breakpoint-cap-mb", "10000",
+                "--query-work-cap-mq", "1"
+        }));
+
+        JsonNode capped = Files.readAllLines(output).stream()
+                .map(line -> {
+                    try {
+                        return QueryManifestIO.mapper().readTree(line);
+                    } catch (Exception failure) {
+                        throw new AssertionError(failure);
+                    }
+                })
+                .filter(record -> !record.path("status")
+                        .path("cap_triggered").isEmpty())
+                .findFirst()
+                .orElseThrow();
+        assertEquals("LIMIT_EXCEEDED",
+                capped.path("status").path("status_code").asText());
+        assertEquals("RESOURCE_TRUNCATED",
+                capped.path("status").path("generation_completion").asText());
+        assertEquals("RETAINED_FRONTIER",
+                capped.path("status").path("exactness_scope").asText());
+        assertTrue(StreamSupport.stream(
+                capped.path("status").path("cap_triggered")
+                        .spliterator(),
+                false).anyMatch(value ->
+                        value.asText().equals("QUERY_WORK_M_Q")));
+        assertTrue(capped.path("counters")
+                .path("total_candidate_work").asLong() <= 1);
     }
 
     @Test
