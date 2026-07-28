@@ -997,13 +997,13 @@ def generate_base_dataset(
     }
 
 
-def generate_ny_variants(
+def _generate_dataset_variants(
+    dataset: str,
     design: dict[str, Any],
     config: dict[str, Any],
     config_hash: str,
     overwrite: bool,
 ) -> list[dict[str, Any]]:
-    dataset = "NY"
     definition = design["dataset_definitions"][dataset]
     base = repo_path(definition["path"])
     paths = raw_paths(config, dataset)
@@ -1144,6 +1144,21 @@ def generate_ny_variants(
     return records
 
 
+def generate_required_variants(
+    design: dict[str, Any],
+    config: dict[str, Any],
+    config_hash: str,
+    overwrite: bool,
+) -> list[dict[str, Any]]:
+    records = []
+    for dataset in design["datasets"]:
+        for record in _generate_dataset_variants(
+            dataset, design, config, config_hash, overwrite
+        ):
+            records.append({"dataset_id": dataset, **record})
+    return records
+
+
 def dataset_directories(
     design: dict[str, Any],
 ) -> list[tuple[str, str, int | float, Path]]:
@@ -1152,8 +1167,6 @@ def dataset_directories(
         definition = design["dataset_definitions"][dataset]
         base = repo_path(definition["path"])
         result.append((dataset, "base", design["seeds"]["graph_main"], base))
-        if dataset != "NY":
-            continue
         for percent in definition.get("required_score_density_percent", []):
             result.append((
                 dataset,
@@ -1352,6 +1365,53 @@ def validate_assets(
                 "errors": variant_errors,
             })
             variants.append(validated)
+    for dataset in design["datasets"]:
+        if dataset == "NY":
+            continue
+        definition = design["dataset_definitions"][dataset]
+        base = repo_path(definition["path"])
+        for seed in definition.get("required_graph_seeds", []):
+            if int(seed) == int(design["seeds"]["graph_main"]):
+                variants.append({
+                    "dataset_id": dataset,
+                    "variant_kind": "graph_seed",
+                    "variant_value": int(seed),
+                    "path": base.as_posix(),
+                    "base_alias": True,
+                    "errors": [],
+                })
+                continue
+            directory = base / "variants" / f"seed-{int(seed)}"
+            try:
+                validated = validate_dataset_directory(
+                    directory,
+                    int(definition["expected_nodes"]),
+                    int(definition["expected_edges"]),
+                    int(seed),
+                    float(config["defaults"]["score_edge_fraction"]),
+                    expected_contract,
+                    int(definition["required_support_end"]),
+                    None,
+                    numerator,
+                    denominator,
+                )
+            except (OSError, ValueError, KeyError, TypeError) as failure:
+                validated = {
+                    "path": directory.as_posix(),
+                    "errors": [str(failure)],
+                }
+            variant_errors = [
+                f"{dataset} graph seed {seed}: {message}"
+                for message in validated["errors"]
+            ]
+            errors.extend(variant_errors)
+            validated.update({
+                "dataset_id": dataset,
+                "variant_kind": "graph_seed",
+                "variant_value": int(seed),
+                "errors": variant_errors,
+            })
+            variants.append(validated)
     return {
         "schema_version": 2,
         "datasets": records,
@@ -1405,7 +1465,9 @@ def run(
         generate_base_dataset(dataset, design, generation_config, config_hash, overwrite)
         for dataset in design["datasets"]
     ]
-    variants = generate_ny_variants(design, generation_config, config_hash, overwrite)
+    variants = generate_required_variants(
+        design, generation_config, config_hash, overwrite
+    )
     validation = validate_assets(design, generation_config)
     report = {
         "schema_version": 1,

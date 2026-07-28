@@ -2,6 +2,7 @@ package edu.ipcmax.core.labeling;
 
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
+import edu.ipcmax.core.index.LowerBoundOracle;
 import edu.ipcmax.core.validate.Path;
 
 import java.util.ArrayList;
@@ -43,7 +44,39 @@ public final class PointForwardLabeling {
             int departureTime,
             double maxTravelTime) {
         graph.node(target);
-        return run(source, departureTime, maxTravelTime, Set.of(target));
+        return run(
+                source,
+                departureTime,
+                maxTravelTime,
+                Set.of(target),
+                null);
+    }
+
+    /**
+     * Computes an exact fixed-departure fastest path with an admissible
+     * reverse lower-bound potential.
+     *
+     * <p>The potential must contain distances to {@code target}. The
+     * time-dependent FIFO search remains exact because every edge's actual
+     * travel time is at least its lower-bound weight.</p>
+     */
+    public Result runToTarget(
+            int source,
+            int target,
+            int departureTime,
+            double maxTravelTime,
+            LowerBoundOracle.Labels reverseLowerBounds) {
+        graph.node(target);
+        if (reverseLowerBounds == null) {
+            throw new IllegalArgumentException(
+                    "reverse lower-bound labels are required");
+        }
+        return run(
+                source,
+                departureTime,
+                maxTravelTime,
+                Set.of(target),
+                reverseLowerBounds);
     }
 
     /**
@@ -66,7 +99,8 @@ public final class PointForwardLabeling {
                 source,
                 departureTime,
                 maxTravelTime,
-                Set.copyOf(targets));
+                Set.copyOf(targets),
+                null);
     }
 
     private Result run(
@@ -74,13 +108,35 @@ public final class PointForwardLabeling {
             int departureTime,
             double maxTravelTime,
             Set<Integer> targets) {
+        return run(
+                source,
+                departureTime,
+                maxTravelTime,
+                targets,
+                null);
+    }
+
+    private Result run(
+            int source,
+            int departureTime,
+            double maxTravelTime,
+            Set<Integer> targets,
+            LowerBoundOracle.Labels reverseLowerBounds) {
         Map<Integer, Double> arrival = new HashMap<>();
         Map<Integer, Integer> predecessorArc = new HashMap<>();
         PriorityQueue<Label> queue = new PriorityQueue<>();
         Set<Integer> remainingTargets = targets == null
                 ? null : new HashSet<>(targets);
         arrival.put(source, (double) departureTime);
-        queue.add(new Label(source, departureTime));
+        double sourcePotential = lowerBound(
+                reverseLowerBounds, source);
+        if (!Double.isFinite(sourcePotential)) {
+            return new Result(source, arrival, predecessorArc, graph);
+        }
+        queue.add(new Label(
+                source,
+                departureTime,
+                departureTime + sourcePotential));
         double deadline = departureTime + maxTravelTime;
 
         while (!queue.isEmpty()) {
@@ -94,6 +150,11 @@ public final class PointForwardLabeling {
                 break;
             }
             for (Edge edge : graph.outgoingEdges(label.node)) {
+                double potential = lowerBound(
+                        reverseLowerBounds, edge.target());
+                if (!Double.isFinite(potential)) {
+                    continue;
+                }
                 double nextArrival;
                 try {
                     nextArrival = edge.travelTimeFunction().arrivalTimeAt(label.arrivalTime);
@@ -107,7 +168,10 @@ public final class PointForwardLabeling {
                 if (nextArrival < best || (nextArrival == best && edge.arcId() < predecessorArc.getOrDefault(edge.target(), Integer.MAX_VALUE))) {
                     arrival.put(edge.target(), nextArrival);
                     predecessorArc.put(edge.target(), edge.arcId());
-                    queue.add(new Label(edge.target(), nextArrival));
+                    queue.add(new Label(
+                            edge.target(),
+                            nextArrival,
+                            nextArrival + potential));
                 }
             }
         }
@@ -115,10 +179,26 @@ public final class PointForwardLabeling {
         return new Result(source, arrival, predecessorArc, graph);
     }
 
-    private record Label(int node, double arrivalTime) implements Comparable<Label> {
+    private static double lowerBound(
+            LowerBoundOracle.Labels labels,
+            int node) {
+        return labels == null ? 0.0 : labels.distance(node);
+    }
+
+    private record Label(
+            int node,
+            double arrivalTime,
+            double estimatedTargetArrival) implements Comparable<Label> {
         @Override
         public int compareTo(Label other) {
-            int timeCompare = Double.compare(arrivalTime, other.arrivalTime);
+            int estimateCompare = Double.compare(
+                    estimatedTargetArrival,
+                    other.estimatedTargetArrival);
+            if (estimateCompare != 0) {
+                return estimateCompare;
+            }
+            int timeCompare = Double.compare(
+                    arrivalTime, other.arrivalTime);
             if (timeCompare != 0) {
                 return timeCompare;
             }

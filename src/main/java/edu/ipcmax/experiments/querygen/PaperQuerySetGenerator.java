@@ -26,6 +26,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 
 import edu.ipcmax.core.function.Domain;
+import edu.ipcmax.core.index.ExactDijkstraLowerBoundOracle;
+import edu.ipcmax.core.index.LowerBoundOracle;
 import edu.ipcmax.core.index.QueryPreparationIndexes;
 import edu.ipcmax.core.index.ScoreSupportIndex;
 import edu.ipcmax.core.labeling.PointForwardLabeling;
@@ -780,63 +782,53 @@ public final class PaperQuerySetGenerator {
                     Math.min(
                             24,
                             Runtime.getRuntime().availableProcessors()));
-            int departureChunkSize = Math.max(
-                    1,
-                    (departureGrid.size() + maximumWorkers - 1)
-                            / maximumWorkers);
+            ExactDijkstraLowerBoundOracle lowerBoundOracle =
+                    new ExactDijkstraLowerBoundOracle(dataset.graph());
             List<Callable<Map<EndpointPair, Map<Integer, Double>>>> tasks =
                     new ArrayList<>();
             for (Map.Entry<Integer, Set<Integer>> sourceEntry
                     : destinationsBySource.entrySet()) {
                 int source = sourceEntry.getKey();
-                Set<Integer> destinations =
-                        Set.copyOf(sourceEntry.getValue());
-                for (int chunkStart = 0;
-                        chunkStart < departureGrid.size();
-                        chunkStart += departureChunkSize) {
-                    int from = chunkStart;
-                    int to = Math.min(
-                            departureGrid.size(),
-                            chunkStart + departureChunkSize);
+                for (int destination : sourceEntry.getValue()) {
                     tasks.add(() -> {
-                        Map<EndpointPair, Map<Integer, Double>> sourceValues =
+                        EndpointPair endpoint =
+                                new EndpointPair(source, destination);
+                        Map<Integer, Double> byDeparture =
                                 new LinkedHashMap<>();
-                        for (int destination : destinations) {
-                            sourceValues.put(
-                                    new EndpointPair(source, destination),
-                                    new LinkedHashMap<>());
+                        LowerBoundOracle.Labels reverseLowerBounds =
+                                lowerBoundOracle.distancesTo(destination);
+                        if (!reverseLowerBounds.reached(source)) {
+                            throw new IOException(
+                                    "destination " + destination
+                                            + " is unreachable from "
+                                            + source
+                                            + " in the lower-bound graph");
                         }
                         PointForwardLabeling fastest =
                                 new PointForwardLabeling(dataset.graph());
-                        for (int gridIndex = from;
-                                gridIndex < to;
-                                gridIndex++) {
-                            int departure = departureGrid.get(gridIndex);
+                        for (int departure : departureGrid) {
                             PointForwardLabeling.Result labels =
-                                    fastest.runToTargets(
+                                    fastest.runToTarget(
                                             source,
-                                            destinations,
+                                            destination,
                                             departure,
-                                            Double.POSITIVE_INFINITY);
-                            for (int destination : destinations) {
-                                if (!labels.reached(destination)) {
-                                    throw new IOException(
-                                            "destination " + destination
-                                                    + " became unreachable "
-                                                    + "from " + source
-                                                    + " at departure "
-                                                    + departure);
-                                }
-                                sourceValues.get(new EndpointPair(
-                                        source, destination)).put(
-                                                departure,
-                                                Domain.canonicalTime(
-                                                        labels.arrivalAt(
-                                                                destination)
-                                                                - departure));
+                                            Double.POSITIVE_INFINITY,
+                                            reverseLowerBounds);
+                            if (!labels.reached(destination)) {
+                                throw new IOException(
+                                        "destination " + destination
+                                                + " became unreachable "
+                                                + "from " + source
+                                                + " at departure "
+                                                + departure);
                             }
+                            byDeparture.put(
+                                    departure,
+                                    Domain.canonicalTime(
+                                            labels.arrivalAt(destination)
+                                                    - departure));
                         }
-                        return sourceValues;
+                        return Map.of(endpoint, byDeparture);
                     });
                 }
             }

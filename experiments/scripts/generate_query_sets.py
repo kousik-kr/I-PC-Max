@@ -397,8 +397,14 @@ def _run_java_generator(
     output_path: Path,
 ) -> dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_limit_mb = design["resources"].get("memory_limit_mb")
+    if not isinstance(memory_limit_mb, int) or memory_limit_mb <= 0:
+        raise ValueError(
+            "query generation requires a positive memory_limit_mb"
+        )
     command = [
         executable("java"),
+        f"-Xmx{memory_limit_mb}m",
         "-cp",
         str(repo_path(design["paths"]["jar"])),
         design["query_generation"]["paper_java_main_class"],
