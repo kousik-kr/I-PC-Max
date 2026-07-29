@@ -152,6 +152,7 @@ def main() -> int:
             checksums=not args.plan_only,
             allow_unresolved_resources=args.plan_only,
             planning=args.plan_only,
+            datasets_filter=set(args.dataset or []) or None,
         )
         atomic_write_json(root / "provenance" / "preflight.json", preflight)
         plan = build_all(design, root / "plan" / "matrices")

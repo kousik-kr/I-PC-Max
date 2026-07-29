@@ -93,6 +93,7 @@ def _run_pipeline(
     cpu_list: str,
     max_concurrent: int,
     disk_limit_gib: float,
+    datasets: list[str],
 ) -> int:
     _, launcher = _paths(config, run_id)
     launcher.mkdir(parents=True, exist_ok=True)
@@ -109,6 +110,7 @@ def _run_pipeline(
             cpu_list=cpu_list,
             max_concurrent=max_concurrent,
             disk_limit_gib=disk_limit_gib,
+            datasets=datasets,
         )
         _command([
             sys.executable,
@@ -120,7 +122,7 @@ def _run_pipeline(
         _state(launcher, run_id, "RUNNING", "build")
         _command(["mvn", "-q", "-DskipTests", "package"])
         completed_datasets = []
-        for dataset in load_design(config)["datasets"]:
+        for dataset in datasets:
             _state(
                 launcher,
                 run_id,
@@ -147,16 +149,19 @@ def _run_pipeline(
             "preflight",
             completed_query_datasets=completed_datasets,
         )
-        _command([
+        preflight_command = [
             sys.executable,
             "experiments/scripts/preflight.py",
             "--config",
             str(config),
             "--output",
             str(launcher / "deep_preflight.json"),
-        ])
+        ]
+        for dataset in datasets:
+            preflight_command.extend(["--dataset", dataset])
+        _command(preflight_command)
         _state(launcher, run_id, "RUNNING", "plan")
-        _command([
+        plan_command = [
             "taskset",
             "-c",
             cpu_list,
@@ -174,9 +179,12 @@ def _run_pipeline(
             "--plan-only",
             "--max-concurrent",
             str(max_concurrent),
-        ])
+        ]
+        for dataset in datasets:
+            plan_command.extend(["--dataset", dataset])
+        _command(plan_command)
         _state(launcher, run_id, "RUNNING", "experiment_launch")
-        _command([
+        launch_command = [
             "taskset",
             "-c",
             cpu_list,
@@ -194,7 +202,10 @@ def _run_pipeline(
             "--resume",
             "--max-concurrent",
             str(max_concurrent),
-        ])
+        ]
+        for dataset in datasets:
+            launch_command.extend(["--dataset", dataset])
+        _command(launch_command)
         _command([
             sys.executable,
             "scripts/watch_paper_q1_server.py",
@@ -262,6 +273,8 @@ def _launch(args: argparse.Namespace) -> int:
         "--disk-limit-gib",
         str(args.disk_limit_gib),
     ]
+    for dataset in args.datasets:
+        command.extend(["--dataset", dataset])
     with stdout_path.open("a", encoding="utf-8") as stdout, stderr_path.open(
         "a", encoding="utf-8"
     ) as stderr:
@@ -320,8 +333,19 @@ def main() -> int:
         child.add_argument("--max-concurrent", type=int, default=24)
         child.add_argument("--disk-limit-gib", type=float, default=100.0)
         child.add_argument("--tail", type=int, default=10)
+        child.add_argument(
+            "--dataset",
+            dest="datasets",
+            action="append",
+            choices=("NY", "FLA", "CAL", "USA"),
+            help="restrict preparation and experiment execution to this dataset (repeatable)",
+        )
     args = parser.parse_args()
     args.config = args.config.resolve()
+    configured_datasets = list(load_design(args.config)["datasets"])
+    args.datasets = args.datasets or configured_datasets
+    if len(args.datasets) != len(set(args.datasets)):
+        parser.error("--dataset values must be unique")
     if args.max_concurrent < 1 or args.disk_limit_gib <= 0:
         parser.error("concurrency and disk limit must be positive")
     if args.action == "launch":
@@ -333,6 +357,7 @@ def main() -> int:
             args.cpu_list,
             args.max_concurrent,
             args.disk_limit_gib,
+            args.datasets,
         )
     return _status(args)
 

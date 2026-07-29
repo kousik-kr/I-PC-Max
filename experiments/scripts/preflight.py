@@ -14,7 +14,12 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from experiments.scripts.common.atomic_io import atomic_write_json
-from experiments.scripts.common.config import load_design, load_document, repo_path
+from experiments.scripts.common.config import (
+    filtered_design,
+    load_design,
+    load_document,
+    repo_path,
+)
 from experiments.scripts.common.hashing import graph_checksum
 from experiments.scripts.common.provenance import host_environment
 from experiments.scripts.generate_dataset_assets import validate_assets
@@ -319,8 +324,11 @@ def run_preflight(
     checksums: bool = True,
     allow_unresolved_resources: bool = False,
     planning: bool = False,
+    datasets_filter: set[str] | None = None,
 ) -> dict[str, Any]:
     design = load_design(config_path)
+    if datasets_filter:
+        design = filtered_design(design, datasets_filter)
     environment = host_environment()
     datasets = [
         inspect_dataset(dataset, repo_path(design["dataset_configs"][dataset]), checksums)
@@ -402,6 +410,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=Path("experiments/configs/paper_q1.yaml"))
     parser.add_argument("--skip-checksums", action="store_true")
     parser.add_argument("--allow-unresolved-resources", action="store_true")
+    parser.add_argument("--dataset", action="append")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
@@ -409,6 +418,7 @@ def main() -> int:
             args.config,
             not args.skip_checksums,
             args.allow_unresolved_resources,
+            datasets_filter=set(args.dataset or []) or None,
         )
     except (OSError, ValueError, json.JSONDecodeError) as failure:
         print(f"preflight: {failure}", file=sys.stderr)

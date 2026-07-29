@@ -815,6 +815,17 @@ public final class PaperQuerySetGenerator {
                                             Double.POSITIVE_INFINITY,
                                             reverseLowerBounds);
                             if (!labels.reached(destination)) {
+                                // The potential is an optimization only. Keep
+                                // the original exact FIFO search as a
+                                // correctness fallback for malformed or
+                                // unexpectedly disconnected temporal payloads.
+                                labels = fastest.runToTarget(
+                                        source,
+                                        destination,
+                                        departure,
+                                        Double.POSITIVE_INFINITY);
+                            }
+                            if (!labels.reached(destination)) {
                                 throw new IOException(
                                         "destination " + destination
                                                 + " became unreachable "
