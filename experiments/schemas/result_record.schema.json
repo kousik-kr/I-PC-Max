@@ -36,7 +36,15 @@
   "$defs": {
     "run": {
       "type": "object",
-      "required": ["run_id", "experiment_name", "timestamp_utc", "repetition", "warmup", "git_commit", "git_dirty", "executable_version", "build_type", "command_line", "config_hash"]
+      "required": ["run_id", "experiment_name", "timestamp_utc", "repetition", "warmup", "git_commit", "git_dirty", "executable_version", "build_type", "command_line", "config_hash", "config_hash_scope", "scientific_config_hash", "scientific_config_hash_scope"],
+      "properties": {
+        "config_hash_scope": {
+          "const": "complete_effective_execution_configuration-v1"
+        },
+        "scientific_config_hash_scope": {
+          "const": "algorithm_and_determinism_parameters-v1"
+        }
+      }
     },
     "system": {
       "type": "object",
@@ -44,7 +52,28 @@
     },
     "dataset": {
       "type": "object",
-      "required": ["dataset_id", "dataset_path", "graph_checksum", "vertices", "edges", "parallel_edges", "average_out_degree", "maximum_out_degree", "temporal_horizon_start", "temporal_horizon_end", "travel_time_piece_count", "score_piece_count", "average_travel_time_pieces_per_edge", "average_score_pieces_per_edge", "anchor_count", "anchor_density", "zero_score_edge_fraction", "topology_seed", "temporal_seed", "score_seed"]
+      "required": ["dataset_id", "dataset_path", "runtime_graph_semantic_checksum", "dataset_payload_checksum", "dataset_structure_checksum", "temporal_attribute_checksum", "checksum_scope_version", "vertices", "edges", "parallel_edges", "average_out_degree", "maximum_out_degree", "temporal_horizon_start", "temporal_horizon_end", "travel_time_piece_count", "score_piece_count", "average_travel_time_pieces_per_edge", "average_score_pieces_per_edge", "anchor_count", "anchor_density", "zero_score_edge_fraction", "topology_seed", "temporal_seed", "score_seed"],
+      "properties": {
+        "runtime_graph_semantic_checksum": {
+          "type": "string",
+          "description": "SHA-256 of canonical in-memory directed arcs and decoded temporal functions."
+        },
+        "dataset_payload_checksum": {
+          "type": ["string", "null"],
+          "description": "PACE-GRAPH-CHECKSUM-v1 over the five canonical dataset files; null for synthetic fixtures."
+        },
+        "dataset_structure_checksum": {
+          "type": ["string", "null"],
+          "description": "PACE-DATASET-STRUCTURE-CHECKSUM-v1 over nodes and static directed arcs."
+        },
+        "temporal_attribute_checksum": {
+          "type": ["string", "null"],
+          "description": "PACE-TEMPORAL-ATTRIBUTE-CHECKSUM-v1 over travel-time and score payloads."
+        },
+        "checksum_scope_version": {
+          "const": "pace-explicit-dataset-checksum-scopes-v1"
+        }
+      }
     },
     "query": {
       "type": "object",
@@ -52,7 +81,12 @@
     },
     "configuration": {
       "type": "object",
-      "required": ["algorithm", "ablation", "execution_mode", "preprocessing_accounting", "theta", "anchor_limit", "k", "pace_engine", "pivot_limit_l", "connector_limit_kc", "frontier_limit_kf", "connector_expansion_cap_mc", "breakpoint_cap_mb", "query_work_cap_mq", "rpq_step_minutes", "baseline_k", "threads", "deterministic", "timeout_seconds", "memory_limit_bytes", "max_enumerated_paths", "max_labels", "max_expansions", "max_frontier_fragments", "anchor_decomposition_enabled", "safe_dominance_enabled", "memoization_enabled", "per_cell_retention_enabled", "representative_retention_enabled", "anchor_lower_bound_filter_enabled", "compression_enabled", "adjacent_merge_enabled", "safe_corridor_enabled", "pivot_diversification_enabled", "connector_portfolio_enabled", "connector_cache_enabled", "profile_cache_enabled", "score_upper_bound_enabled", "parallel_enabled", "exhaustive_connectors", "exhaustive_anchors", "exhaustive_frontier"]
+      "required": ["algorithm", "ablation", "execution_mode", "preprocessing_accounting", "theta", "anchor_limit", "k", "pace_engine", "pivot_limit_l", "connector_limit_kc", "frontier_limit_kf", "connector_expansion_cap_mc", "breakpoint_cap_mb", "query_work_cap_mq", "query_work_accounting_contract", "rpq_step_minutes", "baseline_k", "threads", "deterministic", "timeout_seconds", "memory_limit_bytes", "max_enumerated_paths", "max_labels", "max_expansions", "max_frontier_fragments", "anchor_decomposition_enabled", "safe_dominance_enabled", "memoization_enabled", "per_cell_retention_enabled", "representative_retention_enabled", "anchor_lower_bound_filter_enabled", "compression_enabled", "adjacent_merge_enabled", "safe_corridor_enabled", "pivot_diversification_enabled", "connector_portfolio_enabled", "connector_cache_enabled", "profile_cache_enabled", "score_upper_bound_enabled", "parallel_enabled", "exhaustive_connectors", "exhaustive_anchors", "exhaustive_frontier"],
+      "properties": {
+        "query_work_accounting_contract": {
+          "enum": ["PACE-MQ-TOTAL-WORK-v2", null]
+        }
+      }
     },
     "statusV1": {
       "type": "object",
@@ -97,7 +131,7 @@
     },
     "timing": {
       "type": "object",
-      "required": ["preprocessing_total", "lower_bound_preprocessing", "anchor_index_preprocessing", "query_total", "cpu_total", "horizon_validation", "anchor_retrieval", "anchor_ranking", "connector_generation", "recursive_generation", "memo_lookup", "memo_compute", "temporal_stitching", "breakpoint_construction", "duplicate_removal", "safe_dominance", "bounded_retention", "fragment_merging", "feasibility_validation", "envelope_extraction", "profile_serialization", "reference_comparison"],
+      "required": ["preprocessing_total", "lower_bound_preprocessing", "anchor_index_preprocessing", "query_total", "cpu_total", "horizon_validation", "anchor_retrieval", "anchor_ranking", "connector_generation", "recursive_generation", "memo_lookup", "memo_compute", "temporal_stitching", "breakpoint_construction", "duplicate_removal", "safe_dominance", "bounded_retention", "fragment_merging", "feasibility_validation", "envelope_extraction", "profile_serialization", "reference_comparison", "corridor_construction", "feasible_entry_band_computation", "score_support_lookup", "pivot_ranking_diversification", "canonical_path_replay_stitching", "breakpoint_processing", "equality_root_computation", "fragment_restriction_merge", "statistics"],
       "additionalProperties": {"type": ["integer", "null"], "minimum": 0}
     },
     "memory": {
@@ -107,7 +141,7 @@
     },
     "counters": {
       "type": "object",
-      "required": ["anchors_total", "anchors_examined", "anchors_rejected_valid_domain", "anchors_rejected_lower_bound", "anchors_retained", "connector_paths_enumerated", "connectors_rejected_lower_bound", "connectors_rejected_empty_domain", "connectors_retained", "recursive_calls", "memo_hits", "memo_misses", "memo_entries", "repeated_subproblems", "stitch_attempts", "stitch_rejected_path_consistency", "stitch_rejected_anchor_domain", "stitch_rejected_right_domain", "stitch_rejected_budget", "stitch_successes", "candidates_generated", "candidates_before_compression", "duplicate_fragments_removed", "extension_dominated_fragments_removed", "bounded_fragments_removed", "temporal_cells_created", "frontier_count", "frontier_size_sum", "frontier_size_max", "retained_fragments_total", "profile_breakpoints_total", "envelope_cells", "point_queries", "labels_created", "labels_expanded", "simple_paths_enumerated", "ksp_paths_retained", "corridor_nodes", "corridor_edges", "corridor_cells", "score_relevant_edges", "selected_pivots", "connector_calls", "connector_expansions", "valid_connectors", "invalid_connectors", "connector_cap_hits", "candidates_retained", "breakpoint_cap_hits", "total_candidate_work", "query_work_cap_hits", "frontier_cells", "peak_frontier_size", "memo_lookups", "memo_waits", "requested_workers", "observed_workers"]
+      "required": ["anchors_total", "anchors_examined", "anchors_rejected_valid_domain", "anchors_rejected_lower_bound", "anchors_retained", "connector_paths_enumerated", "connectors_rejected_lower_bound", "connectors_rejected_empty_domain", "connectors_retained", "recursive_calls", "memo_hits", "memo_misses", "memo_entries", "repeated_subproblems", "stitch_attempts", "stitch_rejected_path_consistency", "stitch_rejected_anchor_domain", "stitch_rejected_right_domain", "stitch_rejected_budget", "stitch_successes", "candidates_generated", "candidates_before_compression", "duplicate_fragments_removed", "extension_dominated_fragments_removed", "bounded_fragments_removed", "temporal_cells_created", "frontier_count", "frontier_size_sum", "frontier_size_max", "retained_fragments_total", "profile_breakpoints_total", "envelope_cells", "point_queries", "labels_created", "labels_expanded", "simple_paths_enumerated", "ksp_paths_retained", "corridor_nodes", "corridor_edges", "corridor_cells", "score_relevant_edges", "selected_pivots", "connector_calls", "connector_expansions", "valid_connectors", "invalid_connectors", "connector_cap_hits", "candidates_retained", "breakpoint_cap_hits", "total_candidate_work", "query_work_cap_hits", "frontier_cells", "peak_frontier_size", "memo_lookups", "memo_waits", "requested_workers", "observed_workers", "candidate_offers", "connector_requests", "breakpoints_processed", "candidate_pair_root_checks", "equality_roots_created", "affected_cell_evaluations", "frontier_retention_evaluations", "temporal_cells_split", "temporal_cells_merged", "dominance_comparisons", "dominance_structural_rejections", "dominance_arrival_signature_rejections", "retained_fragments", "dropped_fragments", "fragments_merged", "fragment_restrictions", "fragment_materializations", "fragment_materialization_cache_hits", "frontier_layer_batches", "frontier_layer_batch_offers", "parallel_affected_cell_tasks", "feasible_entry_bands", "empty_feasible_entry_bands", "score_support_edges_examined", "mq_connector_request", "mq_candidate_offer", "mq_affected_cell_evaluation", "mq_retention_evaluation", "mq_fragment_restriction", "mq_fragment_materialization", "mq_dominance_check", "mq_equality_root_check", "cache_hits", "cache_misses", "cache_lookups", "cache_waits"]
     },
     "output": {
       "type": "object",

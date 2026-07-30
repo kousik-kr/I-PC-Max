@@ -20,6 +20,15 @@ public final class EnvelopeExtractor {
      * canonical endpoint ownership, and uncovered cells are emitted as NO_PATH.
      */
     public static EnvelopeProfile extract(CandidateSet frontier, Domain rootDomain) {
+        return extract(
+                frontier, rootDomain, PaceExecutionMetrics.none());
+    }
+
+    /** Extracts an envelope while recording temporal-cell work. */
+    public static EnvelopeProfile extract(
+            CandidateSet frontier,
+            Domain rootDomain,
+            PaceExecutionMetrics metrics) {
         if (frontier == null || rootDomain == null || rootDomain.isEmpty()) {
             throw new IllegalArgumentException("frontier and non-empty root domain are required");
         }
@@ -28,7 +37,14 @@ public final class EnvelopeExtractor {
             requireExactContinuousMetadata(candidate);
         }
 
-        List<Domain.Interval> cells = ProfileCellPartition.cells(rootDomain, candidates, true);
+        List<Domain.Interval> cells =
+                frontier.temporalCells().isEmpty()
+                        ? ProfileCellPartition.cells(
+                                rootDomain,
+                                candidates,
+                                true,
+                                metrics)
+                        : frontier.temporalCells();
         List<EnvelopeSegment> raw = new ArrayList<>();
         for (Domain.Interval cell : cells) {
             raw.addAll(assignCellExactly(candidates, cell));

@@ -8,7 +8,7 @@ import java.util.Objects;
  * <p>The connector output limit ({@code K_c}) and temporal-frontier limit
  * ({@code K_f}) are deliberately separate. The three safety/work caps also
  * have distinct units: connector states ({@code M_c}), exact breakpoints per
- * profile ({@code M_b}), and query-level expansion descriptors
+ * profile ({@code M_b}), and typed units of actual query work
  * ({@code M_q}).</p>
  */
 public record PaceOptions(
@@ -106,7 +106,7 @@ public record PaceOptions(
                 frontierLimit,
                 5_000_000L,
                 1_000_000,
-                5_000_000L,
+                250_000_000L,
                 threadCount,
                 memoizationEnabled,
                 features,

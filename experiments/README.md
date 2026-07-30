@@ -51,10 +51,14 @@ graph seeds 42/43/44 are required for both NY and CAL.
 
 `paper-resume-assets`, `paper-plan-assets`, `paper-resume-queries`, and
 `paper-plan-queries` provide the corresponding resumable and no-write planning
-modes. Query budgets use exact fixed-departure fastest paths on the declared
-one-minute grid, are canonicalized after applying rho, and are rejected unless
-`interval_end + budget` remains inside minute 10080. The Java preparation path
-also builds edge temporal summaries, stable graph cells, and cell-local score
+modes. Query budgets use
+`GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME`: Java chooses a deterministic
+lower-bound-routing witness path, replays that path's actual temporal travel
+time over the declared one-minute departure grid, applies rho to the maximum
+observed witness travel time, and canonicalizes the result. This is not an
+exact fastest-path budget. Generation rejects any query for which
+`interval_end + budget` exceeds minute 10080. The Java preparation path also
+builds edge temporal summaries, stable graph cells, and cell-local score
 support indexes from the already loaded canonical graph. Exact Dijkstra remains
 the fallback lower-bound oracle; no scalable continental routing index is
 claimed.
@@ -193,7 +197,7 @@ python scripts/run_matrix.py --config experiments/configs/parallelism.yaml --job
 
 ```sh
 ./pace_bench --algorithm pace-x --dataset demo --query-file experiments/manifests/tiny.jsonl --theta 4 --threads 1 --repetitions 1 --deterministic --output-jsonl results/raw/pace_x.jsonl
-./pace_bench --algorithm pace-b --dataset data/input/out_ny_td --query-file experiments/manifests/main.jsonl --theta 2 --pivot-limit-l 32 --connector-limit-kc 16 --connector-expansion-cap-mc 5000000 --frontier-limit-kf 16 --breakpoint-cap-mb 1000000 --query-work-cap-mq 5000000 --threads 8 --repetitions 3 --deterministic --output-jsonl results/raw/pace_b.jsonl
+./pace_bench --algorithm pace-b --dataset data/input/out_ny_td --query-file experiments/manifests/main.jsonl --theta 2 --pivot-limit-l 32 --connector-limit-kc 16 --connector-expansion-cap-mc 5000000 --frontier-limit-kf 16 --breakpoint-cap-mb 1000000 --query-work-cap-mq 250000000 --threads 8 --repetitions 3 --deterministic --output-jsonl results/raw/pace_b.jsonl
 ./pace_bench --algorithm exh-profile --dataset demo --query-file experiments/manifests/tiny.jsonl --max-enumerated-paths 100000 --threads 1 --output-jsonl results/raw/exh_profile.jsonl
 ./pace_bench --algorithm pl-exact --dataset demo --query-file experiments/manifests/tiny.jsonl --max-labels 1000000 --max-expansions 5000000 --output-jsonl results/raw/pl_exact.jsonl
 ./pace_bench --algorithm rpq --rpq-step-minutes 5 --dataset demo --query-file experiments/manifests/tiny.jsonl --output-jsonl results/raw/rpq_5.jsonl

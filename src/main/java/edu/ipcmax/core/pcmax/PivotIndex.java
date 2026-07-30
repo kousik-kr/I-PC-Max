@@ -4,7 +4,7 @@ import java.util.BitSet;
 import java.util.List;
 import java.util.Objects;
 
-/** Query-wide, prefix-stable selected pivot set. */
+/** Query-wide, deterministically selected pivot set. */
 public final class PivotIndex {
     private final List<Pivot> selected;
     private final List<Integer> scoreRelevantArcIds;
@@ -51,7 +51,7 @@ public final class PivotIndex {
             int target,
             int maximumScore,
             double temporalCoverage,
-            double lowerBoundDetour,
+            double budgetSlack,
             String cellId,
             int canonicalRank) {
         public Pivot {
@@ -59,8 +59,8 @@ public final class PivotIndex {
                     || maximumScore <= 0
                     || !Double.isFinite(temporalCoverage)
                     || temporalCoverage < 0
-                    || !Double.isFinite(lowerBoundDetour)
-                    || lowerBoundDetour < 0
+                    || !Double.isFinite(budgetSlack)
+                    || budgetSlack < 0
                     || cellId == null
                     || cellId.isBlank()
                     || canonicalRank < 0) {

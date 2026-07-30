@@ -19,21 +19,19 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.concurrent.Callable;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 
 import edu.ipcmax.core.function.Domain;
-import edu.ipcmax.core.index.ExactDijkstraLowerBoundOracle;
+import edu.ipcmax.core.graph.Edge;
+import edu.ipcmax.core.index.DenseDijkstraLowerBoundOracle;
 import edu.ipcmax.core.index.LowerBoundOracle;
 import edu.ipcmax.core.index.QueryPreparationIndexes;
 import edu.ipcmax.core.index.ScoreSupportIndex;
-import edu.ipcmax.core.labeling.PointForwardLabeling;
 import edu.ipcmax.core.loader.GeneratedGraphDataset;
 import edu.ipcmax.core.loader.GeneratedGraphLoader;
-import edu.ipcmax.core.pcmax.IPCMaxParallelExecutor;
 import edu.ipcmax.experiments.framework.QueryManifestEntry;
 import edu.ipcmax.experiments.framework.QueryManifestIO;
 
@@ -41,15 +39,26 @@ import edu.ipcmax.experiments.framework.QueryManifestIO;
  * Generates the base pairs and derived query instances consumed by PACE Q1.
  *
  * <p>All graph-dependent work goes through {@link GeneratedGraphLoader},
- * {@link QueryCandidateSampler}, and {@link PointForwardLabeling}. Python only
- * derives the checked study axes and invokes this class; it does not parse or
- * represent the graph.</p>
+ * {@link QueryCandidateSampler}, and the repository's lower-bound oracle.
+ * Python only derives the checked study axes and invokes this class; it does
+ * not parse or represent the graph.</p>
  */
 public final class PaperQuerySetGenerator {
     public static final String GENERATOR_VERSION =
-            "pace-paper-query-preparation-v2";
+            "pace-paper-query-preparation-v3";
     public static final String BUDGET_EVIDENCE =
-            "fixed_departure_fastest_grid-v1";
+            "lower_bound_witness_path_grid_replay-v2";
+    public static final String REQUIRED_BUDGET_DEFINITION =
+            "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME";
+    public static final String LOWER_BOUND_ROUTING_CONTRACT =
+            "EXACT_DIJKSTRA_GLOBAL_EDGE_MINIMUM_DISTANCE_HOPS_ARC_ID-v1";
+    public static final String WITNESS_IDENTITY_CONTRACT =
+            "SHA256_BIG_ENDIAN_ARC_ID_SEQUENCE-v1";
+    public static final String WITNESS_EVIDENCE_CONTRACT =
+            "SHA256_BIG_ENDIAN_DEPARTURE_AND_CANONICAL_TRAVEL_TICKS-v1";
+    public static final String BUDGET_DERIVATION_RULE =
+            "B=canonical_time((1+rho)*T_hat_min,Delta);"
+                    + "T_hat_min,Delta=max_grid_witness_travel_time";
 
     private static final ObjectMapper JSON = new ObjectMapper()
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
@@ -79,6 +88,7 @@ public final class PaperQuerySetGenerator {
         } catch (Exception failure) {
             System.err.println(
                     "paper query generation failed: " + failure.getMessage());
+            failure.printStackTrace(System.err);
             return 2;
         }
     }
@@ -140,6 +150,9 @@ public final class PaperQuerySetGenerator {
                         checksums,
                         base.pairsExamined(),
                         base.candidatePoolSize(),
+                        base.horizonSafeCandidatePoolSize(),
+                        base.candidatePoolSize()
+                                - base.horizonSafeCandidatePoolSize(),
                         base.pairs().size()));
     }
 
@@ -149,27 +162,99 @@ public final class PaperQuerySetGenerator {
         GeneratedGraphDataset dataset = verifiedLoad(
                 spec.datasetPath(), spec);
         DatasetChecksums checksums = checksums(dataset);
-        QueryPreparationIndexes indexes =
-                QueryPreparationIndexes.build(dataset.graph());
         QueryCandidateSampler.SamplingResult sampling =
                 new QueryCandidateSampler().sample(
                         dataset.graph(),
                         spec.datasetId(),
-                        checksums.graphChecksum(),
+                        checksums.datasetPayloadChecksum(),
                         spec.selectionSeed(),
                         queryConfiguration.candidatePool());
+        List<QueryPairCandidate> horizonSafe =
+                horizonSafeCandidates(
+                        dataset, sampling.candidates(), spec);
         List<List<QueryPairCandidate>> bands = distanceBands(
-                sampling.candidates(), spec.distanceBands());
+                horizonSafe, spec.distanceBands());
         List<SelectedPair> pairs = selectDisjointPairs(spec, bands);
         List<QueryManifestEntry> rows = materializeBaseRows(
                 spec, dataset, checksums, pairs);
+        /*
+         * Build the reusable query-side indexes after the memory-intensive
+         * lower-bound sampling and witness replay. They are independently
+         * verified here without inflating the peak live set of continental
+         * query preparation.
+         */
+        QueryPreparationIndexes.build(dataset.graph());
         return new BaseGeneration(
                 rows,
                 pairs,
                 checksums,
-                indexes,
                 sampling.pairsExamined(),
-                sampling.candidates().size());
+                sampling.candidates().size(),
+                horizonSafe.size());
+    }
+
+    /**
+     * Keeps only witnesses that are guaranteed to fit every configured query
+     * cell. The path bound sums the maximum value of every edge's existing
+     * canonical temporal function; it therefore cannot underestimate any
+     * grid replay of that same witness. Distance bands are assigned only
+     * after this deterministic safety filter.
+     */
+    private static List<QueryPairCandidate> horizonSafeCandidates(
+            GeneratedGraphDataset dataset,
+            List<QueryPairCandidate> candidates,
+            GenerationSpec spec) {
+        int latestIntervalEnd = Integer.MIN_VALUE;
+        for (int center : spec.centers()) {
+            latestIntervalEnd = Math.max(
+                    latestIntervalEnd,
+                    Math.addExact(
+                            centeredStart(
+                                    center,
+                                    spec.defaultWindowMinutes()),
+                            spec.defaultWindowMinutes()));
+            for (int window : spec.windowMinutes()) {
+                latestIntervalEnd = Math.max(
+                        latestIntervalEnd,
+                        Math.addExact(
+                                centeredStart(center, window),
+                                window));
+            }
+        }
+        double maximumOverhead = spec.budgetOverheads().stream()
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(spec.defaultBudgetOverhead());
+        maximumOverhead = Math.max(
+                maximumOverhead,
+                spec.defaultBudgetOverhead());
+        double supportEnd = dataset.manifest().temporalSupport()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "dataset lacks temporal support"))
+                .endMinute();
+        double maximumSafeBudget = Domain.canonicalTime(
+                supportEnd - latestIntervalEnd);
+        List<QueryPairCandidate> safe = new ArrayList<>();
+        for (QueryPairCandidate candidate : candidates) {
+            double pathUpperBound = 0.0;
+            for (int arcId : candidate.lowerBoundWitnessArcIds()) {
+                Edge edge = dataset.graph().edges().get(arcId);
+                double edgeMaximum = edge.travelTimeFunction()
+                        .breakpoints().stream()
+                        .mapToDouble(
+                                breakpoint -> breakpoint.value())
+                        .max()
+                        .orElseThrow();
+                pathUpperBound = Domain.canonicalTime(
+                        pathUpperBound + edgeMaximum);
+            }
+            double maximumBudget = Domain.canonicalTime(
+                    (1.0 + maximumOverhead) * pathUpperBound);
+            if (maximumBudget <= maximumSafeBudget) {
+                safe.add(candidate);
+            }
+        }
+        return List.copyOf(safe);
     }
 
     private static VariantGeneration generateVariant(
@@ -180,8 +265,6 @@ public final class PaperQuerySetGenerator {
             VariantSpec variant) throws IOException {
         GeneratedGraphDataset dataset = verifiedLoad(variant.path(), spec);
         DatasetChecksums checksums = checksums(dataset);
-        QueryPreparationIndexes indexes =
-                QueryPreparationIndexes.build(dataset.graph());
         if (!checksums.datasetChecksum().equals(
                 baseChecksums.datasetChecksum())) {
             throw new IOException(
@@ -202,14 +285,15 @@ public final class PaperQuerySetGenerator {
                 sameTravelPayload
                         ? defaultBudgetMap(spec, baseRows)
                         : Map.of();
-        GridFastestBudgetStore computedBudgets =
+        GridWitnessBudgetStore computedBudgets =
                 sameTravelPayload
                         ? null
-                        : new GridFastestBudgetStore(
+                        : new GridWitnessBudgetStore(
                                 dataset,
                                 variantPairs,
                                 spec.evaluationGridMinutes(),
-                                defaultCells(spec));
+                                defaultCells(spec),
+                                false);
         List<QueryManifestEntry> rows = new ArrayList<>();
         for (SelectedPair pair : variantPairs) {
             for (int center : spec.centers()) {
@@ -240,6 +324,8 @@ public final class PaperQuerySetGenerator {
                         variant));
             }
         }
+        QueryPreparationIndexes indexes =
+                QueryPreparationIndexes.build(dataset.graph());
         return new VariantGeneration(
                 List.copyOf(rows), checksums, indexes);
     }
@@ -267,12 +353,20 @@ public final class PaperQuerySetGenerator {
                     row.intervalStart(),
                     row.intervalEnd(),
                     ((Number) metadata.get(
-                            "fastest_grid_minimum")).doubleValue(),
+                            "witness_travel_time_min")).doubleValue(),
                     ((Number) metadata.get(
                             "t_hat_min_delta")).doubleValue(),
                     row.budget(),
                     ((Number) metadata.get(
-                            "grid_departure_count")).intValue());
+                            "grid_departure_count")).intValue(),
+                    ((Number) metadata.get(
+                            "witness_path_lower_bound_distance")).doubleValue(),
+                    ((Number) metadata.get(
+                            "witness_path_edge_count")).intValue(),
+                    String.valueOf(metadata.get(
+                            "witness_path_checksum_sha256")),
+                    String.valueOf(metadata.get(
+                            "witness_travel_time_evidence_sha256")));
             DefaultBudgetKey key =
                     new DefaultBudgetKey(pairIndex, center);
             if (result.put(key, budget) != null) {
@@ -410,11 +504,12 @@ public final class PaperQuerySetGenerator {
             GeneratedGraphDataset dataset,
             DatasetChecksums checksums,
             List<SelectedPair> pairs) throws IOException {
-        GridFastestBudgetStore budgets = new GridFastestBudgetStore(
+        GridWitnessBudgetStore budgets = new GridWitnessBudgetStore(
                 dataset,
                 pairs,
                 spec.evaluationGridMinutes(),
-                baseCells(spec));
+                baseCells(spec),
+                true);
         List<QueryManifestEntry> rows = new ArrayList<>();
         for (SelectedPair pair : pairs) {
             if ("evaluation".equals(pair.split())) {
@@ -498,6 +593,7 @@ public final class PaperQuerySetGenerator {
         long splitSeed = spec.seedFor(selected.split());
         Map<String, Object> metadata = new TreeMap<>();
         metadata.put("budget_definition", spec.budgetDefinition());
+        metadata.put("budget_derivation_rule", BUDGET_DERIVATION_RULE);
         metadata.put("budget_evidence", BUDGET_EVIDENCE);
         metadata.put("conversion_contract_version",
                 spec.conversionContractVersion());
@@ -512,7 +608,10 @@ public final class PaperQuerySetGenerator {
         metadata.put("generation_contract", spec.contract());
         metadata.put("generator_config_hash", spec.generatorConfigHash());
         metadata.put("generator_version", GENERATOR_VERSION);
-        metadata.put("graph_checksum", checksums.graphChecksum());
+        metadata.put("dataset_payload_checksum",
+                checksums.datasetPayloadChecksum());
+        metadata.put("checksum_scope_version",
+                "pace-explicit-dataset-checksum-scopes-v1");
         metadata.put("graph_seed", dataset.manifest().seed());
         metadata.put("interval_center", cell.timeCenter());
         metadata.put("time_center", cell.timeCenter());
@@ -525,8 +624,28 @@ public final class PaperQuerySetGenerator {
         metadata.put("t_hat_min_delta", temporal.tHatMinDelta());
         metadata.put("temporal_attribute_checksum",
                 checksums.temporalAttributeChecksum());
-        metadata.put("fastest_grid_minimum", temporal.gridMinimum());
+        metadata.put("witness_travel_time_min", temporal.gridMinimum());
+        metadata.put("witness_travel_time_max", temporal.tHatMinDelta());
         metadata.put("grid_departure_count", temporal.gridDepartureCount());
+        metadata.put("lower_bound_routing_contract",
+                LOWER_BOUND_ROUTING_CONTRACT);
+        metadata.put("witness_identity_contract",
+                WITNESS_IDENTITY_CONTRACT);
+        metadata.put("witness_evidence_contract",
+                WITNESS_EVIDENCE_CONTRACT);
+        metadata.put("witness_path_checksum_sha256",
+                temporal.witnessPathChecksum());
+        metadata.put("witness_path_edge_count",
+                temporal.witnessPathEdgeCount());
+        metadata.put("witness_path_lower_bound_distance",
+                temporal.witnessPathLowerBoundDistance());
+        metadata.put("witness_travel_time_evidence_sha256",
+                temporal.witnessEvidenceChecksum());
+        metadata.put("witness_evaluated_departure_start",
+                temporal.intervalStart());
+        metadata.put("witness_evaluated_departure_end",
+                temporal.intervalEnd());
+        metadata.put("final_generated_budget", temporal.budget());
         metadata.put("validation_path_expected", true);
         metadata.put("validation_source_destination_present", true);
         if (variant != null) {
@@ -534,7 +653,7 @@ public final class PaperQuerySetGenerator {
             metadata.put("variant_value", variant.value());
         }
         return new QueryManifestEntry(
-                1,
+                3,
                 queryId,
                 spec.datasetId(),
                 selected.candidate().source(),
@@ -546,9 +665,10 @@ public final class PaperQuerySetGenerator {
                 cell.budgetOverhead(),
                 "full-interval-feasible",
                 selected.band(),
-                selected.candidate().lowerBoundDistance(),
+                temporal.witnessPathLowerBoundDistance(),
                 deriveQuerySeed(
-                        splitSeed, queryId, checksums.graphChecksum()),
+                        splitSeed, queryId,
+                        checksums.datasetPayloadChecksum()),
                 metadata);
     }
 
@@ -650,27 +770,28 @@ public final class PaperQuerySetGenerator {
         }
     }
 
-    private static final class GridFastestBudgetStore {
+    private static final class GridWitnessBudgetStore {
         private final GeneratedGraphDataset dataset;
         private final int delta;
-        private final Map<EndpointPair, Map<Integer, Double>>
-                travelByPairAndDeparture;
+        private final Map<EndpointPair, WitnessGridEvidence> evidenceByPair;
 
-        GridFastestBudgetStore(
+        GridWitnessBudgetStore(
                 GeneratedGraphDataset dataset,
                 List<SelectedPair> pairs,
                 int delta,
-                List<Cell> cells) throws IOException {
+                List<Cell> cells,
+                boolean reuseCandidateWitnesses) throws IOException {
             this.dataset = Objects.requireNonNull(dataset, "dataset");
             if (delta <= 0) {
                 throw new IllegalArgumentException("Delta must be positive");
             }
             this.delta = delta;
-            travelByPairAndDeparture = prepare(
+            evidenceByPair = prepare(
                     dataset,
                     Objects.requireNonNull(pairs, "pairs"),
                     delta,
-                    Objects.requireNonNull(cells, "cells"));
+                    Objects.requireNonNull(cells, "cells"),
+                    reuseCandidateWitnesses);
         }
 
         GridBudget build(
@@ -687,7 +808,7 @@ public final class PaperQuerySetGenerator {
                 throw new IOException(
                         "query departure interval is outside function support");
             }
-            GridFastestSummary summary = evaluate(pair, start, end);
+            GridWitnessSummary summary = evaluate(pair, start, end);
             double queryBudget = budget(
                     summary.tHatMinDelta(), cell.budgetOverhead());
             if (Domain.canonicalTime(end + queryBudget) > supportEnd) {
@@ -702,19 +823,23 @@ public final class PaperQuerySetGenerator {
                     summary.gridMinimum(),
                     summary.tHatMinDelta(),
                     queryBudget,
-                    summary.gridDepartureCount());
+                    summary.gridDepartureCount(),
+                    summary.witnessPathLowerBoundDistance(),
+                    summary.witnessPathEdgeCount(),
+                    summary.witnessPathChecksum(),
+                    summary.witnessEvidenceChecksum());
         }
 
-        private GridFastestSummary evaluate(
+        private GridWitnessSummary evaluate(
                 QueryPairCandidate pair,
                 int start,
                 int end) {
-            Map<Integer, Double> travelByDeparture =
-                    travelByPairAndDeparture.get(
+            WitnessGridEvidence evidence =
+                    evidenceByPair.get(
                             new EndpointPair(
                                     pair.source(),
                                     pair.destination()));
-            if (travelByDeparture == null) {
+            if (evidence == null) {
                 throw new IllegalArgumentException(
                         "pair was not prepared: " + pair.source()
                                 + "->" + pair.destination());
@@ -723,12 +848,20 @@ public final class PaperQuerySetGenerator {
             double maximum = Double.NEGATIVE_INFINITY;
             int departures = 0;
             int departure = start;
+            MessageDigest evidenceDigest = sha256();
+            updateText(evidenceDigest, WITNESS_EVIDENCE_CONTRACT);
+            updateText(evidenceDigest, evidence.pathChecksum());
             while (true) {
-                Double travelTime = travelByDeparture.get(departure);
+                Double travelTime =
+                        evidence.travelByDeparture().get(departure);
                 if (travelTime == null) {
                     throw new IllegalArgumentException(
                             "departure was not prepared: " + departure);
                 }
+                evidenceDigest.update(ByteBuffer.allocate(Integer.BYTES)
+                        .putInt(departure).array());
+                evidenceDigest.update(ByteBuffer.allocate(Long.BYTES)
+                        .putLong(Domain.canonicalTick(travelTime)).array());
                 minimum = Math.min(minimum, travelTime);
                 maximum = Math.max(maximum, travelTime);
                 departures++;
@@ -742,17 +875,22 @@ public final class PaperQuerySetGenerator {
                 }
                 departure = next;
             }
-            return new GridFastestSummary(
+            return new GridWitnessSummary(
                     Domain.canonicalTime(minimum),
                     Domain.canonicalTime(maximum),
-                    departures);
+                    departures,
+                    evidence.lowerBoundDistance(),
+                    evidence.path().arcIds().size(),
+                    evidence.pathChecksum(),
+                    hex(evidenceDigest.digest()));
         }
 
-        private static Map<EndpointPair, Map<Integer, Double>> prepare(
+        private static Map<EndpointPair, WitnessGridEvidence> prepare(
                 GeneratedGraphDataset dataset,
                 List<SelectedPair> pairs,
                 int delta,
-                List<Cell> cells) throws IOException {
+                List<Cell> cells,
+                boolean reuseCandidateWitnesses) throws IOException {
             TreeMap<Integer, Set<Integer>> destinationsBySource =
                     new TreeMap<>();
             for (SelectedPair selected : pairs) {
@@ -777,110 +915,139 @@ public final class PaperQuerySetGenerator {
                 }
             }
             List<Integer> departureGrid = List.copyOf(departures);
-            int maximumWorkers = Math.max(
-                    1,
-                    Math.min(
-                            24,
-                            Runtime.getRuntime().availableProcessors()));
-            ExactDijkstraLowerBoundOracle lowerBoundOracle =
-                    new ExactDijkstraLowerBoundOracle(dataset.graph());
-            List<Callable<Map<EndpointPair, Map<Integer, Double>>>> tasks =
-                    new ArrayList<>();
+            DenseDijkstraLowerBoundOracle lowerBoundOracle =
+                    reuseCandidateWitnesses
+                            ? null
+                            : new DenseDijkstraLowerBoundOracle(
+                                    dataset.graph());
+            Map<EndpointPair, WitnessGridEvidence> values =
+                    new LinkedHashMap<>();
             for (Map.Entry<Integer, Set<Integer>> sourceEntry
                     : destinationsBySource.entrySet()) {
                 int source = sourceEntry.getKey();
+                LowerBoundOracle.Labels labels =
+                        reuseCandidateWitnesses
+                                ? null
+                                : lowerBoundOracle.distancesFrom(source);
                 for (int destination : sourceEntry.getValue()) {
-                    tasks.add(() -> {
-                        EndpointPair endpoint =
-                                new EndpointPair(source, destination);
-                        Map<Integer, Double> byDeparture =
-                                new LinkedHashMap<>();
-                        LowerBoundOracle.Labels reverseLowerBounds =
-                                lowerBoundOracle.distancesTo(destination);
-                        if (!reverseLowerBounds.reached(source)) {
-                            throw new IOException(
-                                    "destination " + destination
-                                            + " is unreachable from "
-                                            + source
-                                            + " in the lower-bound graph");
-                        }
-                        PointForwardLabeling fastest =
-                                new PointForwardLabeling(dataset.graph());
-                        for (int departure : departureGrid) {
-                            PointForwardLabeling.Result labels =
-                                    fastest.runToTarget(
-                                            source,
-                                            destination,
-                                            departure,
-                                            Double.POSITIVE_INFINITY,
-                                            reverseLowerBounds);
-                            if (!labels.reached(destination)) {
-                                // The potential is an optimization only. Keep
-                                // the original exact FIFO search as a
-                                // correctness fallback for malformed or
-                                // unexpectedly disconnected temporal payloads.
-                                labels = fastest.runToTarget(
-                                        source,
-                                        destination,
-                                        departure,
-                                        Double.POSITIVE_INFINITY);
-                            }
-                            if (!labels.reached(destination)) {
-                                throw new IOException(
-                                        "destination " + destination
-                                                + " became unreachable "
-                                                + "from " + source
-                                                + " at departure "
-                                                + departure);
-                            }
-                            byDeparture.put(
-                                    departure,
+                    SelectedPair selected = pairs.stream()
+                            .filter(item ->
+                                    item.candidate().source() == source
+                                    && item.candidate().destination()
+                                        == destination)
+                            .findFirst()
+                            .orElseThrow();
+                    if (!reuseCandidateWitnesses
+                            && !labels.reached(destination)) {
+                        throw new IOException(
+                                "destination " + destination
+                                        + " is unreachable from " + source
+                                        + " in the lower-bound graph");
+                    }
+                    edu.ipcmax.core.validate.Path witness =
+                            reuseCandidateWitnesses
+                                    ? new edu.ipcmax.core.validate.Path(
+                                            selected.candidate()
+                                                .lowerBoundWitnessArcIds())
+                                    : labels.witnessPath(destination);
+                    validateWitness(
+                            dataset, source, destination, witness);
+                    String pathChecksum = pathChecksum(witness);
+                    Map<Integer, Double> byDeparture =
+                            new LinkedHashMap<>();
+                    for (int departure : departureGrid) {
+                        byDeparture.put(
+                                departure,
+                                replayWitness(
+                                        dataset, witness, departure));
+                    }
+                    EndpointPair endpoint =
+                            new EndpointPair(source, destination);
+                    WitnessGridEvidence value =
+                            new WitnessGridEvidence(
+                                    witness,
                                     Domain.canonicalTime(
-                                            labels.arrivalAt(destination)
-                                                    - departure));
-                        }
-                        return Map.of(endpoint, byDeparture);
-                    });
+                                            reuseCandidateWitnesses
+                                                    ? selected.candidate()
+                                                        .lowerBoundDistance()
+                                                    : labels.distance(
+                                                        destination)),
+                                    pathChecksum,
+                                    Map.copyOf(byDeparture));
+                    if (values.put(endpoint, value) != null) {
+                        throw new IOException(
+                                "duplicate prepared endpoint pair: "
+                                        + endpoint);
+                    }
                 }
             }
-            int workerCount = Math.max(
-                    1,
-                    Math.min(
-                            maximumWorkers,
-                            tasks.size()));
-            List<Map<EndpointPair, Map<Integer, Double>>> batches;
-            try (IPCMaxParallelExecutor executor =
-                    new IPCMaxParallelExecutor(workerCount)) {
-                batches = executor.invokeAllDeterministic(tasks);
-            } catch (IllegalStateException failure) {
-                Throwable cause = failure;
-                while (cause.getCause() != null) {
-                    cause = cause.getCause();
+            return Map.copyOf(values);
+        }
+
+        private static void validateWitness(
+                GeneratedGraphDataset dataset,
+                int source,
+                int destination,
+                edu.ipcmax.core.validate.Path witness) throws IOException {
+            int current = source;
+            for (int arcId : witness.arcIds()) {
+                if (arcId < 0 || arcId >= dataset.graph().edgeCount()) {
+                    throw new IOException(
+                            "lower-bound witness contains invalid arc_id "
+                                    + arcId);
                 }
-                if (cause instanceof IOException ioFailure) {
-                    throw ioFailure;
+                Edge edge = dataset.graph().edges().get(arcId);
+                if (edge.source() != current) {
+                    throw new IOException(
+                            "lower-bound witness is discontinuous at arc_id "
+                                    + arcId);
                 }
+                current = edge.target();
+            }
+            if (current != destination || witness.arcIds().isEmpty()) {
                 throw new IOException(
-                        "fixed-departure budget preparation failed",
+                        "lower-bound witness does not connect "
+                                + source + " to " + destination);
+            }
+        }
+
+        private static double replayWitness(
+                GeneratedGraphDataset dataset,
+                edu.ipcmax.core.validate.Path witness,
+                int departure) throws IOException {
+            double arrival = departure;
+            try {
+                for (int arcId : witness.arcIds()) {
+                    arrival = dataset.graph().edges().get(arcId)
+                            .travelTimeFunction().arrivalTimeAt(arrival);
+                }
+            } catch (IllegalArgumentException failure) {
+                throw new IOException(
+                        "lower-bound witness replay exceeded temporal "
+                                + "function support at departure " + departure,
                         failure);
             }
-            Map<EndpointPair, Map<Integer, Double>> values =
-                    new LinkedHashMap<>();
-            for (Map<EndpointPair, Map<Integer, Double>> batch : batches) {
-                for (Map.Entry<EndpointPair, Map<Integer, Double>> entry
-                        : batch.entrySet()) {
-                    values.computeIfAbsent(
-                            entry.getKey(),
-                            ignored -> new LinkedHashMap<>())
-                            .putAll(entry.getValue());
-                }
-            }
-            LinkedHashMap<EndpointPair, Map<Integer, Double>> frozen =
-                    new LinkedHashMap<>();
-            values.forEach((pair, byDeparture) ->
-                    frozen.put(pair, Map.copyOf(byDeparture)));
-            return Map.copyOf(frozen);
+            return Domain.canonicalTime(arrival - departure);
         }
+
+        private static String pathChecksum(
+                edu.ipcmax.core.validate.Path path) {
+            MessageDigest digest = sha256();
+            updateText(digest, WITNESS_IDENTITY_CONTRACT);
+            for (int arcId : path.arcIds()) {
+                digest.update(ByteBuffer.allocate(Integer.BYTES)
+                        .putInt(arcId).array());
+            }
+            return hex(digest.digest());
+        }
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder value = new StringBuilder(bytes.length * 2);
+        for (byte current : bytes) {
+            value.append(String.format(Locale.ROOT, "%02x", current & 0xff));
+        }
+        return value.toString();
     }
 
     record Arguments(Path spec, Path output) {
@@ -996,6 +1163,11 @@ public final class PaperQuerySetGenerator {
                 throw new IllegalArgumentException(
                         "PACE Q1 requires Delta = 1 minute");
             }
+            if (!REQUIRED_BUDGET_DEFINITION.equals(budgetDefinition)) {
+                throw new IllegalArgumentException(
+                        "PACE Q1 requires budget_definition "
+                                + REQUIRED_BUDGET_DEFINITION);
+            }
             if (requiredSupportEnd < 10080) {
                 throw new IllegalArgumentException(
                         "PACE Q1 requires temporal support through 10080");
@@ -1063,10 +1235,14 @@ public final class PaperQuerySetGenerator {
     private record IntervalKey(int start, int end) {
     }
 
-    private record GridFastestSummary(
+    private record GridWitnessSummary(
             double gridMinimum,
             double tHatMinDelta,
-            int gridDepartureCount) {
+            int gridDepartureCount,
+            double witnessPathLowerBoundDistance,
+            int witnessPathEdgeCount,
+            String witnessPathChecksum,
+            String witnessEvidenceChecksum) {
     }
 
     private record GridBudget(
@@ -1075,7 +1251,18 @@ public final class PaperQuerySetGenerator {
             double gridMinimum,
             double tHatMinDelta,
             double budget,
-            int gridDepartureCount) {
+            int gridDepartureCount,
+            double witnessPathLowerBoundDistance,
+            int witnessPathEdgeCount,
+            String witnessPathChecksum,
+            String witnessEvidenceChecksum) {
+    }
+
+    private record WitnessGridEvidence(
+            edu.ipcmax.core.validate.Path path,
+            double lowerBoundDistance,
+            String pathChecksum,
+            Map<Integer, Double> travelByDeparture) {
     }
 
     private record DefaultBudgetKey(
@@ -1094,7 +1281,7 @@ public final class PaperQuerySetGenerator {
     }
 
     public record DatasetChecksums(
-            String graphChecksum,
+            String datasetPayloadChecksum,
             String datasetChecksum,
             String temporalAttributeChecksum) {
     }
@@ -1103,9 +1290,9 @@ public final class PaperQuerySetGenerator {
             List<QueryManifestEntry> rows,
             List<SelectedPair> pairs,
             DatasetChecksums checksums,
-            QueryPreparationIndexes indexes,
             long pairsExamined,
-            int candidatePoolSize) {
+            int candidatePoolSize,
+            int horizonSafeCandidatePoolSize) {
     }
 
     private record VariantGeneration(
@@ -1126,6 +1313,8 @@ public final class PaperQuerySetGenerator {
             Map<String, DatasetChecksums> checksums,
             long pairsExamined,
             int candidatePoolSize,
+            int horizonSafeCandidatePoolSize,
+            int horizonRejectedCandidateCount,
             int basePairCount) {
     }
 

@@ -44,6 +44,7 @@ public final class BoundedConnectorGenerator {
     private final Domain queryHorizon;
     private final PaceOptions options;
     private final PaceWorkLedger ledger;
+    private final PaceExecutionMetrics metrics;
     private final SingleFlightCache<ConnectorKey, ConnectorResult>
             connectorCache = new SingleFlightCache<>();
     private final SingleFlightCache<ProfileKey, Optional<CandidateProfile>>
@@ -60,6 +61,21 @@ public final class BoundedConnectorGenerator {
             Domain queryHorizon,
             PaceOptions options,
             PaceWorkLedger ledger) {
+        this(
+                graph, corridor, pivots, lowerBounds, summaries,
+                queryHorizon, options, ledger, PaceExecutionMetrics.none());
+    }
+
+    public BoundedConnectorGenerator(
+            TDGraph graph,
+            QueryCorridor corridor,
+            PivotIndex pivots,
+            QueryLowerBounds lowerBounds,
+            EdgeTemporalSummaryStore summaries,
+            Domain queryHorizon,
+            PaceOptions options,
+            PaceWorkLedger ledger,
+            PaceExecutionMetrics metrics) {
         this.graph = graph;
         this.corridor = corridor;
         this.pivots = pivots;
@@ -68,9 +84,27 @@ public final class BoundedConnectorGenerator {
         this.queryHorizon = queryHorizon;
         this.options = options;
         this.ledger = ledger;
+        this.metrics = java.util.Objects.requireNonNull(
+                metrics, "metrics");
     }
 
     public ConnectorResult connect(
+            int source,
+            int target,
+            Domain entryDomain,
+            BitSet prefixVisited,
+            double residualBudget,
+            String workItem) {
+        metrics.increment("connector_requests");
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.CONNECTOR_GENERATION)) {
+            return connectTimed(
+                    source, target, entryDomain, prefixVisited,
+                    residualBudget, workItem);
+        }
+    }
+
+    private ConnectorResult connectTimed(
             int source,
             int target,
             Domain entryDomain,
@@ -104,7 +138,7 @@ public final class BoundedConnectorGenerator {
                     residualBudget,
                     workItem);
         }
-        return connectorCache.getOrCompute(
+        ConnectorResult result = connectorCache.getOrCompute(
                 key,
                 () -> compute(
                         source,
@@ -113,6 +147,8 @@ public final class BoundedConnectorGenerator {
                         prefixVisited,
                         residualBudget,
                         workItem));
+        observeCacheMetrics();
+        return result;
     }
 
     private ConnectorResult compute(
@@ -376,6 +412,7 @@ public final class BoundedConnectorGenerator {
             }
         }
         ledger.addConnectorExpansions(expansions);
+        metrics.addCounter("connector_expansions", expansions);
         if (capReached) {
             ledger.connectorCapReached(workItem);
         }
@@ -425,6 +462,7 @@ public final class BoundedConnectorGenerator {
                 "connector-profile:" + arcIds)) {
             return Optional.empty();
         }
+        observeCacheMetrics();
         return result;
     }
 
@@ -434,17 +472,20 @@ public final class BoundedConnectorGenerator {
             int target,
             Domain domain,
             double budget) {
-        return CanonicalPathProfileBuilder.replay(
-                graph,
-                queryHorizon,
-                Set.copyOf(pivots.selectedArcIds()),
-                arcIds,
-                source,
-                target,
-                domain,
-                budget,
-                -1,
-                false);
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.PATH_REPLAY)) {
+            return CanonicalPathProfileBuilder.replay(
+                    graph,
+                    queryHorizon,
+                    Set.copyOf(pivots.selectedArcIds()),
+                    arcIds,
+                    source,
+                    target,
+                    domain,
+                    budget,
+                    -1,
+                    false);
+        }
     }
 
     public long cacheLookups() {
@@ -461,6 +502,17 @@ public final class BoundedConnectorGenerator {
 
     public long cacheWaits() {
         return connectorCache.waits() + profileCache.waits();
+    }
+
+    private void observeCacheMetrics() {
+        metrics.observeCounter(
+                "cache_hits", cacheHits());
+        metrics.observeCounter(
+                "cache_misses", cacheMisses());
+        metrics.observeCounter(
+                "cache_lookups", cacheLookups());
+        metrics.observeCounter(
+                "cache_waits", cacheWaits());
     }
 
     private Map<Integer, Double> heuristicTo(int target) {

@@ -84,6 +84,7 @@ final class CanonicalPathProfileBuilder {
 
         int current = source;
         int explicitAnchorCount = 0;
+        Set<Integer> usedPivotArcIds = new HashSet<>();
         Set<Integer> vertices = new HashSet<>();
         vertices.add(source);
         TimeProfile arrival = TimeProfile.identity(rootDomain);
@@ -104,6 +105,7 @@ final class CanonicalPathProfileBuilder {
             }
             if (selectedPivotArcIds.contains(arcId)) {
                 explicitAnchorCount++;
+                usedPivotArcIds.add(arcId);
             }
 
             Domain validEntry = PaceProfiles.validEntryDomain(
@@ -157,6 +159,7 @@ final class CanonicalPathProfileBuilder {
                 PathPointer.of(arcIds),
                 explicitAnchorCount,
                 pivotId,
-                compressed));
+                compressed,
+                usedPivotArcIds));
     }
 }

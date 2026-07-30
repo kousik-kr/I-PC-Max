@@ -16,6 +16,22 @@ import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.graph.TinyGraphBuilder;
 
 class QueryCandidateSamplerTest {
+    @Test
+    void continentalWorkerSizingBoundsConcurrentDenseDijkstraQueues() {
+        assertEquals(
+                2,
+                QueryCandidateSampler.lowerBoundWorkerCount(
+                        16, 23_000_000, 32));
+        assertEquals(
+                4,
+                QueryCandidateSampler.lowerBoundWorkerCount(
+                        16, 2_000_000, 32));
+        assertEquals(
+                16,
+                QueryCandidateSampler.lowerBoundWorkerCount(
+                        16, 300_000, 32));
+    }
+
     private static final String CHECKSUM = "0123456789abcdef".repeat(4);
 
     @Test

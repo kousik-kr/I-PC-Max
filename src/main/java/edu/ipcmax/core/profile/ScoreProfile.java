@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.TreeSet;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.function.PiecewiseConstFn;
@@ -45,6 +46,7 @@ public final class ScoreProfile {
     private final Domain domain;
     private final String fingerprint;
     private final List<Interval> intervals;
+    private final List<Double> breakpoints;
 
     /**
      * Creates a score profile that is constant on each connected domain
@@ -69,6 +71,7 @@ public final class ScoreProfile {
         if (this.intervals.isEmpty()) {
             throw new IllegalArgumentException("score profile requires at least one interval");
         }
+        this.breakpoints = breakpointValues(this.intervals);
     }
 
     /**
@@ -114,6 +117,24 @@ public final class ScoreProfile {
     }
 
     /**
+     * Evaluates the right-continuous score on the closure of its domain.
+     *
+     * <p>This supports exact reasoning about open cell interiors whose two
+     * endpoints are adjacent canonical ticks. It does not make an excluded
+     * endpoint a valid query departure.</p>
+     */
+    public int valueAtClosure(double rootDepartureTime) {
+        rootDepartureTime = Domain.canonicalTime(
+                rootDepartureTime);
+        if (!inDomainClosure(rootDepartureTime)) {
+            throw new IllegalArgumentException(
+                    "time is outside score-profile-domain closure: "
+                            + rootDepartureTime);
+        }
+        return lookup(rootDepartureTime, intervals);
+    }
+
+    /**
      * Domain where this profile is valid.
      */
     public Domain domain() {
@@ -131,13 +152,7 @@ public final class ScoreProfile {
      * Returns distinct score breakpoints.
      */
     public List<Double> breakpoints() {
-        List<Double> points = new ArrayList<>();
-        for (Interval interval : intervals) {
-            addDistinct(points, interval.startMinute());
-            addDistinct(points, interval.endMinute());
-        }
-        points.sort(Double::compare);
-        return List.copyOf(points);
+        return breakpoints;
     }
 
     /**
@@ -165,7 +180,7 @@ public final class ScoreProfile {
         return build(
                 restricted,
                 breakpoints(),
-                this::valueAt,
+                this::valueAtClosure,
                 fingerprint + "|restrict:" + restricted.intervals());
     }
 
@@ -186,7 +201,8 @@ public final class ScoreProfile {
         return build(
                 restricted,
                 cuts,
-                time -> valueAt(time) + other.valueAt(time),
+                time -> valueAtClosure(time)
+                        + other.valueAtClosure(time),
                 composedFingerprint);
     }
 
@@ -204,7 +220,8 @@ public final class ScoreProfile {
         return build(
                 feasible,
                 cuts,
-                time -> valueAt(arrivalProfile.valueAt(time)),
+                time -> valueAtClosure(
+                        arrivalProfile.valueAtClosure(time)),
                 composedFingerprint);
     }
 
@@ -228,7 +245,8 @@ public final class ScoreProfile {
         return build(
                 feasible,
                 cuts,
-                time -> edgeScore.valueAt(arrivalProfile.valueAt(time)),
+                time -> edgeScore.valueAt(
+                        arrivalProfile.valueAtClosure(time)),
                 fingerprint);
     }
 
@@ -312,16 +330,15 @@ public final class ScoreProfile {
     private static List<Double> cutsInside(
             Domain.Interval component,
             List<Double> requestedCuts) {
-        List<Double> cuts = new ArrayList<>();
-        cuts.add(component.start());
+        TreeSet<Long> ticks = new TreeSet<>();
+        ticks.add(Domain.canonicalTick(component.start()));
         for (double cut : requestedCuts) {
             if (cut > component.start() && cut < component.end()) {
-                addDistinct(cuts, cut);
+                ticks.add(Domain.canonicalTick(cut));
             }
         }
-        cuts.add(component.end());
-        cuts.sort(Double::compare);
-        return cuts;
+        ticks.add(Domain.canonicalTick(component.end()));
+        return ticks.stream().map(Domain::timeFromTick).toList();
     }
 
     private static int lookup(double time, List<Interval> intervals) {
@@ -342,6 +359,17 @@ public final class ScoreProfile {
             }
         }
         throw new IllegalStateException("score intervals do not cover time " + time);
+    }
+
+    private boolean inDomainClosure(double time) {
+        for (Domain.Interval component :
+                domain.intervals()) {
+            if (time >= component.start()
+                    && time <= component.end()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean startsAt(List<Interval> intervals, int index, double time) {
@@ -379,14 +407,16 @@ public final class ScoreProfile {
         intervals.add(interval);
     }
 
-    private static void addDistinct(List<Double> points, double point) {
-        point = Domain.canonicalTime(point);
-        for (double existing : points) {
-            if (approximatelyEqual(existing, point)) {
-                return;
-            }
+    private static List<Double> breakpointValues(
+            List<Interval> source) {
+        TreeSet<Long> ticks = new TreeSet<>();
+        for (Interval interval : source) {
+            ticks.add(Domain.canonicalTick(
+                    interval.startMinute()));
+            ticks.add(Domain.canonicalTick(
+                    interval.endMinute()));
         }
-        points.add(point);
+        return ticks.stream().map(Domain::timeFromTick).toList();
     }
 
     private static boolean approximatelyEqual(double left, double right) {

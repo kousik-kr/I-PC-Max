@@ -6,6 +6,7 @@ import edu.ipcmax.core.graph.TDGraph;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Exact extension-safe dominance for PACE candidate fragments.
@@ -20,6 +21,10 @@ public final class SafeProfileDominance {
      */
     public static boolean dominates(CandidateProfile a, CandidateProfile b, Domain domain) {
         if (!a.stablePathId().equals(b.stablePathId())) {
+            return false;
+        }
+        if (!b.usedPivotArcIds().containsAll(
+                a.usedPivotArcIds())) {
             return false;
         }
         for (Domain.Interval interval : domain.intervals()) {
@@ -40,18 +45,54 @@ public final class SafeProfileDominance {
             Domain.Interval cell,
             int subproblemSource,
             int subproblemDestination) {
+        Set<Integer> omegaA = a.internalVertices(
+                graph, subproblemSource, subproblemDestination);
+        Set<Integer> omegaB = b.internalVertices(
+                graph, subproblemSource, subproblemDestination);
+        return dominates(
+                a, b, cell, omegaA, omegaB);
+    }
+
+    /**
+     * Tests dominance using caller-cached path-consistency signatures.
+     *
+     * <p>The signatures are independent of the temporal cell and are therefore
+     * safe to compute once per retention pass instead of materializing both
+     * paths for every candidate pair.</p>
+     */
+    public static boolean dominates(
+            CandidateProfile a,
+            CandidateProfile b,
+            Domain.Interval cell,
+            Set<Integer> omegaA,
+            Set<Integer> omegaB) {
         if (cell == null) {
             return false;
         }
         if (!covers(a.domain(), cell) || !covers(b.domain(), cell)) {
             return false;
         }
-        Set<Integer> omegaA = a.internalVertices(graph, subproblemSource, subproblemDestination);
-        Set<Integer> omegaB = b.internalVertices(graph, subproblemSource, subproblemDestination);
-        if (!omegaB.containsAll(omegaA)) {
+        if (!structurallyEligible(a, b, omegaA, omegaB)) {
             return false;
         }
         return dominatesProfiles(a, b, cell);
+    }
+
+    /**
+     * Cell-independent necessary condition for extension-safe dominance.
+     */
+    public static boolean structurallyEligible(
+            CandidateProfile a,
+            CandidateProfile b,
+            Set<Integer> omegaA,
+            Set<Integer> omegaB) {
+        if (a == null || b == null
+                || omegaA == null || omegaB == null) {
+            return false;
+        }
+        return omegaB.containsAll(omegaA)
+                && b.usedPivotArcIds().containsAll(
+                        a.usedPivotArcIds());
     }
 
     /**
@@ -81,8 +122,11 @@ public final class SafeProfileDominance {
         }
         List<Double> cuts = scoreCuts(cell, a.scoreProfile(), b.scoreProfile());
         for (int i = 0; i + 1 < cuts.size(); i++) {
-            double sample = midpoint(cuts.get(i), cuts.get(i + 1));
-            if (a.scoreProfile().valueAt(sample) < b.scoreProfile().valueAt(sample)) {
+            double rightClosure = cuts.get(i);
+            if (a.scoreProfile().valueAtClosure(
+                            rightClosure)
+                    < b.scoreProfile().valueAtClosure(
+                            rightClosure)) {
                 return false;
             }
         }
@@ -100,8 +144,11 @@ public final class SafeProfileDominance {
         }
         List<Double> cuts = scoreCuts(cell, a.scoreProfile(), b.scoreProfile());
         for (int i = 0; i + 1 < cuts.size(); i++) {
-            double sample = midpoint(cuts.get(i), cuts.get(i + 1));
-            if (a.scoreProfile().valueAt(sample) != b.scoreProfile().valueAt(sample)) {
+            double rightClosure = cuts.get(i);
+            if (a.scoreProfile().valueAtClosure(
+                            rightClosure)
+                    != b.scoreProfile().valueAtClosure(
+                            rightClosure)) {
                 return false;
             }
         }
@@ -168,18 +215,13 @@ public final class SafeProfileDominance {
     }
 
     private static List<Double> uniqueSorted(List<Double> points) {
-        List<Double> sorted = points.stream().filter(Double::isFinite).sorted().toList();
-        List<Double> unique = new ArrayList<>();
-        for (double point : sorted) {
-            double canonical = Domain.canonicalTime(point);
-            if (unique.isEmpty() || !Domain.sameTime(unique.get(unique.size() - 1), canonical)) {
-                unique.add(canonical);
+        TreeSet<Long> ticks = new TreeSet<>();
+        for (double point : points) {
+            if (Double.isFinite(point)) {
+                ticks.add(Domain.canonicalTick(point));
             }
         }
-        return unique;
+        return ticks.stream().map(Domain::timeFromTick).toList();
     }
 
-    private static double midpoint(double start, double end) {
-        return start + ((end - start) / 2.0);
-    }
 }

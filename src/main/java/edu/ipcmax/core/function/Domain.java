@@ -8,6 +8,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.TreeSet;
 
 /**
  * Canonical set of disjoint real-valued intervals.
@@ -27,9 +28,25 @@ public final class Domain implements Iterable<Integer> {
 
     /** Decimal scale of serialized query-budget values ({@code 10^-9} minute). */
     public static final int REPOSITORY_TIME_UNIT_SCALE = 9;
+    /** Signed tick scale for the internal 12-decimal time contract. */
+    public static final long TICKS_PER_MINUTE = 1_000_000_000_000L;
+    /*
+     * Fixed-size direct-mapped memo tables. Canonicalization correctness does
+     * not depend on a cache hit; collision replacement simply recomputes the
+     * exact BigDecimal contract next time. A fixed bound is essential for
+     * routing workloads that legitimately encounter millions of distinct
+     * tentative distances.
+     */
+    private static final int TICK_CACHE_SIZE = 1 << 16;
+    private static final ThreadLocal<TickCache> TICK_CACHE =
+            ThreadLocal.withInitial(TickCache::new);
+    private static final ThreadLocal<TickValueCache>
+            TICK_VALUE_CACHE =
+            ThreadLocal.withInitial(TickValueCache::new);
 
     private final List<Interval> intervals;
     private final boolean partition;
+    private final List<Double> breakpoints;
 
     /**
      * Real interval with explicit endpoint inclusion.
@@ -86,6 +103,7 @@ public final class Domain implements Iterable<Integer> {
                 ? validatePartition(intervals)
                 : canonicalize(intervals));
         this.partition = preservePartition;
+        this.breakpoints = canonicalBreakpoints(this.intervals);
     }
 
     /**
@@ -144,17 +162,7 @@ public final class Domain implements Iterable<Integer> {
      * Returns all distinct interval endpoints in order.
      */
     public List<Double> breakpoints() {
-        List<Double> points = new ArrayList<>(intervals.size() * 2);
-        for (Interval interval : intervals) {
-            addDistinct(points, interval.start());
-            addDistinct(points, interval.end());
-        }
-        points.sort(Double::compare);
-        List<Double> distinct = new ArrayList<>(points.size());
-        for (double point : points) {
-            addDistinct(distinct, point);
-        }
-        return List.copyOf(distinct);
+        return breakpoints;
     }
 
     /**
@@ -276,20 +284,23 @@ public final class Domain implements Iterable<Integer> {
         Objects.requireNonNull(breakpoints, "breakpoints");
         List<Interval> result = new ArrayList<>();
         for (Interval interval : semanticIntervals()) {
-            List<Double> cuts = new ArrayList<>();
+            TreeSet<Long> cutTicks = new TreeSet<>();
+            long intervalStart = canonicalTick(interval.start());
+            long intervalEnd = canonicalTick(interval.end());
             for (double point : breakpoints) {
                 if (!Double.isFinite(point)) {
                     throw new IllegalArgumentException("domain breakpoint must be finite");
                 }
-                if (compare(point, interval.start()) > 0 && compare(point, interval.end()) < 0) {
-                    addDistinct(cuts, point);
+                long tick = canonicalTick(point);
+                if (tick > intervalStart && tick < intervalEnd) {
+                    cutTicks.add(tick);
                 }
             }
-            cuts.sort(Double::compare);
 
             double cursor = interval.start();
             boolean cursorInclusive = interval.startInclusive();
-            for (double point : cuts) {
+            for (long tick : cutTicks) {
+                double point = timeFromTick(tick);
                 result.add(new Interval(cursor, point, cursorInclusive, false));
                 cursor = point;
                 cursorInclusive = true;
@@ -500,33 +511,145 @@ public final class Domain implements Iterable<Integer> {
         return last;
     }
 
-    private static void addDistinct(List<Double> points, double point) {
-        point = canonicalTime(point);
-        for (double existing : points) {
-            if (compare(existing, point) == 0) {
-                return;
-            }
-        }
-        points.add(point);
-    }
-
     private static int compare(double left, double right) {
-        return Double.compare(canonicalTime(left), canonicalTime(right));
+        return Long.compare(canonicalTick(left), canonicalTick(right));
     }
 
     /** Converts a temporal value to the repository's fixed decimal representation. */
     public static double canonicalTime(double value) {
+        return timeFromTick(canonicalTick(value));
+    }
+
+    /**
+     * Converts a temporal value to a signed 10^-12-minute HALF_EVEN tick.
+     *
+     * <p>A small thread-local direct-mapped cache ensures a repeated canonical
+     * breakpoint never repeats decimal parsing or allocation on the hot path.</p>
+     */
+    public static long canonicalTick(double value) {
         if (!Double.isFinite(value)) {
             throw new IllegalArgumentException("time value must be finite");
         }
-        return BigDecimal.valueOf(value)
-                .setScale(TIME_SCALE, RoundingMode.HALF_EVEN)
-                .doubleValue();
+        long bits = Double.doubleToRawLongBits(value);
+        TickCache cache = TICK_CACHE.get();
+        int existing = cache.find(bits);
+        if (existing >= 0) {
+            return cache.tickAt(existing);
+        }
+        long tick;
+        try {
+            tick = BigDecimal.valueOf(value)
+                    .movePointRight(TIME_SCALE)
+                    .setScale(0, RoundingMode.HALF_EVEN)
+                    .longValueExact();
+        } catch (ArithmeticException outOfRange) {
+            throw new IllegalArgumentException(
+                    "time value is outside signed tick range: " + value,
+                    outOfRange);
+        }
+        cache.put(bits, tick);
+        return tick;
+    }
+
+    /** Converts one canonical signed tick back to its minute value. */
+    public static double timeFromTick(long tick) {
+        TickValueCache cache = TICK_VALUE_CACHE.get();
+        int existing = cache.find(tick);
+        if (existing >= 0) {
+            return cache.valueAt(existing);
+        }
+        /*
+         * A floating-point division can differ by one ULP from the legacy
+         * BigDecimal.setScale(...).doubleValue() contract. This conversion is
+         * paid only once per new tick; comparison and deduplication stay on
+         * signed longs.
+         */
+        double value = BigDecimal.valueOf(
+                tick, TIME_SCALE).doubleValue();
+        cache.put(tick, value);
+        return value;
     }
 
     /** Exact equality after conversion to the fixed decimal representation. */
     public static boolean sameTime(double left, double right) {
-        return Double.compare(canonicalTime(left), canonicalTime(right)) == 0;
+        return canonicalTick(left) == canonicalTick(right);
+    }
+
+    private static List<Double> canonicalBreakpoints(
+            List<Interval> source) {
+        TreeSet<Long> ticks = new TreeSet<>();
+        for (Interval interval : source) {
+            ticks.add(canonicalTick(interval.start()));
+            ticks.add(canonicalTick(interval.end()));
+        }
+        return ticks.stream().map(Domain::timeFromTick).toList();
+    }
+
+    private static final class TickCache {
+        private final boolean[] occupied =
+                new boolean[TICK_CACHE_SIZE];
+        private final long[] bits =
+                new long[TICK_CACHE_SIZE];
+        private final long[] ticks =
+                new long[TICK_CACHE_SIZE];
+
+        int find(long key) {
+            int index = hashIndex(
+                    key, occupied.length - 1);
+            return occupied[index] && bits[index] == key
+                    ? index : -1;
+        }
+
+        long tickAt(int index) {
+            return ticks[index];
+        }
+
+        void put(long key, long value) {
+            int index = hashIndex(
+                    key, occupied.length - 1);
+            occupied[index] = true;
+            bits[index] = key;
+            ticks[index] = value;
+        }
+    }
+
+    private static final class TickValueCache {
+        private final boolean[] occupied =
+                new boolean[TICK_CACHE_SIZE];
+        private final long[] ticks =
+                new long[TICK_CACHE_SIZE];
+        private final double[] values =
+                new double[TICK_CACHE_SIZE];
+
+        int find(long tick) {
+            int index = hashIndex(
+                    tick, occupied.length - 1);
+            return occupied[index] && ticks[index] == tick
+                    ? index : -1;
+        }
+
+        double valueAt(int index) {
+            return values[index];
+        }
+
+        void put(long tick, double value) {
+            int index = hashIndex(
+                    tick, occupied.length - 1);
+            occupied[index] = true;
+            ticks[index] = tick;
+            values[index] = value;
+        }
+    }
+
+    private static int hashIndex(
+            long value,
+            int mask) {
+        value ^= value >>> 33;
+        value *= 0xff51afd7ed558ccdL;
+        value ^= value >>> 33;
+        value *= 0xc4ceb9fe1a85ec53L;
+        value ^= value >>> 33;
+        return (int) value & mask;
     }
 
     private static final Comparator<Interval> INTERVAL_ORDER = (left, right) -> {

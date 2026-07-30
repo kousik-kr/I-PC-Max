@@ -3,7 +3,8 @@
   "$id": "https://pace.example/schemas/query_manifest.schema.json",
   "oneOf": [
     {"$ref": "#/$defs/version_1"},
-    {"$ref": "#/$defs/version_2"}
+    {"$ref": "#/$defs/version_2"},
+    {"$ref": "#/$defs/version_3"}
   ],
   "$defs": {
     "version_1": {
@@ -75,6 +76,95 @@
         "generator_version": {"type": "string", "minLength": 1},
         "generator_config_hash": {"type": "string", "minLength": 1},
         "metadata": {"type": "object"}
+      }
+    },
+    "version_3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "query_id", "dataset_id", "source", "destination",
+        "interval_start", "interval_end", "window_length", "budget", "budget_slack",
+        "budget_policy", "distance_bin", "lower_bound_distance", "query_seed", "metadata"
+      ],
+      "properties": {
+        "schema_version": {"const": 3},
+        "query_id": {"type": "string", "minLength": 1},
+        "dataset_id": {"enum": ["NY", "FLA", "CAL", "USA"]},
+        "source": {"type": "integer", "minimum": 1},
+        "destination": {"type": "integer", "minimum": 1},
+        "interval_start": {"type": "integer", "minimum": 0},
+        "interval_end": {"type": "integer", "minimum": 1},
+        "window_length": {"type": "integer", "minimum": 1},
+        "budget": {"type": "number", "exclusiveMinimum": 0},
+        "budget_slack": {"type": "number", "minimum": 0},
+        "budget_policy": {"const": "full-interval-feasible"},
+        "distance_bin": {"type": "integer", "minimum": 1, "maximum": 5},
+        "lower_bound_distance": {"type": "number", "exclusiveMinimum": 0},
+        "query_seed": {"type": "integer"},
+        "metadata": {
+          "type": "object",
+          "required": [
+            "budget_definition", "budget_derivation_rule", "budget_evidence",
+            "checksum_scope_version",
+            "conversion_contract_version", "dataset_checksum", "dataset_path",
+            "delta_minutes", "distance_band", "final_generated_budget",
+            "function_support_end", "generation_contract", "generator_config_hash",
+            "generator_version", "dataset_payload_checksum", "graph_seed",
+            "grid_departure_count", "interval_center",
+            "lower_bound_routing_contract", "pair_id", "pair_index", "rho",
+            "selection_seed", "split", "split_seed", "t_hat_min_delta",
+            "temporal_attribute_checksum", "witness_evaluated_departure_end",
+            "witness_evaluated_departure_start", "witness_evidence_contract",
+            "witness_identity_contract", "witness_path_checksum_sha256",
+            "witness_path_edge_count", "witness_path_lower_bound_distance",
+            "witness_travel_time_evidence_sha256", "witness_travel_time_max",
+            "witness_travel_time_min"
+          ],
+          "properties": {
+            "budget_definition": {
+              "const": "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME"
+            },
+            "budget_derivation_rule": {
+              "const": "B=canonical_time((1+rho)*T_hat_min,Delta);T_hat_min,Delta=max_grid_witness_travel_time"
+            },
+            "budget_evidence": {
+              "const": "lower_bound_witness_path_grid_replay-v2"
+            },
+            "checksum_scope_version": {
+              "const": "pace-explicit-dataset-checksum-scopes-v1"
+            },
+            "conversion_contract_version": {
+              "const": "declared_centisecond_normalization-v1"
+            },
+            "delta_minutes": {"const": 1},
+            "final_generated_budget": {"type": "number", "exclusiveMinimum": 0},
+            "grid_departure_count": {"type": "integer", "minimum": 2},
+            "lower_bound_routing_contract": {
+              "const": "EXACT_DIJKSTRA_GLOBAL_EDGE_MINIMUM_DISTANCE_HOPS_ARC_ID-v1"
+            },
+            "rho": {"type": "number", "minimum": 0},
+            "split": {"enum": ["pilot", "warmup", "evaluation"]},
+            "t_hat_min_delta": {"type": "number", "exclusiveMinimum": 0},
+            "witness_evidence_contract": {
+              "const": "SHA256_BIG_ENDIAN_DEPARTURE_AND_CANONICAL_TRAVEL_TICKS-v1"
+            },
+            "witness_identity_contract": {
+              "const": "SHA256_BIG_ENDIAN_ARC_ID_SEQUENCE-v1"
+            },
+            "witness_path_checksum_sha256": {
+              "type": "string", "pattern": "^[0-9a-f]{64}$"
+            },
+            "witness_path_edge_count": {"type": "integer", "minimum": 1},
+            "witness_path_lower_bound_distance": {
+              "type": "number", "exclusiveMinimum": 0
+            },
+            "witness_travel_time_evidence_sha256": {
+              "type": "string", "pattern": "^[0-9a-f]{64}$"
+            },
+            "witness_travel_time_max": {"type": "number", "exclusiveMinimum": 0},
+            "witness_travel_time_min": {"type": "number", "exclusiveMinimum": 0}
+          }
+        }
       }
     }
   }

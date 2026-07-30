@@ -2,7 +2,7 @@
   "schema_version":1,"study_id":"E11","stage":"parallel","mode":"execute","datasets":"all",
   "split":"evaluation","pairs_per_dataset":100,"centers":[510,1110],"trials":3,
   "algorithms":[{"id":"pace-b","parameters":{"theta":2,"resolved_pace_b":true}}],
-  "axes":[{"threads":1},{"threads":2},{"threads":4},{"threads":8},{"threads":16},{"threads":32}],
-  "filter_threads_to_physical_cores":true,"requires_parallelism_gate":true,
+  "axes":[{"threads":1},{"threads":2},{"threads":4},{"threads":8},{"threads":16},{"threads":24}],
+  "requires_parallelism_gate":true,
   "required_metrics":["speedup","efficiency","utilization","checksum_equality","observed_workers"]
 }

@@ -7,6 +7,7 @@ import edu.ipcmax.core.index.QueryPreparationIndexes;
 import edu.ipcmax.core.pcmax.PACE;
 import edu.ipcmax.core.pcmax.PaceCompletion;
 import edu.ipcmax.core.pcmax.PaceExactnessScope;
+import edu.ipcmax.core.pcmax.PaceExecutionMetrics;
 import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
@@ -46,11 +47,20 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
             TDGraph graph, QuerySpec query, AlgorithmConfig config,
             ExperimentInstrumentation instrumentation) {
         prepare(graph, config);
+        PaceExecutionMetrics metrics =
+                PaceExecutionMetrics.live(instrumentation::accept);
         PACE pace = new PACE(
                 graph,
                 config.paceOptions(),
-                preparedIndexes);
-        var profile = pace.run(query);
+                preparedIndexes,
+                metrics);
+        edu.ipcmax.core.pcmax.EnvelopeProfile profile;
+        try {
+            profile = pace.run(query);
+        } finally {
+            instrumentation.accept(metrics.snapshot());
+            metrics.close();
+        }
         var generation = pace.lastGenerationResult();
         var stats = pace.stats();
         instrumentation.addCounter("recursive_calls", stats.recursionCalls());

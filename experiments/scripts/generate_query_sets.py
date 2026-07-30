@@ -50,18 +50,22 @@ REQUIRED_GRAPH_FILES = (
 SPLITS = ("pilot", "warmup", "evaluation")
 REQUIRED_ROW_METADATA = {
     "budget_definition",
+    "budget_derivation_rule",
     "budget_evidence",
+    "checksum_scope_version",
     "conversion_contract_version",
     "dataset_checksum",
     "dataset_path",
     "delta_minutes",
     "distance_band",
     "function_support_end",
+    "final_generated_budget",
     "generation_contract",
     "generator_config_hash",
     "generator_version",
-    "graph_checksum",
+    "dataset_payload_checksum",
     "graph_seed",
+    "grid_departure_count",
     "interval_center",
     "pair_id",
     "pair_index",
@@ -71,7 +75,29 @@ REQUIRED_ROW_METADATA = {
     "split_seed",
     "t_hat_min_delta",
     "temporal_attribute_checksum",
+    "witness_evaluated_departure_end",
+    "witness_evaluated_departure_start",
+    "witness_evidence_contract",
+    "witness_identity_contract",
+    "witness_path_checksum_sha256",
+    "witness_path_edge_count",
+    "witness_path_lower_bound_distance",
+    "witness_travel_time_evidence_sha256",
+    "witness_travel_time_max",
+    "witness_travel_time_min",
+    "lower_bound_routing_contract",
 }
+
+WITNESS_BUDGET_DEFINITION = (
+    "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME"
+)
+WITNESS_BUDGET_EVIDENCE = (
+    "lower_bound_witness_path_grid_replay-v2"
+)
+WITNESS_BUDGET_DERIVATION = (
+    "B=canonical_time((1+rho)*T_hat_min,Delta);"
+    "T_hat_min,Delta=max_grid_witness_travel_time"
+)
 
 
 class AssetError(ValueError):
@@ -482,6 +508,73 @@ def validate_prepared_manifest(
         split_pairs[split].add(pair_id)
         if metadata["delta_minutes"] != 1:
             errors.append(f"query {query_id} does not use Delta=1")
+        if metadata["budget_definition"] != WITNESS_BUDGET_DEFINITION:
+            errors.append(
+                f"query {query_id} does not use the witness budget contract"
+            )
+        if metadata["budget_evidence"] != WITNESS_BUDGET_EVIDENCE:
+            errors.append(
+                f"query {query_id} has unsupported witness evidence"
+            )
+        if metadata["budget_derivation_rule"] != WITNESS_BUDGET_DERIVATION:
+            errors.append(
+                f"query {query_id} has unsupported budget derivation"
+            )
+        if (
+            metadata["witness_evaluated_departure_start"]
+            != row["interval_start"]
+            or metadata["witness_evaluated_departure_end"]
+            != row["interval_end"]
+        ):
+            errors.append(
+                f"query {query_id} witness interval does not match query"
+            )
+        expected_departures = (
+            (
+                row["interval_end"] - row["interval_start"]
+            )
+            // metadata["delta_minutes"]
+            + 1
+        )
+        if metadata["grid_departure_count"] != expected_departures:
+            errors.append(
+                f"query {query_id} has the wrong witness grid count"
+            )
+        for field in (
+            "witness_path_checksum_sha256",
+            "witness_travel_time_evidence_sha256",
+        ):
+            value = metadata[field]
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef"
+                       for character in value)
+            ):
+                errors.append(
+                    f"query {query_id} has invalid {field}"
+                )
+        if metadata["witness_path_edge_count"] <= 0:
+            errors.append(
+                f"query {query_id} has an empty witness path"
+            )
+        if metadata["witness_path_lower_bound_distance"] <= 0:
+            errors.append(
+                f"query {query_id} has a non-positive witness lower bound"
+            )
+        if metadata["witness_travel_time_min"] <= 0:
+            errors.append(
+                f"query {query_id} has non-positive witness travel time"
+            )
+        if (
+            metadata["witness_travel_time_max"]
+            != metadata["t_hat_min_delta"]
+            or metadata["witness_travel_time_min"]
+            > metadata["witness_travel_time_max"]
+        ):
+            errors.append(
+                f"query {query_id} has inconsistent witness extrema"
+            )
         if metadata["interval_center"] * 2 != (
             row["interval_start"] + row["interval_end"]
         ):
@@ -492,6 +585,13 @@ def validate_prepared_manifest(
         )
         if _canonical_time(float(row["budget"])) != expected_budget:
             errors.append(f"query {query_id} has wrong canonical budget")
+        if (
+            _canonical_time(float(metadata["final_generated_budget"]))
+            != _canonical_time(float(row["budget"]))
+        ):
+            errors.append(
+                f"query {query_id} final budget evidence differs"
+            )
         if (
             _canonical_time(row["interval_end"] + row["budget"])
             > float(metadata["function_support_end"])
@@ -505,8 +605,16 @@ def validate_prepared_manifest(
                 temporal_attribute_checksum(dataset_path),
             )
         actual_graph, actual_dataset, actual_temporal = checksums[dataset_path]
-        if metadata["graph_checksum"] != actual_graph:
-            errors.append(f"query {query_id} graph checksum mismatch")
+        if metadata["dataset_payload_checksum"] != actual_graph:
+            errors.append(
+                f"query {query_id} dataset payload checksum mismatch"
+            )
+        if metadata["checksum_scope_version"] != (
+            "pace-explicit-dataset-checksum-scopes-v1"
+        ):
+            errors.append(
+                f"query {query_id} checksum scope mismatch"
+            )
         if metadata["dataset_checksum"] != actual_dataset:
             errors.append(f"query {query_id} dataset checksum mismatch")
         if metadata["temporal_attribute_checksum"] != actual_temporal:
@@ -560,13 +668,15 @@ def _sidecar(
         key = (
             metadata["dataset_checksum"],
             metadata["temporal_attribute_checksum"],
-            metadata["graph_checksum"],
+            metadata["dataset_payload_checksum"],
         )
         inputs.setdefault(key, {
             "dataset_path": metadata["dataset_path"],
             "dataset_checksum": key[0],
             "temporal_attribute_checksum": key[1],
-            "graph_checksum": key[2],
+            "dataset_payload_checksum": key[2],
+            "checksum_scope_version":
+                "pace-explicit-dataset-checksum-scopes-v1",
             "conversion_contract_version":
                 metadata["conversion_contract_version"],
             "graph_seed": metadata["graph_seed"],

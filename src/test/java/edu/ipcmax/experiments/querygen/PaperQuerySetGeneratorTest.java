@@ -59,6 +59,12 @@ class PaperQuerySetGeneratorTest {
                 Map.of("evaluation", 10, "pilot", 10, "warmup", 10),
                 first.summary().rowsBySplit());
         assertEquals(15, first.summary().basePairCount());
+        assertEquals(
+                first.summary().candidatePoolSize(),
+                first.summary().horizonSafeCandidatePoolSize());
+        assertEquals(
+                0,
+                first.summary().horizonRejectedCandidateCount());
 
         Map<String, Set<String>> pairIds = new HashMap<>();
         Map<String, Set<String>> bands = new HashMap<>();
@@ -119,6 +125,32 @@ class PaperQuerySetGeneratorTest {
                 "dataset_checksum"));
     }
 
+    @Test
+    void filtersHorizonUnsafeWitnessesBeforeDistanceStratification()
+            throws Exception {
+        Path dataset = temporary.resolve("dataset-horizon-filter");
+        Path configuration = temporary.resolve("query-generation.yaml");
+        writeDataset(dataset, true);
+        writeConfiguration(configuration);
+
+        PaperQuerySetGenerator.GenerationResult result =
+                PaperQuerySetGenerator.generate(
+                        spec(dataset, configuration));
+
+        assertTrue(
+                result.summary().horizonRejectedCandidateCount() > 0);
+        assertTrue(
+                result.summary().horizonSafeCandidatePoolSize()
+                        >= result.summary().basePairCount());
+        for (QueryManifestEntry row : result.rows()) {
+            assertTrue(
+                    row.intervalEnd() + row.budget()
+                            <= ((Number) row.metadata().get(
+                                    "function_support_end"))
+                                .doubleValue());
+        }
+    }
+
     private PaperQuerySetGenerator.GenerationSpec spec(
             Path dataset,
             Path configuration) {
@@ -145,12 +177,18 @@ class PaperQuerySetGeneratorTest {
                 120,
                 0.1,
                 1,
-                "GRID_FIXED_DEPARTURE_FASTEST_TRAVEL_TIME",
+                "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME",
                 10080,
                 List.of());
     }
 
     private void writeDataset(Path directory) throws IOException {
+        writeDataset(directory, false);
+    }
+
+    private void writeDataset(
+            Path directory,
+            boolean horizonUnsafeTargets) throws IOException {
         Files.createDirectories(directory);
         StringBuilder nodes = new StringBuilder("node_id,x,y\n");
         for (int node = 1; node <= 20; node++) {
@@ -179,7 +217,11 @@ class PaperQuerySetGeneratorTest {
                         .append(",\"base_travel_time\":").append(time)
                         .append(",\"travel_time_breakpoints\":[[0,")
                         .append(time).append("],[10080,")
-                        .append(time).append("]]}\n");
+                        .append(
+                                horizonUnsafeTargets
+                                        && destination >= 16
+                                        ? 10000 : time)
+                        .append("]]}\n");
                 if (arcId % 10 == 0) {
                     scores.append("{\"arc_id\":").append(arcId)
                             .append(",\"u\":").append(source)

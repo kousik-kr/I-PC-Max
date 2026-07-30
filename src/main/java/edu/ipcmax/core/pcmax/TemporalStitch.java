@@ -124,6 +124,10 @@ public final class TemporalStitch {
                 left.pathPointer(),
                 PathPointer.arc(anchor.arcId()),
                 right.pathPointer());
+        Set<Integer> usedPivotArcIds = new HashSet<>(
+                left.usedPivotArcIds());
+        usedPivotArcIds.addAll(right.usedPivotArcIds());
+        usedPivotArcIds.add(anchor.arcId());
         return Optional.of(new CandidateProfile(
                 joinedDomain,
                 finalArrival,
@@ -131,7 +135,8 @@ public final class TemporalStitch {
                 path,
                 left.explicitAnchorCount() + right.explicitAnchorCount() + 1,
                 anchor.arcId(),
-                false));
+                false,
+                usedPivotArcIds));
     }
 
     private static boolean isVertexSimpleConcatenation(

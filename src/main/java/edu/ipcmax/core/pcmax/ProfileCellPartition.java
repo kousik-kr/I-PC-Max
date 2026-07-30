@@ -7,6 +7,7 @@ import edu.ipcmax.core.profile.TimeProfile;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
 
 /**
  * Exact temporal-cell construction shared by frontier compression and envelope extraction.
@@ -19,22 +20,56 @@ final class ProfileCellPartition {
             Domain domain,
             List<CandidateProfile> candidates,
             boolean includeTravelEqualityRoots) {
-        List<Double> cuts = new ArrayList<>(domain.breakpoints());
-        for (CandidateProfile candidate : candidates) {
-            cuts.addAll(candidate.domain().breakpoints());
-            for (TimeProfile.Breakpoint breakpoint : candidate.arrivalProfile().breakpoints()) {
-                cuts.add(breakpoint.minute());
+        return cells(
+                domain,
+                candidates,
+                includeTravelEqualityRoots,
+                PaceExecutionMetrics.none());
+    }
+
+    static List<Domain.Interval> cells(
+            Domain domain,
+            List<CandidateProfile> candidates,
+            boolean includeTravelEqualityRoots,
+            PaceExecutionMetrics metrics) {
+        List<Double> cuts;
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.BREAKPOINT_PROCESSING)) {
+            cuts = new ArrayList<>(domain.breakpoints());
+            for (CandidateProfile candidate : candidates) {
+                cuts.addAll(candidate.domain().breakpoints());
+                for (TimeProfile.Breakpoint breakpoint :
+                        candidate.arrivalProfile().breakpoints()) {
+                    cuts.add(breakpoint.minute());
+                }
+                cuts.addAll(candidate.scoreProfile().breakpoints());
             }
-            cuts.addAll(candidate.scoreProfile().breakpoints());
+            metrics.addCounter("breakpoints_processed", cuts.size());
         }
         if (includeTravelEqualityRoots) {
-            for (int i = 0; i < candidates.size(); i++) {
-                for (int j = i + 1; j < candidates.size(); j++) {
-                    cuts.addAll(travelEqualityBreakpoints(candidates.get(i), candidates.get(j), domain));
+            try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                    PaceExecutionMetrics.EQUALITY_ROOTS)) {
+                for (int i = 0; i < candidates.size(); i++) {
+                    for (int j = i + 1; j < candidates.size(); j++) {
+                        metrics.increment("candidate_pair_root_checks");
+                        List<Double> roots = travelEqualityBreakpoints(
+                                candidates.get(i),
+                                candidates.get(j),
+                                domain);
+                        metrics.addCounter(
+                                "equality_roots_created", roots.size());
+                        cuts.addAll(roots);
+                    }
                 }
             }
         }
-        return partition(domain, cuts);
+        List<Domain.Interval> result;
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.BREAKPOINT_PROCESSING)) {
+            result = partition(domain, cuts);
+        }
+        metrics.addCounter("temporal_cells_created", result.size());
+        return result;
     }
 
     static List<Domain.Interval> partition(Domain domain, List<Double> cutPoints) {
@@ -67,8 +102,10 @@ final class ProfileCellPartition {
             if (cell.end() <= cell.start()) {
                 continue;
             }
-            double sample = midpoint(cell);
-            if (left.scoreProfile().valueAt(sample) != right.scoreProfile().valueAt(sample)) {
+            if (left.scoreProfile().valueAtClosure(
+                            cell.start())
+                    != right.scoreProfile().valueAtClosure(
+                            cell.start())) {
                 continue;
             }
             double startDifference = left.arrivalProfile().valueAtClosure(cell.start())
@@ -97,7 +134,12 @@ final class ProfileCellPartition {
     }
 
     static double midpoint(Domain.Interval interval) {
-        return interval.start() + ((interval.end() - interval.start()) / 2.0);
+        long start = Domain.canonicalTick(
+                interval.start());
+        long end = Domain.canonicalTick(
+                interval.end());
+        return Domain.timeFromTick(
+                start + ((end - start) / 2));
     }
 
     static double measure(Domain domain) {
@@ -109,15 +151,13 @@ final class ProfileCellPartition {
     }
 
     static List<Double> uniqueSorted(List<Double> points) {
-        List<Double> sorted = points.stream().filter(Double::isFinite).sorted().toList();
-        List<Double> unique = new ArrayList<>();
-        for (double point : sorted) {
-            double canonical = Domain.canonicalTime(point);
-            if (unique.isEmpty() || !Domain.sameTime(unique.get(unique.size() - 1), canonical)) {
-                unique.add(canonical);
+        TreeSet<Long> ticks = new TreeSet<>();
+        for (double point : points) {
+            if (Double.isFinite(point)) {
+                ticks.add(Domain.canonicalTick(point));
             }
         }
-        return List.copyOf(unique);
+        return ticks.stream().map(Domain::timeFromTick).toList();
     }
 
     private static void requireExact(CandidateProfile candidate, Domain domain) {

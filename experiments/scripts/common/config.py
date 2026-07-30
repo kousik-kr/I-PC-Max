@@ -51,6 +51,13 @@ def _validate_final_q1(
     studies: list[dict[str, Any]],
 ) -> None:
     workload = design["workload"]
+    if workload.get("budget_definition") != (
+        "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME"
+    ):
+        raise ValueError(
+            "final Q1 requires the lower-bound witness-path grid "
+            "budget definition"
+        )
     if (
         workload.get("default_window_minutes") != 120
         or workload.get("default_budget_overhead") != 0.30
@@ -74,6 +81,7 @@ def _validate_final_q1(
         "connector_expansion_cap_mc",
         "breakpoint_cap_mb",
         "query_work_cap_mq",
+        "query_work_accounting_contract",
         "resolved_configuration",
     }
     missing = sorted(required_defaults - defaults.keys())
@@ -96,6 +104,12 @@ def _validate_final_q1(
     }:
         raise ValueError(
             "pilot may resolve only L, K_c, and K_f"
+        )
+    if defaults["query_work_accounting_contract"] != (
+        "PACE-MQ-TOTAL-WORK-v2"
+    ):
+        raise ValueError(
+            "final PACE-B requires PACE-MQ-TOTAL-WORK-v2"
         )
     for cap in (
         "connector_expansion_cap_mc",
@@ -132,6 +146,20 @@ def _validate_final_q1(
     }
     if seeds != {42, 43, 44}:
         raise ValueError("E12 must cover graph seeds 42, 43, and 44")
+    maximum_threads = int(
+        design["resources"].get("max_threads_per_query", 0)
+    )
+    parallel_threads = {
+        int(axis["threads"])
+        for axis in by_id["E11"].get("axes", [])
+    }
+    if maximum_threads != 24 or parallel_threads != {
+        1, 2, 4, 8, 16, 24
+    }:
+        raise ValueError(
+            "E11 must use fixed query-internal thread counts "
+            "1,2,4,8,16,24 with a 24-thread maximum"
+        )
 
 
 def load_design(path: Path) -> dict[str, Any]:

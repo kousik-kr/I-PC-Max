@@ -11,14 +11,16 @@ import java.util.Objects;
 import java.util.SplittableRandom;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.Callable;
 import java.util.function.Function;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.TDGraph;
-import edu.ipcmax.core.index.ExactDijkstraLowerBoundOracle;
+import edu.ipcmax.core.index.DenseDijkstraLowerBoundOracle;
 import edu.ipcmax.core.index.LowerBoundOracle;
 import edu.ipcmax.core.loader.GeneratedGraphDataset;
 import edu.ipcmax.core.loader.GeneratedGraphLoader;
+import edu.ipcmax.core.pcmax.IPCMaxParallelExecutor;
 
 /**
  * Deterministic lower-bound source/destination candidate sampling.
@@ -46,11 +48,11 @@ public final class QueryCandidateSampler {
 
     /** Uses the repository's generated-graph loader. */
     public QueryCandidateSampler() {
-        this(new GeneratedGraphLoader(), ExactDijkstraLowerBoundOracle::new);
+        this(new GeneratedGraphLoader(), DenseDijkstraLowerBoundOracle::new);
     }
 
     QueryCandidateSampler(GeneratedGraphLoader loader) {
-        this(loader, ExactDijkstraLowerBoundOracle::new);
+        this(loader, DenseDijkstraLowerBoundOracle::new);
     }
 
     QueryCandidateSampler(
@@ -113,17 +115,22 @@ public final class QueryCandidateSampler {
                 eligibleSources, configuration.sampledSources(), datasetSeed);
 
         LowerBoundOracle lowerBound = lowerBoundFactory.apply(graph);
+        List<LowerBoundOracle.Labels> labelsBySource =
+                lowerBoundLabels(
+                        lowerBound,
+                        sampledSources,
+                        graph.nodeCount());
         List<Integer> destinations = graph.nodeIds();
         List<QueryPairCandidate> accepted = new ArrayList<>(configuration.maximumPairs());
         TreeSet<OrderedPair> seen = new TreeSet<>();
         TreeMap<String, Long> eventCounts = emptyEventCounts();
         long pairsExamined = 0;
-        int shortestPathRuns = 0;
+        int shortestPathRuns = sampledSources.size();
 
         for (int sampledSourceIndex = 0; sampledSourceIndex < sampledSources.size(); sampledSourceIndex++) {
             int source = sampledSources.get(sampledSourceIndex);
-            LowerBoundOracle.Labels distances = lowerBound.distancesFrom(source);
-            shortestPathRuns++;
+            LowerBoundOracle.Labels distances =
+                    labelsBySource.get(sampledSourceIndex);
 
             int remainingSources = sampledSources.size() - sampledSourceIndex;
             int remainingCapacity = configuration.maximumPairs() - accepted.size();
@@ -159,6 +166,8 @@ public final class QueryCandidateSampler {
                     increment(eventCounts, BELOW_MINIMUM_DISTANCE);
                     continue;
                 }
+                edu.ipcmax.core.validate.Path witness =
+                        distances.witnessPath(destination);
                 accepted.add(new QueryPairCandidate(
                         normalizedDataset,
                         source,
@@ -167,7 +176,8 @@ public final class QueryCandidateSampler {
                         edgeCount,
                         UNEVALUATED_CORRIDOR_ANCHOR_COUNT,
                         sampledSourceIndex,
-                        temporalFunctionComplexity(graph, distances, destination)));
+                        temporalFunctionComplexity(graph, witness),
+                        witness.arcIds()));
                 increment(eventCounts, SELECTED);
                 sourceAccepted++;
             }
@@ -188,10 +198,73 @@ public final class QueryCandidateSampler {
                 eventCounts);
     }
 
+    private static List<LowerBoundOracle.Labels> lowerBoundLabels(
+            LowerBoundOracle oracle,
+            List<Integer> sources,
+            int graphNodeCount) {
+        List<Callable<LowerBoundOracle.Labels>> tasks =
+                sources.stream()
+                        .<Callable<LowerBoundOracle.Labels>>map(
+                                source ->
+                                        () -> oracle.distancesFrom(source))
+                        .toList();
+        int workers = lowerBoundWorkerCount(
+                tasks.size(),
+                graphNodeCount,
+                Runtime.getRuntime().availableProcessors());
+        try (IPCMaxParallelExecutor executor =
+                new IPCMaxParallelExecutor(workers)) {
+            return executor.invokeAllDeterministic(tasks);
+        } catch (IllegalStateException failure) {
+            Throwable cause = failure;
+            while (cause.getCause() != null
+                    && cause.getCause() != cause) {
+                cause = cause.getCause();
+            }
+            throw new IllegalStateException(
+                    "deterministic lower-bound candidate sampling failed: "
+                            + cause.getClass().getSimpleName()
+                            + (cause.getMessage() == null
+                                ? ""
+                                : ": " + cause.getMessage()),
+                    failure);
+        }
+    }
+
+    /**
+     * Bounds simultaneous dense Dijkstra priority queues on large graphs.
+     * Results are reduced in source order, so this affects resource use only,
+     * never sampled pairs, witnesses, IDs, or manifest bytes.
+     */
+    static int lowerBoundWorkerCount(
+            int taskCount,
+            int graphNodeCount,
+            int availableProcessors) {
+        if (taskCount < 0
+                || graphNodeCount < 0
+                || availableProcessors < 1) {
+            throw new IllegalArgumentException(
+                    "invalid lower-bound worker sizing input");
+        }
+        int memoryBound = graphNodeCount >= 10_000_000
+                ? 2
+                : graphNodeCount >= 1_000_000
+                    ? 4
+                    : 24;
+        return Math.max(
+                1,
+                Math.min(
+                        taskCount,
+                        Math.min(
+                                memoryBound,
+                                Math.min(24, availableProcessors))));
+    }
+
     private static long temporalFunctionComplexity(
-            TDGraph graph, LowerBoundOracle.Labels distances, int destination) {
+            TDGraph graph,
+            edu.ipcmax.core.validate.Path witness) {
         long complexity = 0;
-        for (int arcId : distances.witnessPath(destination).arcIds()) {
+        for (int arcId : witness.arcIds()) {
             complexity = Math.addExact(
                     complexity,
                     graph.edges().get(arcId).travelTimeFunction().breakpoints().size());

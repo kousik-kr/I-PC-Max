@@ -37,6 +37,7 @@ class PaceBenchFrameworkTest {
         assertEquals(6, lines.size());
         HashSet<String> runIds = new HashSet<>();
         HashSet<String> configHashes = new HashSet<>();
+        HashSet<String> scientificConfigHashes = new HashSet<>();
         boolean sawNoPath = false;
         for (String line : lines) {
             JsonNode record = QueryManifestIO.mapper().readTree(line);
@@ -47,11 +48,14 @@ class PaceBenchFrameworkTest {
             }
             assertTrue(runIds.add(record.path("run").path("run_id").asText()));
             configHashes.add(record.path("run").path("config_hash").asText());
+            scientificConfigHashes.add(record.path("run")
+                    .path("scientific_config_hash").asText());
             assertTrue(record.path("configuration").path("theta").isNull());
             assertTrue(record.path("configuration").path("baseline_k").isNull());
             assertTrue(record.path("status").path("execution_policy").isNull());
             assertEquals("NOT_CERTIFIED", record.path("status").path("exactness_scope").asText());
             assertTrue(record.path("timing_ns").path("query_total").isIntegralNumber());
+            assertTrue(record.path("error").path("failing_phase").isNull());
             assertFalse(record.toString().contains("NaN"));
             if (record.path("status").path("status_code").asText().equals("NO_FEASIBLE_PATH")) {
                 sawNoPath = true;
@@ -59,6 +63,7 @@ class PaceBenchFrameworkTest {
             }
         }
         assertEquals(1, configHashes.size());
+        assertEquals(1, scientificConfigHashes.size());
         assertTrue(sawNoPath);
 
         String[] resumed = java.util.Arrays.copyOf(arguments, arguments.length + 1);

@@ -19,7 +19,31 @@ public record CandidateProfile(
         PathPointer pathPointer,
         int recursionDepth,
         int pivotId,
-        boolean compressed) {
+        boolean compressed,
+        Set<Integer> usedPivotArcIds) {
+    /**
+     * Compatibility constructor for candidates that do not carry selected-pivot
+     * provenance (identity paths, connectors, and older fixture builders).
+     */
+    public CandidateProfile(
+            Domain domain,
+            TimeProfile arrivalProfile,
+            ScoreProfile scoreProfile,
+            PathPointer pathPointer,
+            int recursionDepth,
+            int pivotId,
+            boolean compressed) {
+        this(
+                domain,
+                arrivalProfile,
+                scoreProfile,
+                pathPointer,
+                recursionDepth,
+                pivotId,
+                compressed,
+                Set.of());
+    }
+
     /**
      * Creates a validated candidate profile.
      */
@@ -32,6 +56,15 @@ public record CandidateProfile(
         }
         if (recursionDepth < 0) {
             throw new IllegalArgumentException("explicit anchor count cannot be negative");
+        }
+        if (usedPivotArcIds == null) {
+            throw new IllegalArgumentException("used pivot arc ids are required");
+        }
+        usedPivotArcIds = Set.copyOf(usedPivotArcIds);
+        if (!usedPivotArcIds.isEmpty()
+                && usedPivotArcIds.size() != recursionDepth) {
+            throw new IllegalArgumentException(
+                    "explicit anchor count must equal the used-pivot set size");
         }
     }
 
@@ -50,7 +83,8 @@ public record CandidateProfile(
                 pathPointer,
                 recursionDepth,
                 pivotId,
-                compressed);
+                compressed,
+                usedPivotArcIds);
     }
 
     /**

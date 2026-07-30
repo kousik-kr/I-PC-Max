@@ -1,5 +1,10 @@
 # PACE Scalable Candidate Engine Implementation Report
 
+> **Historical implementation report, superseded in part.** The candidate
+> engine background remains useful, but the fixed-departure query-preparation
+> blocker and the earlier M_q/retention details do not describe the current
+> repository. See `docs/PACE_PAPER_READINESS_FINAL_REPORT.md`.
+
 Date: 2026-07-27
 
 ## Outcome

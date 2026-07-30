@@ -2,8 +2,8 @@ schema_version: 1
 seed: 20260711
 
 candidate_pool:
-  sampled_sources: 256
-  maximum_pairs: 20000
+  sampled_sources: 16
+  maximum_pairs: 2000
   minimum_lower_bound_edges: 5
   minimum_distance: 0
   require_reachable: true

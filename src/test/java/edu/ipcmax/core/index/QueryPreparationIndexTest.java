@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Random;
 
 import org.junit.jupiter.api.Test;
 
@@ -14,6 +15,7 @@ import edu.ipcmax.core.function.PiecewiseLinearFn;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.Node;
 import edu.ipcmax.core.graph.TDGraph;
+import edu.ipcmax.core.graph.TinyGraphBuilder;
 
 class QueryPreparationIndexTest {
     @Test
@@ -99,6 +101,96 @@ class QueryPreparationIndexTest {
         assertEquals(List.of(0, 1, 2),
                 labels.witnessPath(4).arcIds());
         assertEquals(2.0, oracle.edgeWeight(0));
+    }
+
+    @Test
+    void densePrimitiveHeapOracleMatchesExactFixtureFallback() {
+        TDGraph graph = graph(List.of(zero(), zero(), zero(), zero()));
+        LowerBoundOracle exact =
+                new ExactDijkstraLowerBoundOracle(graph);
+        LowerBoundOracle dense =
+                new DenseDijkstraLowerBoundOracle(graph);
+
+        for (int node : graph.nodeIds()) {
+            LowerBoundOracle.Labels exactFrom =
+                    exact.distancesFrom(node);
+            LowerBoundOracle.Labels denseFrom =
+                    dense.distancesFrom(node);
+            LowerBoundOracle.Labels exactTo =
+                    exact.distancesTo(node);
+            LowerBoundOracle.Labels denseTo =
+                    dense.distancesTo(node);
+            for (int other : graph.nodeIds()) {
+                assertEquals(
+                        exactFrom.distance(other),
+                        denseFrom.distance(other));
+                assertEquals(
+                        exactFrom.edgeCount(other),
+                        denseFrom.edgeCount(other));
+                assertEquals(
+                        exactFrom.witnessPath(other),
+                        denseFrom.witnessPath(other));
+                assertEquals(
+                        exactTo.distance(other),
+                        denseTo.distance(other));
+                assertEquals(
+                        exactTo.edgeCount(other),
+                        denseTo.edgeCount(other));
+                assertEquals(
+                        exactTo.witnessPath(other),
+                        denseTo.witnessPath(other));
+            }
+        }
+    }
+
+    @Test
+    void denseIndexedHeapMatchesExactOracleOnSeededParallelGraphs() {
+        Random random = new Random(20260729L);
+        for (int graphCase = 0; graphCase < 100; graphCase++) {
+            int nodes = 2 + random.nextInt(19);
+            TinyGraphBuilder builder = new TinyGraphBuilder();
+            for (int node = 1; node <= nodes; node++) {
+                builder.node(node);
+            }
+            for (int node = 1; node <= nodes; node++) {
+                builder.edge(
+                        node,
+                        node == nodes ? 1 : node + 1,
+                        1 + random.nextInt(7));
+            }
+            for (int edge = 0; edge < nodes * 4; edge++) {
+                int source = 1 + random.nextInt(nodes);
+                int target = 1 + random.nextInt(nodes);
+                if (source != target) {
+                    builder.edge(
+                            source,
+                            target,
+                            1 + random.nextInt(7));
+                }
+            }
+            TDGraph graph = builder.build();
+            LowerBoundOracle exact =
+                    new ExactDijkstraLowerBoundOracle(graph);
+            LowerBoundOracle dense =
+                    new DenseDijkstraLowerBoundOracle(graph);
+            for (int source : graph.nodeIds()) {
+                LowerBoundOracle.Labels exactLabels =
+                        exact.distancesFrom(source);
+                LowerBoundOracle.Labels denseLabels =
+                        dense.distancesFrom(source);
+                for (int target : graph.nodeIds()) {
+                    assertEquals(
+                            exactLabels.distance(target),
+                            denseLabels.distance(target));
+                    assertEquals(
+                            exactLabels.edgeCount(target),
+                            denseLabels.edgeCount(target));
+                    assertEquals(
+                            exactLabels.witnessPath(target),
+                            denseLabels.witnessPath(target));
+                }
+            }
+        }
     }
 
     @Test

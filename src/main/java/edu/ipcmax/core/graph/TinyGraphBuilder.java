@@ -21,6 +21,12 @@ public final class TinyGraphBuilder {
         return this;
     }
 
+    /** Adds a node with explicit deterministic coordinate metadata. */
+    public TinyGraphBuilder node(int id, long x, long y) {
+        nodes.add(new Node(id, x, y));
+        return this;
+    }
+
     /**
      * Adds an edge with constant travel time and full-day zero score.
      */

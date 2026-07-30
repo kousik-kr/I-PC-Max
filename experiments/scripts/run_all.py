@@ -125,6 +125,29 @@ def _parse_stages(value: str) -> list[str]:
     return [stage for stage in STAGES if stage in requested]
 
 
+def _load_reused_preflight(path: Path, design: dict[str, Any]) -> dict[str, Any]:
+    """Reuse a previously completed deep preflight for the same filtered design."""
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict) or not report.get("passed"):
+        raise ValueError(f"reused preflight is not passed: {path}")
+    if report.get("config_hash") != design["config_hash"]:
+        raise ValueError(
+            "reused preflight config hash does not match the filtered design"
+        )
+    expected = set(design["datasets"])
+    actual = {
+        item.get("dataset_id")
+        for item in report.get("datasets", [])
+        if isinstance(item, dict)
+    }
+    if actual != expected:
+        raise ValueError(
+            "reused preflight dataset set does not match the filtered design"
+        )
+    report["reused_from"] = path.as_posix()
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -136,6 +159,11 @@ def main() -> int:
     parser.add_argument("--max-concurrent", type=int)
     parser.add_argument("--study", action="append")
     parser.add_argument("--dataset", action="append")
+    parser.add_argument(
+        "--reuse-preflight",
+        type=Path,
+        help="reuse a previously passed deep-preflight report for this exact filtered design",
+    )
     args = parser.parse_args()
     try:
         base_design = load_design(args.config)
@@ -147,13 +175,19 @@ def main() -> int:
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be positive")
         root, identity = _prepare_run(design, args.run_id, args.backend, args.resume)
-        preflight = run_preflight(
-            args.config,
-            checksums=not args.plan_only,
-            allow_unresolved_resources=args.plan_only,
-            planning=args.plan_only,
-            datasets_filter=set(args.dataset or []) or None,
-        )
+        if args.reuse_preflight:
+            reused_path = args.reuse_preflight
+            if not reused_path.is_absolute():
+                reused_path = repo_path(reused_path)
+            preflight = _load_reused_preflight(reused_path, design)
+        else:
+            preflight = run_preflight(
+                args.config,
+                checksums=not args.plan_only,
+                allow_unresolved_resources=args.plan_only,
+                planning=args.plan_only,
+                datasets_filter=set(args.dataset or []) or None,
+            )
         atomic_write_json(root / "provenance" / "preflight.json", preflight)
         plan = build_all(design, root / "plan" / "matrices")
         planned_rows = []

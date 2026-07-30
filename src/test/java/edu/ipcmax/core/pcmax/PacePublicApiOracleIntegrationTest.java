@@ -123,22 +123,37 @@ class PacePublicApiOracleIntegrationTest {
     }
 
     @Test
-    void repeatedPublicOutputIsByteStableForOneAndFourThreadsInBothPolicies() {
+    void repeatedPublicOutputIsByteStableForAllDeclaredThreadCountsInBothPolicies() {
         TDGraph graph = switchingGraph();
         QuerySpec query = new QuerySpec(1, 4, 0, 10, 10, 1);
 
         for (PaceExecutionPolicy policy : PaceExecutionPolicy.values()) {
             PaceOptions oneThread = options(policy, 1);
-            PaceOptions fourThreads = options(policy, 4);
             PACE repeated = new PACE(graph, oneThread);
 
             byte[] first = serialize(repeated.run(query));
             byte[] second = serialize(repeated.run(query));
-            byte[] parallelConfiguration = serialize(new PACE(graph, fourThreads).run(query));
-
             assertArrayEquals(first, second, policy + " changed across repeated runs");
-            assertArrayEquals(first, parallelConfiguration,
-                    policy + " changed when threadCount changed from 1 to 4");
+            String expectedChecksum =
+                    repeated.lastGenerationResult()
+                            .outputChecksum();
+            for (int threads : List.of(1, 2, 4, 8, 24)) {
+                PACE configured = new PACE(
+                        graph, options(policy, threads));
+                byte[] configuredOutput =
+                        serialize(configured.run(query));
+                assertArrayEquals(
+                        first,
+                        configuredOutput,
+                        policy + " changed when threadCount changed to "
+                                + threads);
+                assertEquals(
+                        expectedChecksum,
+                        configured.lastGenerationResult()
+                                .outputChecksum(),
+                        policy + " checksum changed at "
+                                + threads + " threads");
+            }
         }
     }
 

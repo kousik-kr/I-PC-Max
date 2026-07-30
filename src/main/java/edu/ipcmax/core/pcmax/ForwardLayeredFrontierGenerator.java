@@ -40,6 +40,7 @@ public final class ForwardLayeredFrontierGenerator {
     private final EdgeTemporalSummaryStore summaries;
     private final GraphPartitionMetadata partition;
     private final ScoreSupportIndex scoreIndex;
+    private final PaceExecutionMetrics metrics;
     private volatile PaceGenerationResult lastResult;
 
     public ForwardLayeredFrontierGenerator(
@@ -48,15 +49,26 @@ public final class ForwardLayeredFrontierGenerator {
         this(
                 graph,
                 options,
-                QueryPreparationIndexes.buildAllowingZero(graph));
+                QueryPreparationIndexes.buildAllowingZero(graph),
+                PaceExecutionMetrics.none());
     }
 
     public ForwardLayeredFrontierGenerator(
             TDGraph graph,
             PaceOptions options,
             QueryPreparationIndexes indexes) {
+        this(graph, options, indexes, PaceExecutionMetrics.none());
+    }
+
+    public ForwardLayeredFrontierGenerator(
+            TDGraph graph,
+            PaceOptions options,
+            QueryPreparationIndexes indexes,
+            PaceExecutionMetrics metrics) {
         this.graph = graph;
         this.options = options;
+        this.metrics = java.util.Objects.requireNonNull(
+                metrics, "metrics");
         if (indexes == null) {
             throw new IllegalArgumentException(
                     "query preparation indexes are required");
@@ -75,26 +87,32 @@ public final class ForwardLayeredFrontierGenerator {
                 query.departureStart(), horizonEnd);
         QueryLowerBounds lowerBounds =
                 new QueryLowerBounds(graph, summaries);
-        QueryCorridor corridor =
-                options.features().safeCorridorEnabled()
-                        ? QueryCorridor.build(
-                                graph,
-                                lowerBounds,
-                                partition,
-                                query.source(),
-                                query.destination(),
-                                query.maxTravelTime())
-                        : QueryCorridor.unpruned(
-                                graph,
-                                partition,
-                                query.source(),
-                                query.destination(),
-                                query.maxTravelTime());
+        QueryCorridor corridor;
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.CORRIDOR_CONSTRUCTION)) {
+            corridor = options.features().safeCorridorEnabled()
+                    ? QueryCorridor.build(
+                            graph,
+                            lowerBounds,
+                            partition,
+                            query.source(),
+                            query.destination(),
+                            query.maxTravelTime())
+                    : QueryCorridor.unpruned(
+                            graph,
+                            partition,
+                            query.source(),
+                            query.destination(),
+                            query.maxTravelTime());
+        }
         QueryLowerBounds.Distances toDestination =
                 lowerBounds.truncatedDistancesTo(
                         query.destination(),
                         query.maxTravelTime());
-        requireCorridorCoverage(corridor, queryHorizon);
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.HORIZON_VALIDATION)) {
+            requireCorridorCoverage(corridor, queryHorizon);
+        }
         PivotIndex pivots = PivotSelector.select(
                 graph,
                 corridor,
@@ -105,7 +123,8 @@ public final class ForwardLayeredFrontierGenerator {
                 queryHorizon,
                 options.effectiveAnchorLimit(),
                 options.features()
-                        .pivotDiversificationEnabled());
+                        .pivotDiversificationEnabled(),
+                metrics);
         PaceWorkLedger ledger = new PaceWorkLedger(options);
         BoundedConnectorGenerator connectors =
                 new BoundedConnectorGenerator(
@@ -116,11 +135,15 @@ public final class ForwardLayeredFrontierGenerator {
                         summaries,
                         queryHorizon,
                         options,
-                        ledger);
+                        ledger,
+                        metrics);
         SafeScoreUpperBound scoreUpperBound =
                 new SafeScoreUpperBound(corridor, summaries);
         MutableStats stats = new MutableStats(
                 corridor, pivots, options.threadCount());
+        IPCMaxParallelExecutor executor =
+                new IPCMaxParallelExecutor(
+                        options.threadCount());
         IncrementalFrontier completed =
                 new IncrementalFrontier(
                         graph,
@@ -129,7 +152,9 @@ public final class ForwardLayeredFrontierGenerator {
                         query.source(),
                         query.destination(),
                         options,
-                        ledger);
+                        ledger,
+                        metrics,
+                        executor);
 
         Map<StateKey, IncrementalFrontier> current =
                 new TreeMap<>();
@@ -139,7 +164,8 @@ public final class ForwardLayeredFrontierGenerator {
                 stateFrontier(
                         query,
                         query.source(),
-                        ledger);
+                        ledger,
+                        executor);
         identityFrontier.insert(
                 PartialCandidate.identity(
                         query.source(), rootDomain).profile(),
@@ -147,10 +173,11 @@ public final class ForwardLayeredFrontierGenerator {
         current.put(identityKey, identityFrontier);
 
         boolean queryWorkStopped = false;
-        try (IPCMaxParallelExecutor executor =
-                     new IPCMaxParallelExecutor(options.threadCount())) {
+        try (executor) {
+            int maximumDepth = Math.min(
+                    options.theta(), pivots.selected().size());
             for (int depth = 0;
-                    depth <= options.theta() && !current.isEmpty();
+                    depth <= maximumDepth && !current.isEmpty();
                     depth++) {
                 Map<StateKey, IncrementalFrontier> next =
                         new TreeMap<>();
@@ -196,10 +223,15 @@ public final class ForwardLayeredFrontierGenerator {
                                     result,
                                     completed,
                                     stats);
+                            if (ledger.capStatus().reached(
+                                    PaceCapKind.QUERY_WORK_M_Q)) {
+                                queryWorkStopped = true;
+                                break outer;
+                            }
                         } else {
                             stats.residualBudgetRejections++;
                         }
-                        if (depth >= options.theta()) {
+                        if (depth >= maximumDepth) {
                             continue;
                         }
                         if (options.features()
@@ -276,7 +308,13 @@ public final class ForwardLayeredFrontierGenerator {
                                     partial,
                                     result,
                                     next,
-                                    stats);
+                                    stats,
+                                    executor);
+                            if (ledger.capStatus().reached(
+                                    PaceCapKind.QUERY_WORK_M_Q)) {
+                                queryWorkStopped = true;
+                                break outer;
+                            }
                         }
                     }
                 }
@@ -294,11 +332,22 @@ public final class ForwardLayeredFrontierGenerator {
         PaceExactnessScope exactness = exactness(
                 completion, caps, pivots);
         String outputChecksum = outputChecksum(rootFrontier);
-        PaceGenerationStats snapshot = stats.snapshot(
-                completed,
-                connectors,
-                ledger,
-                outputChecksum);
+        PaceGenerationStats snapshot;
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.STATISTICS)) {
+            for (PaceWorkKind kind :
+                    PaceWorkKind.values()) {
+                metrics.addCounter(
+                        "mq_" + kind.name().toLowerCase(
+                                java.util.Locale.ROOT),
+                        ledger.typedWork(kind));
+            }
+            snapshot = stats.snapshot(
+                    completed,
+                    connectors,
+                    ledger,
+                    outputChecksum);
+        }
         lastResult = new PaceGenerationResult(
                 rootFrontier,
                 completion,
@@ -455,10 +504,13 @@ public final class ForwardLayeredFrontierGenerator {
             PartialCandidate partial,
             PivotConnector connectorResult,
             Map<StateKey, IncrementalFrontier> next,
-            MutableStats stats) {
+            MutableStats stats,
+            IPCMaxParallelExecutor executor) {
         PivotExpansion expansion = connectorResult.expansion();
         Pivot pivot = expansion.pivot();
         Edge pivotEdge = graph.edges().get(pivot.arcId());
+        List<CandidateProfile> layerOffers =
+                new ArrayList<>();
         for (CandidateProfile connector :
                 connectorResult.result().connectors()) {
             PathPointer pointer = PathPointer.concat(
@@ -485,25 +537,29 @@ public final class ForwardLayeredFrontierGenerator {
                 stats.invalidConnectors++;
                 continue;
             }
-            BitSet used = partial.usedPivots();
-            used.set(pivot.canonicalRank());
-            StateKey key = StateKey.of(
-                    pivot.target(),
-                    partial.pivotDepth() + 1,
-                    used);
-            IncrementalFrontier frontier = next.computeIfAbsent(
-                    key,
-                    ignored -> stateFrontier(
-                            query, pivot.target(), ledger));
             stats.candidatesGenerated++;
-            if (frontier.insert(
-                    replayed.orElseThrow(),
-                    "layer=" + key.depth()
-                            + ":pivot=" + pivot.arcId()
-                            + ":path=" + pointer.stablePathId())) {
-                stats.candidatesRetained++;
-            }
+            layerOffers.add(replayed.orElseThrow());
         }
+        if (layerOffers.isEmpty()) {
+            return;
+        }
+        BitSet used = partial.usedPivots();
+        used.set(pivot.canonicalRank());
+        StateKey key = StateKey.of(
+                pivot.target(),
+                partial.pivotDepth() + 1,
+                used);
+        IncrementalFrontier frontier = next.computeIfAbsent(
+                key,
+                ignored -> stateFrontier(
+                        query,
+                        pivot.target(),
+                        ledger,
+                        executor));
+        stats.candidatesRetained += frontier.insertLayer(
+                layerOffers,
+                "layer=" + key.depth()
+                        + ":pivot=" + pivot.arcId());
     }
 
     private Optional<CandidateProfile> replay(
@@ -516,17 +572,13 @@ public final class ForwardLayeredFrontierGenerator {
             Domain domain,
             String context) {
         Optional<CandidateProfile> replayed =
-                CanonicalPathProfileBuilder.replay(
-                        graph,
+                replayPath(
+                        query,
                         queryHorizon,
-                        Set.copyOf(pivots.selectedArcIds()),
-                        pointer.stablePathId(),
-                        query.source(),
+                        pivots,
+                        pointer,
                         endpoint,
-                        domain,
-                        query.maxTravelTime(),
-                        -1,
-                        false);
+                        domain);
         if (replayed.isEmpty()) {
             return replayed;
         }
@@ -546,7 +598,31 @@ public final class ForwardLayeredFrontierGenerator {
                 pointer,
                 flat.explicitAnchorCount(),
                 flat.pivotId(),
-                flat.compressed()));
+                flat.compressed(),
+                flat.usedPivotArcIds()));
+    }
+
+    private Optional<CandidateProfile> replayPath(
+            QuerySpec query,
+            Domain queryHorizon,
+            PivotIndex pivots,
+            PathPointer pointer,
+            int endpoint,
+            Domain domain) {
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.PATH_REPLAY)) {
+            return CanonicalPathProfileBuilder.replay(
+                    graph,
+                    queryHorizon,
+                    Set.copyOf(pivots.selectedArcIds()),
+                    pointer.stablePathId(),
+                    query.source(),
+                    endpoint,
+                    domain,
+                    query.maxTravelTime(),
+                    -1,
+                    false);
+        }
     }
 
     private Domain residualDomain(
@@ -610,7 +686,8 @@ public final class ForwardLayeredFrontierGenerator {
     private IncrementalFrontier stateFrontier(
             QuerySpec query,
             int endpoint,
-            PaceWorkLedger ledger) {
+            PaceWorkLedger ledger,
+            IPCMaxParallelExecutor executor) {
         return new IncrementalFrontier(
                 graph,
                 query.departureDomain(),
@@ -618,7 +695,9 @@ public final class ForwardLayeredFrontierGenerator {
                 query.source(),
                 endpoint,
                 options,
-                ledger);
+                ledger,
+                metrics,
+                executor);
     }
 
     private void requireCorridorCoverage(

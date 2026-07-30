@@ -44,10 +44,18 @@ public final class CandidateSet {
         if (comparison != 0) {
             return comparison;
         }
+        comparison = left.usedPivotArcIds().stream()
+                .sorted().toList().toString().compareTo(
+                        right.usedPivotArcIds().stream()
+                                .sorted().toList().toString());
+        if (comparison != 0) {
+            return comparison;
+        }
         return Integer.compare(left.pivotId(), right.pivotId());
     };
 
     private final List<CandidateProfile> candidates = new ArrayList<>();
+    private List<Domain.Interval> temporalCells = List.of();
 
     /**
      * Adds a non-empty candidate.
@@ -58,15 +66,30 @@ public final class CandidateSet {
         }
         candidates.add(candidate);
         candidates.sort(STABLE_ORDER);
+        temporalCells = List.of();
     }
 
     /**
      * Adds all candidates.
      */
     public void addAll(CandidateSet other) {
-        for (CandidateProfile candidate : other.candidates()) {
-            add(candidate);
+        addAllCandidates(other.candidates());
+    }
+
+    /**
+     * Adds a materialized batch and establishes canonical order once.
+     */
+    public void addAllCandidates(
+            List<CandidateProfile> values) {
+        if (values == null
+                || values.stream().anyMatch(
+                        java.util.Objects::isNull)) {
+            throw new IllegalArgumentException(
+                    "candidate batch cannot contain null");
         }
+        candidates.addAll(values);
+        candidates.sort(STABLE_ORDER);
+        temporalCells = List.of();
     }
 
     /**
@@ -88,6 +111,19 @@ public final class CandidateSet {
      */
     public boolean isEmpty() {
         return candidates.isEmpty();
+    }
+
+    /**
+     * Associates the exact reusable temporal partition for this immutable
+     * candidate state. Adding another candidate invalidates the metadata.
+     */
+    public void setTemporalCells(List<Domain.Interval> cells) {
+        temporalCells = List.copyOf(cells);
+    }
+
+    /** Exact reusable temporal partition, or an empty list when unavailable. */
+    public List<Domain.Interval> temporalCells() {
+        return temporalCells;
     }
 
     /**

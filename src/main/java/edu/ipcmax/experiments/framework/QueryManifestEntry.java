@@ -2,11 +2,13 @@ package edu.ipcmax.experiments.framework;
 
 import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
+import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.experiments.querygen.DistanceBin;
 import edu.ipcmax.experiments.querygen.TemporalRegime;
@@ -50,6 +52,45 @@ public record QueryManifestEntry(
         @JsonInclude(JsonInclude.Include.NON_NULL) String generatorVersion,
         @JsonInclude(JsonInclude.Include.NON_NULL) String generatorConfigHash,
         Map<String, Object> metadata) {
+    private static final Set<String> VERSION_3_METADATA = Set.of(
+            "budget_definition",
+            "budget_derivation_rule",
+            "budget_evidence",
+            "checksum_scope_version",
+            "conversion_contract_version",
+            "dataset_checksum",
+            "dataset_path",
+            "delta_minutes",
+            "distance_band",
+            "final_generated_budget",
+            "function_support_end",
+            "generation_contract",
+            "generator_config_hash",
+            "generator_version",
+            "dataset_payload_checksum",
+            "graph_seed",
+            "grid_departure_count",
+            "interval_center",
+            "lower_bound_routing_contract",
+            "pair_id",
+            "pair_index",
+            "rho",
+            "selection_seed",
+            "split",
+            "split_seed",
+            "t_hat_min_delta",
+            "temporal_attribute_checksum",
+            "witness_evaluated_departure_end",
+            "witness_evaluated_departure_start",
+            "witness_evidence_contract",
+            "witness_identity_contract",
+            "witness_path_checksum_sha256",
+            "witness_path_edge_count",
+            "witness_path_lower_bound_distance",
+            "witness_travel_time_evidence_sha256",
+            "witness_travel_time_max",
+            "witness_travel_time_min");
+
     public QueryManifestEntry {
         if (schemaVersion == 2 && distanceBin instanceof String text) {
             distanceBin = DistanceBin.parse(text);
@@ -129,6 +170,7 @@ public record QueryManifestEntry(
         switch (schemaVersion) {
             case 1 -> validateVersion1();
             case 2 -> validateVersion2();
+            case 3 -> validateVersion3();
             default -> throw new IllegalArgumentException(
                     "unsupported query schema_version: " + schemaVersion);
         }
@@ -201,6 +243,92 @@ public record QueryManifestEntry(
         if (expectedFullIntervalFeasible == null || expectedMixedFeasibility == null) {
             throw new IllegalArgumentException("expected feasibility flags are required for query " + queryId);
         }
+    }
+
+    private void validateVersion3() {
+        validateVersion1();
+        Set<String> missing = new java.util.TreeSet<>(VERSION_3_METADATA);
+        missing.removeAll(metadata.keySet());
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "paper query metadata is missing " + missing
+                            + " for query " + queryId);
+        }
+        requireMetadataText(
+                "budget_definition",
+                "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME");
+        requireMetadataText(
+                "budget_evidence",
+                "lower_bound_witness_path_grid_replay-v2");
+        requireSha256("witness_path_checksum_sha256");
+        requireSha256("witness_travel_time_evidence_sha256");
+        if (metadataInteger("witness_evaluated_departure_start")
+                != intervalStart
+                || metadataInteger("witness_evaluated_departure_end")
+                != intervalEnd) {
+            throw new IllegalArgumentException(
+                    "witness departure interval mismatch for query "
+                            + queryId);
+        }
+        if (metadataInteger("delta_minutes") != 1
+                || metadataInteger("grid_departure_count")
+                        != intervalEnd - intervalStart + 1) {
+            throw new IllegalArgumentException(
+                    "witness grid mismatch for query " + queryId);
+        }
+        if (metadataInteger("witness_path_edge_count") <= 0
+                || metadataNumber("witness_path_lower_bound_distance") <= 0
+                || metadataNumber("witness_travel_time_min") <= 0
+                || metadataNumber("witness_travel_time_max")
+                        < metadataNumber("witness_travel_time_min")
+                || !Domain.sameTime(
+                        metadataNumber("witness_travel_time_max"),
+                        metadataNumber("t_hat_min_delta"))
+                || !Domain.sameTime(
+                        metadataNumber("final_generated_budget"),
+                        budget)) {
+            throw new IllegalArgumentException(
+                    "invalid witness evidence for query " + queryId);
+        }
+    }
+
+    private void requireMetadataText(String field, String expected) {
+        Object value = metadata.get(field);
+        if (!(value instanceof String text) || !expected.equals(text)) {
+            throw new IllegalArgumentException(
+                    field + " must equal " + expected
+                            + " for query " + queryId);
+        }
+    }
+
+    private void requireSha256(String field) {
+        Object value = metadata.get(field);
+        if (!(value instanceof String text)
+                || !text.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException(
+                    field + " must be a lowercase SHA-256 for query "
+                            + queryId);
+        }
+    }
+
+    private int metadataInteger(String field) {
+        Object value = metadata.get(field);
+        if (!(value instanceof Number number)
+                || number.doubleValue() != Math.rint(number.doubleValue())) {
+            throw new IllegalArgumentException(
+                    field + " must be an integer for query " + queryId);
+        }
+        return number.intValue();
+    }
+
+    private double metadataNumber(String field) {
+        Object value = metadata.get(field);
+        if (!(value instanceof Number number)
+                || !Double.isFinite(number.doubleValue())) {
+            throw new IllegalArgumentException(
+                    field + " must be finite for query " + queryId);
+        }
+        return number.doubleValue();
     }
 
     private static Map<String, Object> immutableMetadata(Map<String, Object> values) {

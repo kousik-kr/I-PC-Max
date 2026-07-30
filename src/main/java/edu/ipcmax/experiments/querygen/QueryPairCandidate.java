@@ -3,6 +3,7 @@ package edu.ipcmax.experiments.querygen;
 import edu.ipcmax.core.function.Domain;
 
 import java.util.Comparator;
+import java.util.List;
 
 /**
  * Deterministically measured source/destination candidate before query expansion.
@@ -16,7 +17,8 @@ public record QueryPairCandidate(
         int lowerBoundEdgeCount,
         int corridorAnchorCount,
         int sampledSourceIndex,
-        long temporalFunctionComplexity) {
+        long temporalFunctionComplexity,
+        List<Integer> lowerBoundWitnessArcIds) {
     /** Stable ordering used for candidate-pool truncation, binning, and reporting. */
     public static final Comparator<QueryPairCandidate> CANONICAL_ORDER = Comparator
             .comparingDouble(QueryPairCandidate::lowerBoundDistance)
@@ -43,6 +45,31 @@ public record QueryPairCandidate(
         if (sampledSourceIndex < 0) {
             throw new IllegalArgumentException("sampled-source index cannot be negative");
         }
+        lowerBoundWitnessArcIds = List.copyOf(lowerBoundWitnessArcIds);
+        if (!lowerBoundWitnessArcIds.isEmpty()
+                && lowerBoundWitnessArcIds.size() != lowerBoundEdgeCount) {
+            throw new IllegalArgumentException(
+                    "lower-bound witness size must equal edge count");
+        }
+        if (lowerBoundWitnessArcIds.stream().anyMatch(arcId -> arcId < 0)) {
+            throw new IllegalArgumentException(
+                    "lower-bound witness arc IDs cannot be negative");
+        }
+    }
+
+    /** Source-compatible constructor without a retained witness. */
+    public QueryPairCandidate(
+            String datasetId,
+            int source,
+            int destination,
+            double lowerBoundDistance,
+            int lowerBoundEdgeCount,
+            int corridorAnchorCount,
+            int sampledSourceIndex,
+            long temporalFunctionComplexity) {
+        this(datasetId, source, destination, lowerBoundDistance,
+                lowerBoundEdgeCount, corridorAnchorCount,
+                sampledSourceIndex, temporalFunctionComplexity, List.of());
     }
 
     /**
@@ -58,7 +85,7 @@ public record QueryPairCandidate(
             int corridorAnchorCount,
             int sampledSourceIndex) {
         this(datasetId, source, destination, lowerBoundDistance, lowerBoundEdgeCount,
-                corridorAnchorCount, sampledSourceIndex, 0);
+                corridorAnchorCount, sampledSourceIndex, 0, List.of());
     }
 
     /** Phase-2-compatible constructor for callers that do not yet track source sampling. */
@@ -70,7 +97,7 @@ public record QueryPairCandidate(
             int lowerBoundEdgeCount,
             int corridorAnchorCount) {
         this(datasetId, source, destination, lowerBoundDistance, lowerBoundEdgeCount,
-                corridorAnchorCount, 0, 0);
+                corridorAnchorCount, 0, 0, List.of());
     }
 
     /** Stable ID shared by every query derived from this pair. */

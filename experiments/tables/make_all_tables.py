@@ -116,7 +116,18 @@ def main() -> int:
         {"item": "memory_limit_mb", "value": design["resources"].get("memory_limit_mb")},
         {"item": "measured_trials", "value": design["protocol"]["measured_trials"]},
     ]
-    t2 = [{key: row.get(key) for key in ("dataset_id", "nodes", "edges", "support_end", "disk_bytes", "graph_checksum")} for row in preflight["datasets"]]
+    t2 = [{
+        key: row.get(key)
+        for key in (
+            "dataset_id",
+            "nodes",
+            "edges",
+            "support_end",
+            "disk_bytes",
+            "dataset_payload_checksum",
+            "checksum_scope_version",
+        )
+    } for row in preflight["datasets"]]
     query_groups: dict[tuple[str, str, str], dict[str, set[Any]]] = {}
     for row in planned:
         key = (row["study_id"], row["dataset_id"], row["split"])

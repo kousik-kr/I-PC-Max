@@ -176,6 +176,8 @@ def _worker(args: argparse.Namespace) -> int:
         command.append("--plan-only")
     if args.max_concurrent is not None:
         command.extend(["--max-concurrent", str(args.max_concurrent)])
+    if args.reuse_preflight:
+        command.extend(["--reuse-preflight", str(args.reuse_preflight)])
     for study in args.study or []:
         command.extend(["--study", study])
     for dataset in args.dataset or []:
@@ -190,6 +192,7 @@ def _worker(args: argparse.Namespace) -> int:
         "resume": args.resume,
         "plan_only": args.plan_only,
         "max_concurrent": args.max_concurrent,
+        "reuse_preflight": str(args.reuse_preflight) if args.reuse_preflight else None,
         "study": args.study or [],
         "dataset": args.dataset or [],
         "worker_pid": os.getpid(),
@@ -244,6 +247,8 @@ def _launch(args: argparse.Namespace) -> int:
         command.append("--plan-only")
     if args.max_concurrent is not None:
         command.extend(["--max-concurrent", str(args.max_concurrent)])
+    if args.reuse_preflight:
+        command.extend(["--reuse-preflight", str(args.reuse_preflight)])
     for study in args.study or []:
         command.extend(["--study", study])
     for dataset in args.dataset or []:
@@ -262,6 +267,7 @@ def _launch(args: argparse.Namespace) -> int:
         "resume": args.resume,
         "plan_only": args.plan_only,
         "max_concurrent": args.max_concurrent,
+        "reuse_preflight": str(args.reuse_preflight) if args.reuse_preflight else None,
         "study": args.study or [],
         "dataset": args.dataset or [],
         "worker_pid": process.pid,
@@ -333,6 +339,7 @@ def main() -> int:
     launch.add_argument("--resume", action="store_true")
     launch.add_argument("--plan-only", action="store_true")
     launch.add_argument("--max-concurrent", type=int)
+    launch.add_argument("--reuse-preflight", type=Path)
     launch.add_argument("--study", action="append")
     launch.add_argument("--dataset", action="append")
     launch.add_argument("--allow-existing", action="store_true")
@@ -346,6 +353,7 @@ def main() -> int:
     worker.add_argument("--resume", action="store_true")
     worker.add_argument("--plan-only", action="store_true")
     worker.add_argument("--max-concurrent", type=int)
+    worker.add_argument("--reuse-preflight", type=Path)
     worker.add_argument("--study", action="append")
     worker.add_argument("--dataset", action="append")
     worker.set_defaults(func=_worker)

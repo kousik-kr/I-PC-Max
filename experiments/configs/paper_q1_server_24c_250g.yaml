@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment_id": "pace_q1_server_24c_250g",
-  "description": "PACE Q1 paper design for the resolved 32-physical-core, 250-GiB execution server",
+  "description": "PACE Q1 paper design for one 24-thread query process with a 250-GiB heap",
   "datasets": ["NY", "FLA", "CAL", "USA"],
   "dataset_configs": {
     "NY": "experiments/configs/datasets/ny.yaml",
@@ -44,7 +44,7 @@
     "budget_overheads": [0.10, 0.20, 0.30, 0.40, 0.50],
     "default_budget_overhead": 0.30,
     "evaluation_grid_minutes": 1,
-    "budget_definition": "GRID_FIXED_DEPARTURE_FASTEST_TRAVEL_TIME",
+    "budget_definition": "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME",
     "require_horizon_fit": true,
     "allow_time_wrapping": false
   },
@@ -64,25 +64,29 @@
     "pilot_resolved_fields": ["pivot_limit_l", "connector_limit_kc", "frontier_limit_kf"],
     "connector_expansion_cap_mc": 5000000,
     "breakpoint_cap_mb": 1000000,
-    "query_work_cap_mq": 5000000,
+    "query_work_cap_mq": 250000000,
+    "query_work_accounting_contract": "PACE-MQ-TOTAL-WORK-v2",
     "resolved_configuration": "resolved_pace_b.yaml"
   },
   "resources": {
     "timeout_seconds": 1800,
     "memory_limit_mb": 256000,
-    "max_concurrent": 24,
-    "parallel_thread_candidates": [1, 2, 4, 8, 16, 32],
+    "max_concurrent": 1,
+    "max_threads_per_query": 24,
+    "parallel_thread_candidates": [1, 2, 4, 8, 16, 24],
     "require_server_profile_for_full_run": true
   },
   "planning": {
     "estimated_raw_bytes_per_job": 131072,
     "estimated_fixed_release_bytes": 104857600,
-    "runtime_upper_bound_definition": "planned_jobs * timeout_seconds; parallel bound uses configured max_concurrent"
+    "runtime_upper_bound_definition": "sum of stratum-specific projected runtimes at measured safe process concurrency"
   },
   "implementation_gates": {
     "exactness_corpus_has_1000_seeded_graphs": true,
     "pace_x_uncompressed_variant_available": true,
     "pace_parallelism_observed_and_checksum_stable": true,
+    "incremental_frontier_differential_zero_mismatches": true,
+    "mq_total_work_v2_accounting": true,
     "relative_score_gap_metric_available_for_pilot": true,
     "safe_corridor_property_verified": true,
     "score_upper_bound_admissible": true

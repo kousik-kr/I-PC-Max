@@ -29,6 +29,7 @@ public final class QueryManifestIO {
             "budget_policy", "distance_bin", "lower_bound_distance", "query_seed", "metadata");
     private static final Set<String> VERSION_1_NULLABLE = Set.of(
             "budget_slack", "distance_bin", "lower_bound_distance");
+    private static final Set<String> VERSION_3_FIELDS = VERSION_1_FIELDS;
     private static final Set<String> VERSION_2_FIELDS = Set.of(
             "schema_version", "query_id", "query_family_id", "pair_family_id", "dataset_id",
             "dataset_path", "graph_checksum", "source", "destination", "distance_bin",
@@ -145,6 +146,7 @@ public final class QueryManifestIO {
         Set<String> required = switch (version) {
             case 1 -> VERSION_1_FIELDS;
             case 2 -> VERSION_2_FIELDS;
+            case 3 -> VERSION_3_FIELDS;
             default -> throw new IllegalArgumentException("unsupported query schema_version: " + version);
         };
         Set<String> actual = new HashSet<>();
@@ -159,7 +161,9 @@ public final class QueryManifestIO {
         if (!unexpected.isEmpty()) {
             throw new IllegalArgumentException("query manifest row has unexpected fields: " + unexpected);
         }
-        Set<String> nullable = version == 1 ? VERSION_1_NULLABLE : Set.of();
+        Set<String> nullable =
+                version == 1 || version == 3
+                        ? VERSION_1_NULLABLE : Set.of();
         for (String field : required) {
             if (node.get(field).isNull() && !nullable.contains(field)) {
                 throw new IllegalArgumentException(field + " cannot be null in schema version " + version);

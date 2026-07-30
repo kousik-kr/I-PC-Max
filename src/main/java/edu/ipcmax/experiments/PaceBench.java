@@ -39,6 +39,7 @@ import edu.ipcmax.core.loader.GeneratedGraphLoader;
 import edu.ipcmax.core.labeling.PointForwardLabeling;
 import edu.ipcmax.core.pcmax.EnvelopeProfile;
 import edu.ipcmax.core.pcmax.PaceException;
+import edu.ipcmax.core.pcmax.PaceWorkLedger;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
 import edu.ipcmax.experiments.framework.ExperimentAlgorithm;
@@ -49,6 +50,7 @@ import edu.ipcmax.experiments.framework.LimitExceededException;
 import edu.ipcmax.experiments.framework.ProfileSupport;
 import edu.ipcmax.experiments.framework.QueryManifestEntry;
 import edu.ipcmax.experiments.framework.QueryManifestIO;
+import edu.ipcmax.experiments.querygen.ManifestChecksum;
 
 /** Unified reproducible command-line experiment driver. */
 public final class PaceBench {
@@ -59,7 +61,12 @@ public final class PaceBench {
             "connector_generation", "recursive_generation", "memo_lookup", "memo_compute",
             "temporal_stitching", "breakpoint_construction", "duplicate_removal", "safe_dominance",
             "bounded_retention", "fragment_merging", "feasibility_validation",
-            "envelope_extraction", "profile_serialization", "reference_comparison");
+            "envelope_extraction", "profile_serialization", "reference_comparison",
+            "corridor_construction", "feasible_entry_band_computation",
+            "score_support_lookup", "pivot_ranking_diversification",
+            "canonical_path_replay_stitching", "breakpoint_processing",
+            "equality_root_computation", "fragment_restriction_merge",
+            "statistics");
     private static final List<String> COUNTERS = List.of(
             "anchors_total", "anchors_examined", "anchors_rejected_valid_domain",
             "anchors_rejected_lower_bound", "anchors_retained", "connector_paths_enumerated",
@@ -80,7 +87,26 @@ public final class PaceBench {
             "breakpoint_cap_hits", "total_candidate_work",
             "query_work_cap_hits", "frontier_cells", "peak_frontier_size",
             "memo_lookups", "memo_waits", "requested_workers",
-            "observed_workers");
+            "observed_workers", "candidate_offers", "connector_requests",
+            "breakpoints_processed", "candidate_pair_root_checks",
+            "equality_roots_created", "affected_cell_evaluations",
+            "frontier_retention_evaluations", "temporal_cells_split",
+            "temporal_cells_merged", "dominance_comparisons",
+            "dominance_structural_rejections",
+            "dominance_arrival_signature_rejections",
+            "retained_fragments", "dropped_fragments", "fragments_merged",
+            "fragment_restrictions", "fragment_materializations",
+            "fragment_materialization_cache_hits",
+            "frontier_layer_batches", "frontier_layer_batch_offers",
+            "parallel_affected_cell_tasks",
+            "feasible_entry_bands", "empty_feasible_entry_bands",
+            "score_support_edges_examined", "mq_connector_request",
+            "mq_candidate_offer", "mq_affected_cell_evaluation",
+            "mq_retention_evaluation", "mq_fragment_restriction",
+            "mq_fragment_materialization",
+            "mq_dominance_check", "mq_equality_root_check",
+            "cache_hits", "cache_misses", "cache_lookups",
+            "cache_waits");
 
     private PaceBench() {
     }
@@ -218,9 +244,11 @@ public final class PaceBench {
         Path manifest = temporary.resolve("query.jsonl");
         Path output = temporary.resolve("result.jsonl");
         Path workerLog = temporary.resolve("worker.log");
+        Path progress = temporary.resolve("progress.json");
         Files.writeString(manifest, JSON.writeValueAsString(query) + System.lineSeparator(),
                 StandardCharsets.UTF_8);
-        List<String> command = isolatedCommand(options, manifest, output, warmup, repetition, null);
+        List<String> command = isolatedCommand(
+                options, manifest, output, progress, warmup, repetition, null);
         Process process = new ProcessBuilder(command).redirectErrorStream(true)
                 .redirectOutput(workerLog.toFile()).start();
         boolean exited;
@@ -242,7 +270,8 @@ public final class PaceBench {
         if (forcedStatus != null) {
             Files.deleteIfExists(output);
             List<String> fallback = isolatedCommand(
-                    options, manifest, output, warmup, repetition, forcedStatus);
+                    options, manifest, output, progress,
+                    warmup, repetition, forcedStatus);
             Process fallbackProcess = new ProcessBuilder(fallback)
                     .redirectErrorStream(true)
                     .redirectOutput(ProcessBuilder.Redirect.appendTo(workerLog.toFile())).start();
@@ -277,6 +306,7 @@ public final class PaceBench {
             BenchOptions options,
             Path manifest,
             Path output,
+            Path progress,
             boolean warmup,
             int repetition,
             String forcedStatus) {
@@ -296,6 +326,7 @@ public final class PaceBench {
         arguments.addAll(List.of(
                 "--query-file", manifest.toString(),
                 "--output-jsonl", output.toString(),
+                "--internal-progress-file", progress.toString(),
                 "--repetitions", "1", "--warmup-runs", "0",
                 "--internal-worker", "--internal-repetition", Integer.toString(repetition),
                 "--internal-original-command-line", Base64.getEncoder().encodeToString(
@@ -351,8 +382,11 @@ public final class PaceBench {
         }
         Execution outcome = options.internalForcedStatus == null
                 ? executeWithLimits(algorithm, graph, entry, options.algorithmConfig(),
-                        options.timeoutSeconds, options.memoryLimitMb)
-                : forcedExecution(options.internalForcedStatus);
+                        options.timeoutSeconds, options.memoryLimitMb,
+                        options.internalProgressFile)
+                : forcedExecution(
+                        options.internalForcedStatus,
+                        options.internalProgressFile);
         EnvelopeProfile referenceProfile = null;
         long referenceNanos = 0;
         if (options.internalForcedStatus == null
@@ -360,7 +394,7 @@ public final class PaceBench {
             long started = System.nanoTime();
             Execution referenceOutcome = executeWithLimits(
                     reference, graph, entry, referenceConfig(options, reference.id()),
-                    options.timeoutSeconds, options.memoryLimitMb);
+                    options.timeoutSeconds, options.memoryLimitMb, null);
             referenceNanos = System.nanoTime() - started;
             if (referenceOutcome.result.status() == ExperimentStatus.COMPLETED
                     || referenceOutcome.result.status() == ExperimentStatus.NO_FEASIBLE_PATH) {
@@ -418,14 +452,25 @@ public final class PaceBench {
         return isFailure(result.status()) ? 1 : 0;
     }
 
-    private static Execution forcedExecution(String status) {
+    private static Execution forcedExecution(
+            String status,
+            Path progressPath) {
         ExperimentStatus code = ExperimentStatus.valueOf(status);
-        AlgorithmResult result = new AlgorithmResult(code, null, ExactnessScope.NOT_CERTIFIED, Map.of(),
+        ExperimentInstrumentation instrumentation =
+                new ExperimentInstrumentation();
+        boolean recovered = instrumentation.recover(progressPath);
+        Map<String, Object> scalars = new LinkedHashMap<>();
+        scalars.put("progress_snapshot_recovered", recovered);
+        scalars.put("last_progress_phase",
+                instrumentation.currentPhase());
+        AlgorithmResult result = new AlgorithmResult(code, null, ExactnessScope.NOT_CERTIFIED, scalars,
                 code == ExperimentStatus.OUT_OF_MEMORY ? "MemoryLimitExceeded" : code.name(),
                 "isolated query worker terminated before returning an algorithm result");
-        ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
-        instrumentation.setTiming("query_total", 0);
-        return new Execution(result, instrumentation, 0, 0, 0, 0, -1, -1, -1);
+        long elapsed = instrumentation.elapsedNanos();
+        instrumentation.setTiming("query_total", elapsed);
+        return new Execution(
+                result, instrumentation, elapsed,
+                0, 0, 0, -1, -1, -1);
     }
 
     private static AlgorithmConfig referenceConfig(BenchOptions options, String id) {
@@ -454,8 +499,10 @@ public final class PaceBench {
             QueryManifestEntry entry,
             AlgorithmConfig config,
             int timeoutSeconds,
-            int memoryLimitMb) {
-        ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
+            int memoryLimitMb,
+            Path progressPath) {
+        ExperimentInstrumentation instrumentation =
+                new ExperimentInstrumentation(progressPath);
         long startMemory = usedMemory();
         long peakMemory = startMemory;
         long startRss = processRssBytes();
@@ -571,7 +618,7 @@ public final class PaceBench {
             Map<String, Object> quality,
             boolean referenceAvailable,
             boolean verified,
-            long referenceNanos) {
+            long referenceNanos) throws IOException {
         Map<String, Object> top = new LinkedHashMap<>();
         top.put("schema_version", 3);
         Map<String, Object> run = new LinkedHashMap<>();
@@ -586,6 +633,14 @@ public final class PaceBench {
         run.put("build_type", System.getProperty("pace.build.type", "release"));
         run.put("command_line", List.of(options.commandLine));
         run.put("config_hash", configHash);
+        run.put("config_hash_scope",
+                "complete_effective_execution_configuration-v1");
+        run.put(
+                "scientific_config_hash",
+                ProfileSupport.sha256(JSON.writeValueAsString(
+                        scientificConfigurationRecord(options))));
+        run.put("scientific_config_hash_scope",
+                "algorithm_and_determinism_parameters-v1");
         top.put("run", run);
         top.put("system", systemRecord);
         top.put("dataset", datasetRecord);
@@ -656,7 +711,11 @@ public final class PaceBench {
         error.put("type", result.errorType());
         error.put("message", result.errorMessage());
         error.put("stack_trace_or_context", null);
-        error.put("failing_phase", null);
+        error.put("failing_phase",
+                !isFailure(result.status())
+                        || outcome.instrumentation.currentPhase().isBlank()
+                        ? null
+                        : outcome.instrumentation.currentPhase());
         top.put("error", error);
         return top;
     }
@@ -700,6 +759,10 @@ public final class PaceBench {
         result.put("query_work_cap_mq", pace == null ? null
                 : (pace.queryWorkCapMq() == Long.MAX_VALUE
                         ? "unbounded" : pace.queryWorkCapMq()));
+        result.put(
+                "query_work_accounting_contract",
+                pace == null ? null
+                        : PaceWorkLedger.ACCOUNTING_CONTRACT);
         result.put("rpq_step_minutes", options.algorithm.equals("rpq") ? options.rpqStepMinutes : null);
         result.put("baseline_k", options.algorithm.equals("ksp-profile") ? options.baselineK : null);
         result.put("threads", pace == null ? options.threads : pace.threadCount());
@@ -742,6 +805,50 @@ public final class PaceBench {
         // Anchor retention is not a certificate that theta covers every feasible anchor sequence.
         result.put("exhaustive_anchors", null);
         result.put("exhaustive_frontier", options.algorithm.equals("pace-x"));
+        return result;
+    }
+
+    private static Map<String, Object> scientificConfigurationRecord(
+            BenchOptions options) {
+        Map<String, Object> full = configurationRecord(options);
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (String field : List.of(
+                "algorithm",
+                "ablation",
+                "execution_mode",
+                "theta",
+                "pivot_limit_l",
+                "connector_limit_kc",
+                "frontier_limit_kf",
+                "connector_expansion_cap_mc",
+                "breakpoint_cap_mb",
+                "query_work_cap_mq",
+                "query_work_accounting_contract",
+                "rpq_step_minutes",
+                "baseline_k",
+                "threads",
+                "deterministic",
+                "max_enumerated_paths",
+                "max_labels",
+                "max_expansions",
+                "max_frontier_fragments",
+                "anchor_decomposition_enabled",
+                "safe_dominance_enabled",
+                "memoization_enabled",
+                "per_cell_retention_enabled",
+                "representative_retention_enabled",
+                "anchor_lower_bound_filter_enabled",
+                "compression_enabled",
+                "adjacent_merge_enabled",
+                "safe_corridor_enabled",
+                "pivot_diversification_enabled",
+                "connector_portfolio_enabled",
+                "connector_cache_enabled",
+                "profile_cache_enabled",
+                "score_upper_bound_enabled")) {
+            result.put(field, full.get(field));
+        }
+        result.put("seed", Long.toUnsignedString(options.seed));
         return result;
     }
 
@@ -790,7 +897,16 @@ public final class PaceBench {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("dataset_id", dataset.id);
         result.put("dataset_path", dataset.path);
-        result.put("graph_checksum", graphChecksum(graph));
+        result.put("runtime_graph_semantic_checksum",
+                graphSemanticChecksum(graph));
+        result.put("dataset_payload_checksum",
+                dataset.datasetPayloadChecksum);
+        result.put("dataset_structure_checksum",
+                dataset.datasetStructureChecksum);
+        result.put("temporal_attribute_checksum",
+                dataset.temporalAttributeChecksum);
+        result.put("checksum_scope_version",
+                "pace-explicit-dataset-checksum-scopes-v1");
         result.put("vertices", graph.nodeCount());
         result.put("edges", graph.edgeCount());
         result.put("parallel_edges", parallel);
@@ -834,10 +950,14 @@ public final class PaceBench {
 
     private static LoadedDataset loadDataset(String value) throws IOException {
         if (value.equals("demo") || value.equals("tiny")) {
-            return new LoadedDataset(ExperimentDatasets.demo(), "demo", "demo", 42L);
+            return new LoadedDataset(
+                    ExperimentDatasets.demo(), "demo", "demo", 42L,
+                    null, null, null);
         }
         if (value.equals("timeout-test")) {
-            return new LoadedDataset(ExperimentDatasets.timeoutStress(), "demo", "timeout-test", 42L);
+            return new LoadedDataset(
+                    ExperimentDatasets.timeoutStress(), "demo",
+                    "timeout-test", 42L, null, null, null);
         }
         GeneratedGraphDataset loaded = new GeneratedGraphLoader().load(Path.of(value));
         Path directory = loaded.directory().toAbsolutePath().normalize();
@@ -847,8 +967,14 @@ public final class PaceBench {
                 && parent.getParent() != null) {
             datasetId = parent.getParent().getFileName().toString();
         }
-        return new LoadedDataset(loaded.graph(), datasetId,
-                loaded.directory().toAbsolutePath().normalize().toString(), loaded.manifest().seed());
+        return new LoadedDataset(
+                loaded.graph(),
+                datasetId,
+                directory.toString(),
+                loaded.manifest().seed(),
+                ManifestChecksum.graphChecksum(directory),
+                ManifestChecksum.datasetChecksum(directory),
+                ManifestChecksum.temporalAttributeChecksum(directory));
     }
 
     private static List<QueryManifestEntry> generateQueries(LoadedDataset dataset, BenchOptions options)
@@ -949,7 +1075,7 @@ public final class PaceBench {
         return nodes;
     }
 
-    private static String graphChecksum(TDGraph graph) {
+    private static String graphSemanticChecksum(TDGraph graph) {
         StringBuilder canonical = new StringBuilder();
         for (Edge edge : graph.edges()) {
             canonical.append(edge.arcId()).append(':').append(edge.source()).append(':')
@@ -1089,7 +1215,14 @@ public final class PaceBench {
         }
     }
 
-    private record LoadedDataset(TDGraph graph, String id, String path, long seed) {
+    private record LoadedDataset(
+            TDGraph graph,
+            String id,
+            String path,
+            long seed,
+            String datasetPayloadChecksum,
+            String datasetStructureChecksum,
+            String temporalAttributeChecksum) {
     }
 
     private record Execution(

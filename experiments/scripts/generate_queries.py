@@ -17,6 +17,33 @@ from experiments.scripts.common.config import load_design, load_document, repo_p
 from experiments.scripts.common.hashing import sha256_file
 from experiments.scripts.common.toolchain import environment, executable
 
+WITNESS_BUDGET_DEFINITION = (
+    "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME"
+)
+REQUIRED_WITNESS_METADATA = {
+    "budget_derivation_rule",
+    "budget_evidence",
+    "checksum_scope_version",
+    "dataset_checksum",
+    "dataset_payload_checksum",
+    "delta_minutes",
+    "final_generated_budget",
+    "grid_departure_count",
+    "lower_bound_routing_contract",
+    "t_hat_min_delta",
+    "temporal_attribute_checksum",
+    "witness_evaluated_departure_end",
+    "witness_evaluated_departure_start",
+    "witness_evidence_contract",
+    "witness_identity_contract",
+    "witness_path_checksum_sha256",
+    "witness_path_edge_count",
+    "witness_path_lower_bound_distance",
+    "witness_travel_time_evidence_sha256",
+    "witness_travel_time_max",
+    "witness_travel_time_min",
+}
+
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows = []
@@ -113,15 +140,54 @@ def validate_manifest(path: Path, dataset: str, design: dict[str, Any]) -> dict[
             errors.append(f"query {query_id} exceeds function support")
         if metadata.get("budget_definition") != design["workload"]["budget_definition"]:
             budget_definition_mismatches += 1
+        if design["workload"]["budget_definition"] == WITNESS_BUDGET_DEFINITION:
+            missing_witness = sorted(
+                REQUIRED_WITNESS_METADATA - metadata.keys()
+            )
+            if missing_witness:
+                errors.append(
+                    f"query {query_id} lacks witness metadata "
+                    f"{missing_witness}"
+                )
+            else:
+                for field in (
+                    "witness_path_checksum_sha256",
+                    "witness_travel_time_evidence_sha256",
+                ):
+                    value = metadata.get(field)
+                    if (
+                        not isinstance(value, str)
+                        or len(value) != 64
+                        or any(character not in "0123456789abcdef"
+                               for character in value)
+                    ):
+                        errors.append(
+                            f"query {query_id} has invalid {field}"
+                        )
+                if (
+                    metadata.get("witness_evaluated_departure_start")
+                    != interval_start
+                    or metadata.get("witness_evaluated_departure_end")
+                    != interval_end
+                ):
+                    errors.append(
+                        f"query {query_id} has mismatched witness interval"
+                    )
+                if metadata.get("final_generated_budget") != budget:
+                    errors.append(
+                        f"query {query_id} has mismatched final budget"
+                    )
         if metadata.get("evaluation_grid_minutes") != design["workload"]["evaluation_grid_minutes"]:
             grid_mismatches += 1
         if metadata.get("validation_source_destination_present") is not True:
             errors.append(f"query {query_id} lacks graph node validation provenance")
         if metadata.get("validation_path_expected") is not True:
             errors.append(f"query {query_id} lacks path validation provenance")
-        graph_checksum = metadata.get("graph_checksum")
-        if not isinstance(graph_checksum, str) or not graph_checksum:
-            errors.append(f"query {query_id} lacks a graph checksum")
+        payload_checksum = metadata.get("dataset_payload_checksum")
+        if not isinstance(payload_checksum, str) or not payload_checksum:
+            errors.append(
+                f"query {query_id} lacks a dataset payload checksum"
+            )
         band = metadata.get("distance_band")
         if split == "evaluation":
             if band not in {"B1", "B2", "B3", "B4", "B5"}:

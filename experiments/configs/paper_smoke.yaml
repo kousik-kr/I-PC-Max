@@ -7,7 +7,7 @@
   "seeds": {"schedule": 20260725},
   "workload": {"evaluation_grid_minutes": 1, "require_horizon_fit": true},
   "protocol": {"warmup_passes": 0, "measured_trials": 1, "process_isolation": true, "metric_definition_version": "pace-q1-metrics-v2"},
-  "resources": {"timeout_seconds": 30, "memory_limit_mb": 1024, "max_concurrent": 1, "require_server_profile_for_full_run": false},
+  "resources": {"timeout_seconds": 30, "memory_limit_mb": 1024, "max_concurrent": 1, "max_threads_per_query": 24, "require_server_profile_for_full_run": false},
   "paths": {"data_root": "data/input", "results_root": "experiments/results", "matrix_root": "experiments/manifests/matrices", "query_root": "experiments/manifests/queries", "jar": "target/pace-bench.jar"},
   "smoke": true
 }

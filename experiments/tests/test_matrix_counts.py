@@ -5,7 +5,6 @@ import unittest
 
 from experiments.scripts.build_matrices import build_all
 from experiments.scripts.common.config import load_design
-from experiments.scripts.common.provenance import physical_core_count
 from experiments.scripts.validate_results import validate_planned_cells
 
 
@@ -22,7 +21,7 @@ class MatrixCountTest(unittest.TestCase):
                 if line
             ]
             independent = validate_planned_cells(planned, design)
-        threads = sum(value <= physical_core_count() for value in (1, 2, 4, 8, 16, 32))
+        threads = 6
         expected = {
             "E00": 0, "E01": 6, "E02": 1440, "E03": 7440, "E04": 0,
             "E05": 6000, "E06": 6000, "E07": 4800, "E08": 2400,
@@ -31,6 +30,13 @@ class MatrixCountTest(unittest.TestCase):
         }
         self.assertEqual(expected, report["study_counts"])
         self.assertEqual(sum(expected.values()), report["total_jobs"])
+        self.assertEqual(
+            report["total_jobs"],
+            report["canonical_job_ledger_rows"],
+        )
+        self.assertEqual(
+            64, len(report["canonical_job_ledger_sha256"])
+        )
         self.assertTrue(independent["passed"])
         self.assertEqual(sum(expected.values()), independent["expected_formula_cells"])
         self.assertEqual(0, independent["duplicate_planned_cells"])

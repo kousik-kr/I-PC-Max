@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.TreeSet;
 import java.util.function.DoubleToIntFunction;
 import java.util.function.DoubleUnaryOperator;
 
@@ -18,6 +19,7 @@ import java.util.function.DoubleUnaryOperator;
 public final class PiecewiseConstFn {
     private final List<Interval> intervals;
     private final Domain domain;
+    private final List<Double> breakpoints;
 
     /**
      * A half-open score interval {@code [startMinute,endMinute)}.
@@ -63,6 +65,7 @@ public final class PiecewiseConstFn {
         if (this.domain.isEmpty()) {
             throw new IllegalArgumentException("score function domain cannot be empty");
         }
+        this.breakpoints = breakpointValues(this.intervals);
     }
 
     /**
@@ -246,13 +249,7 @@ public final class PiecewiseConstFn {
      * Breakpoint times.
      */
     public List<Double> breakpoints() {
-        List<Double> points = new ArrayList<>();
-        for (Interval interval : intervals) {
-            addDistinct(points, interval.startMinute());
-            addDistinct(points, interval.endMinute());
-        }
-        points.sort(Double::compare);
-        return List.copyOf(points);
+        return breakpoints;
     }
 
     private boolean hasPieceStartingAt(int fromIndex, double time) {
@@ -299,16 +296,15 @@ public final class PiecewiseConstFn {
     }
 
     private static List<Double> cutsInside(Domain.Interval component, List<Double> requestedCuts) {
-        List<Double> cuts = new ArrayList<>();
-        cuts.add(component.start());
+        TreeSet<Long> ticks = new TreeSet<>();
+        ticks.add(Domain.canonicalTick(component.start()));
         for (double cut : requestedCuts) {
             if (cut > component.start() && cut < component.end()) {
-                addDistinct(cuts, cut);
+                ticks.add(Domain.canonicalTick(cut));
             }
         }
-        cuts.add(component.end());
-        cuts.sort(Double::compare);
-        return cuts;
+        ticks.add(Domain.canonicalTick(component.end()));
+        return ticks.stream().map(Domain::timeFromTick).toList();
     }
 
     private static Domain affinePreimage(
@@ -435,14 +431,16 @@ public final class PiecewiseConstFn {
         return start + (end - start) / 2.0;
     }
 
-    private static void addDistinct(List<Double> points, double point) {
-        point = Domain.canonicalTime(point);
-        for (double existing : points) {
-            if (approximatelyEqual(existing, point)) {
-                return;
-            }
+    private static List<Double> breakpointValues(
+            List<Interval> source) {
+        TreeSet<Long> ticks = new TreeSet<>();
+        for (Interval interval : source) {
+            ticks.add(Domain.canonicalTick(
+                    interval.startMinute()));
+            ticks.add(Domain.canonicalTick(
+                    interval.endMinute()));
         }
-        points.add(point);
+        return ticks.stream().map(Domain::timeFromTick).toList();
     }
 
     private static boolean approximatelyEqual(double left, double right) {

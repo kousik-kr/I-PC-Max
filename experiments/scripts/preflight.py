@@ -47,6 +47,29 @@ def _support_end(manifest: dict[str, Any]) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _name_payload_checksum_scopes(value: Any) -> Any:
+    """Replace legacy ambiguous asset-validator checksum keys recursively."""
+    if isinstance(value, list):
+        return [_name_payload_checksum_scopes(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {
+        key: _name_payload_checksum_scopes(item)
+        for key, item in value.items()
+        if key != "graph_checksum"
+    }
+    if "graph_checksum" in value:
+        result.setdefault(
+            "dataset_payload_checksum",
+            value["graph_checksum"],
+        )
+        result.setdefault(
+            "checksum_scope_version",
+            "pace-explicit-dataset-checksum-scopes-v1",
+        )
+    return result
+
+
 def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict[str, Any]:
     config = load_document(config_path)
     directory = repo_path(config["path"])
@@ -57,7 +80,9 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
         "path": directory.relative_to(repo_path(".")).as_posix(),
         "required_files_present": not missing,
         "missing_files": missing,
-        "graph_checksum": None,
+        "dataset_payload_checksum": None,
+        "checksum_scope_version":
+            "pace-explicit-dataset-checksum-scopes-v1",
     }
     if missing:
         record["errors"] = [f"missing required graph file: {name}" for name in missing]
@@ -92,7 +117,9 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
             f"conversion contract {declared_contract!r} != expected {required_contract!r}"
         )
     if checksums:
-        record["graph_checksum"] = graph_checksum(directory, REQUIRED_GRAPH_FILES)
+        record["dataset_payload_checksum"] = graph_checksum(
+            directory, REQUIRED_GRAPH_FILES
+        )
     variants: list[dict[str, Any]] = []
     for percent in config.get("required_score_density_percent", []):
         variant = directory / "variants" / f"score-density-{int(percent):03d}"
@@ -145,7 +172,12 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
                 f"{variant_record['conversion_contract']!r} != expected {required_contract!r}"
             )
         if checksums:
-            variant_record["graph_checksum"] = graph_checksum(variant, REQUIRED_GRAPH_FILES)
+            variant_record["dataset_payload_checksum"] = graph_checksum(
+                variant, REQUIRED_GRAPH_FILES
+            )
+            variant_record["checksum_scope_version"] = (
+                "pace-explicit-dataset-checksum-scopes-v1"
+            )
     for seed in config.get("required_graph_seeds", []):
         if seed == manifest.get("seed"):
             variants.append({
@@ -156,7 +188,10 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
                 "nodes": record["nodes"],
                 "edges": record["edges"],
                 "support_end": support_end,
-                "graph_checksum": record["graph_checksum"],
+                "dataset_payload_checksum":
+                    record["dataset_payload_checksum"],
+                "checksum_scope_version":
+                    "pace-explicit-dataset-checksum-scopes-v1",
             })
             continue
         variant = directory / "variants" / f"seed-{int(seed)}"
@@ -208,7 +243,12 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
                 f"{variant_record['conversion_contract']!r} != expected {required_contract!r}"
             )
         if checksums:
-            variant_record["graph_checksum"] = graph_checksum(variant, REQUIRED_GRAPH_FILES)
+            variant_record["dataset_payload_checksum"] = graph_checksum(
+                variant, REQUIRED_GRAPH_FILES
+            )
+            variant_record["checksum_scope_version"] = (
+                "pace-explicit-dataset-checksum-scopes-v1"
+            )
     record["variants"] = variants
     record["errors"] = errors
     return record
@@ -268,6 +308,38 @@ def inspect_implementation_gates(design: dict[str, Any]) -> dict[str, Any]:
             lambda: _surefire_case_passed(
                 "edu.ipcmax.core.pcmax.PacePublicApiOracleIntegrationTest",
                 "parallelConfigurationStartsParallelTasksAndKeepsOutputChecksumStable",
+            ),
+        ],
+        "incremental_frontier_differential_zero_mismatches": [
+            lambda: _source_contains(
+                "src/test/java/edu/ipcmax/core/pcmax/"
+                "IncrementalFrontierDifferentialTest.java",
+                r"comparisons\s*>=\s*2_000",
+                "incremental differential corpus requires at least "
+                "2,000 insertion-prefix comparisons",
+            ),
+            lambda: _surefire_case_passed(
+                "edu.ipcmax.core.pcmax."
+                "IncrementalFrontierDifferentialTest",
+                "deterministicRandomizedCorpusMatchesAfterEveryInsertion",
+            ),
+        ],
+        "mq_total_work_v2_accounting": [
+            lambda: _source_contains(
+                "src/main/java/edu/ipcmax/core/pcmax/"
+                "PaceWorkLedger.java",
+                r'ACCOUNTING_CONTRACT\s*=\s*'
+                r'"PACE-MQ-TOTAL-WORK-v2"',
+                "M_q uses PACE-MQ-TOTAL-WORK-v2",
+            ),
+            lambda: _source_contains(
+                "src/main/java/edu/ipcmax/core/pcmax/"
+                "PaceWorkKind.java",
+                r"RETENTION_EVALUATION[\s\S]*"
+                r"FRAGMENT_RESTRICTION[\s\S]*"
+                r"FRAGMENT_MATERIALIZATION",
+                "M_q has typed retention/restriction/"
+                "materialization units",
             ),
         ],
         "relative_score_gap_metric_available_for_pilot": [
@@ -354,11 +426,13 @@ def run_preflight(
         {"datasets": [], "variants": [], "errors": [], "passed": True,
          "skipped": "smoke design"}
         if not design["datasets"]
-        else validate_assets(
-            design,
-            load_document(repo_path(
-                design["dataset_generation"]["configuration"]
-            )),
+        else _name_payload_checksum_scopes(
+            validate_assets(
+                design,
+                load_document(repo_path(
+                    design["dataset_generation"]["configuration"]
+                )),
+            )
         )
     )
     blockers.extend(

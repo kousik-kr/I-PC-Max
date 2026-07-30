@@ -39,7 +39,7 @@ final class BenchOptions {
     int frontierLimitKf = 16;
     long connectorExpansionCapMc = 5_000_000;
     int breakpointCapMb = 1_000_000;
-    long queryWorkCapMq = 5_000_000;
+    long queryWorkCapMq = 250_000_000;
     PaceEngineMode paceEngineMode = PaceEngineMode.SCALABLE;
     int rpqStepMinutes;
     int baselineK;
@@ -68,6 +68,7 @@ final class BenchOptions {
     Path internalConfigQueryFile;
     boolean internalGeneratedQueries;
     String internalForcedStatus;
+    Path internalProgressFile;
 
     static BenchOptions parse(String[] args) {
         BenchOptions options = new BenchOptions();
@@ -148,6 +149,8 @@ final class BenchOptions {
                         Path.of(value(tokens, ++index, option));
                 case "--internal-generated-queries" -> options.internalGeneratedQueries = true;
                 case "--internal-forced-status" -> options.internalForcedStatus = value(tokens, ++index, option);
+                case "--internal-progress-file" -> options.internalProgressFile =
+                        Path.of(value(tokens, ++index, option));
                 case "--internal-original-command-line" -> options.commandLine = new String(
                         Base64.getDecoder().decode(value(tokens, ++index, option)), StandardCharsets.UTF_8)
                         .split("\\u0000", -1);

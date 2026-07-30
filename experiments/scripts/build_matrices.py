@@ -14,7 +14,11 @@ if __package__ in {None, ""}:
 
 from experiments.scripts.common.atomic_io import atomic_write_json, write_jsonl
 from experiments.scripts.common.config import filtered_design, load_design, repo_path
-from experiments.scripts.common.hashing import sha256_json
+from experiments.scripts.common.hashing import (
+    canonical_json,
+    sha256_file,
+    sha256_json,
+)
 from experiments.scripts.common.provenance import (
     available_logical_cores,
     physical_core_count,
@@ -114,12 +118,43 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
     pace_b_jobs = 0
     all_job_ids: set[str] = set()
     duplicate_job_ids: list[str] = []
+    ledger: list[dict[str, Any]] = []
+    required_query_ids: dict[str, set[str]] = {
+        dataset: set() for dataset in design["datasets"]
+    }
     for study in design["study_definitions"]:
         jobs = expand_study(study, design)
         for job in jobs:
             if job["job_id"] in all_job_ids:
                 duplicate_job_ids.append(job["job_id"])
             all_job_ids.add(job["job_id"])
+            if job["dataset_id"] in required_query_ids:
+                required_query_ids[job["dataset_id"]].add(
+                    job["query_id"]
+                )
+            semantic_key = {
+                field: job[field]
+                for field in (
+                    "study_id",
+                    "dataset_id",
+                    "split",
+                    "pair_index",
+                    "time_center",
+                    "query_id",
+                    "algorithm_id",
+                    "variant_id",
+                    "algorithm_parameters",
+                    "axis",
+                    "trial_id",
+                )
+            }
+            ledger.append({
+                "schema_version": 1,
+                "job_key": canonical_json(semantic_key),
+                "job_id": job["job_id"],
+                "input_hash": job["input_hash"],
+                **semantic_key,
+            })
         path = output_directory / f"{study['study_id'].lower()}.jsonl"
         write_jsonl(path, jobs)
         counts[study["study_id"]] = len(jobs)
@@ -131,6 +166,9 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
             "duplicate planned job IDs: "
             + ", ".join(sorted(set(duplicate_job_ids))[:10])
         )
+    ledger.sort(key=lambda row: row["job_key"])
+    ledger_path = output_directory / "canonical_job_ledger.jsonl"
+    write_jsonl(ledger_path, ledger)
     resources = design["resources"]
     timeout_seconds = int(resources["timeout_seconds"])
     max_concurrent = int(resources["max_concurrent"])
@@ -157,6 +195,14 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
         "study_counts": counts,
         "study_hashes": hashes,
         "total_jobs": total,
+        "canonical_job_ledger":
+            ledger_path.name,
+        "canonical_job_ledger_rows": len(ledger),
+        "canonical_job_ledger_sha256": sha256_file(ledger_path),
+        "required_matrix_query_ids_by_dataset": {
+            dataset: len(values)
+            for dataset, values in required_query_ids.items()
+        },
         "datasets": design["datasets"],
         "matrix_validation": {
             "duplicate_job_ids": 0,

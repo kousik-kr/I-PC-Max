@@ -11,10 +11,12 @@ import edu.ipcmax.core.profile.TimeProfile;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Finalized PACE frontier compression: exact duplicate removal, cell-local
@@ -42,6 +44,163 @@ public final class FrontierCompressor {
                 subproblemSource, subproblemDestination, PaceFeatures.defaults());
     }
 
+    /**
+     * Normalizes and deduplicates the current retained fragments plus one offer.
+     * This is shared by the incremental implementation and the batch oracle.
+     */
+    static List<CandidateProfile> normalizeCandidates(
+            CandidateSet frontier,
+            Domain subproblemDomain) {
+        return normalizeAndDeduplicate(
+                frontier, subproblemDomain);
+    }
+
+    /**
+     * Re-evaluates one already-partitioned temporal cell without rebuilding the
+     * complete frontier partition.
+     */
+    static CandidateSet retainPartitionCell(
+            TDGraph graph,
+            List<CandidateProfile> normalized,
+            Domain.Interval cell,
+            Domain subproblemDomain,
+            double budget,
+            int k,
+            PaceExecutionPolicy policy,
+            int source,
+            int destination,
+            PaceFeatures features,
+            DominanceMemo dominanceMemo,
+            PaceExecutionMetrics metrics,
+            PaceWorkLedger ledger,
+            String workItem) {
+        List<RetainedCellReference> fragments =
+                retainPartitionCellReferences(
+                        graph,
+                        normalized,
+                        cell,
+                        subproblemDomain,
+                        budget,
+                        k,
+                        policy,
+                        source,
+                        destination,
+                        features,
+                        dominanceMemo,
+                        metrics,
+                        ledger,
+                        workItem);
+        CandidateSet unmerged = fragmentsWithoutMerge(fragments);
+        return features.adjacentMergeEnabled()
+                ? mergeCandidateFragments(
+                        unmerged.candidates(), metrics)
+                : unmerged;
+    }
+
+    /**
+     * Returns cell-local retention references without materializing restricted
+     * profile fragments. The reference interval preserves exact endpoint
+     * ownership; callers may carry it through unchanged cell splits and defer
+     * restriction until a stitched or serialized frontier is requested.
+     */
+    static List<RetainedCellReference> retainPartitionCellReferences(
+            TDGraph graph,
+            List<CandidateProfile> normalized,
+            Domain.Interval cell,
+            Domain subproblemDomain,
+            double budget,
+            int k,
+            PaceExecutionPolicy policy,
+            int source,
+            int destination,
+            PaceFeatures features,
+            DominanceMemo dominanceMemo,
+            PaceExecutionMetrics metrics,
+            PaceWorkLedger ledger,
+            String workItem) {
+        double activeSample = cell.start() == cell.end()
+                ? cell.start()
+                : ProfileCellPartition.midpoint(cell);
+        List<CandidateProfile> active = normalized.stream()
+                .filter(candidate ->
+                        candidate.domain().contains(activeSample))
+                .sorted(CandidateSet.STABLE_ORDER)
+                .toList();
+        List<RetainedCellReference> references =
+                new ArrayList<>();
+        retainCellExactly(
+                graph,
+                normalized,
+                active,
+                cell,
+                subproblemDomain,
+                budget,
+                k,
+                policy,
+                source,
+                destination,
+                features,
+                dominanceMemo,
+                metrics,
+                ledger,
+                workItem,
+                references);
+        return List.copyOf(references);
+    }
+
+    /** Merges adjacent compatible fragments without recomputing retention. */
+    static CandidateSet mergeCandidateFragments(
+            List<CandidateProfile> source,
+            PaceExecutionMetrics metrics) {
+        return mergeCandidateFragments(
+                source, metrics, null, "");
+    }
+
+    /** Merges adjacent fragments and charges each created merged profile. */
+    static CandidateSet mergeCandidateFragments(
+            List<CandidateProfile> source,
+            PaceExecutionMetrics metrics,
+            PaceWorkLedger ledger,
+            String workItem) {
+        List<CandidateProfile> pieces =
+                new ArrayList<>(source);
+        pieces.sort(Comparator
+                .comparing(
+                        CandidateProfile::stablePathId,
+                        PathPointer.STABLE_PATH_ORDER)
+                .thenComparingDouble(candidate ->
+                        candidate.domain().intervals().get(0).start())
+                .thenComparing(candidate ->
+                        candidate.domain().toString()));
+        List<CandidateProfile> merged = new ArrayList<>();
+        for (CandidateProfile piece : pieces) {
+            if (!merged.isEmpty()) {
+                int lastIndex = merged.size() - 1;
+                CandidateProfile joined = mergeAdjacentCompatible(
+                        merged.get(lastIndex),
+                        piece,
+                        ledger,
+                        workItem + ":merge:"
+                                + lastIndex);
+                if (joined != null) {
+                    merged.set(lastIndex, joined);
+                    metrics.increment("fragments_merged");
+                    if (ledger != null) {
+                        metrics.increment(
+                                "fragment_materializations");
+                    }
+                    continue;
+                }
+            }
+            merged.add(piece);
+        }
+        CandidateSet result = new CandidateSet();
+        merged.stream()
+                .sorted(CandidateSet.STABLE_ORDER)
+                .forEach(result::add);
+        return removeExactDuplicates(result);
+    }
+
     /** Compresses with explicit experiment feature switches. */
     public static CandidateSet compress(
             TDGraph graph,
@@ -53,6 +212,31 @@ public final class FrontierCompressor {
             int subproblemSource,
             int subproblemDestination,
             PaceFeatures features) {
+        return compress(
+                graph,
+                candidateFrontier,
+                subproblemDomain,
+                budget,
+                k,
+                policy,
+                subproblemSource,
+                subproblemDestination,
+                features,
+                PaceExecutionMetrics.none());
+    }
+
+    /** Batch compression oracle with explicit work instrumentation. */
+    public static CandidateSet compress(
+            TDGraph graph,
+            CandidateSet candidateFrontier,
+            Domain subproblemDomain,
+            double budget,
+            int k,
+            PaceExecutionPolicy policy,
+            int subproblemSource,
+            int subproblemDestination,
+            PaceFeatures features,
+            PaceExecutionMetrics metrics) {
         if (graph == null || candidateFrontier == null || subproblemDomain == null || policy == null
                 || features == null) {
             throw new IllegalArgumentException("graph, frontier, domain, and policy are required");
@@ -79,22 +263,33 @@ public final class FrontierCompressor {
         }
 
         if (policy == PaceExecutionPolicy.PACE_B && !features.perCellRetentionEnabled()) {
+            DominanceMemo dominanceMemo =
+                    new DominanceMemo();
             Domain.Interval whole = new Domain.Interval(
                     subproblemDomain.intervals().get(0).start(),
                     subproblemDomain.intervals().get(subproblemDomain.intervals().size() - 1).end());
             List<CandidateProfile> safe = features.safeDominanceEnabled()
-                    ? safePrune(graph, normalized, whole, subproblemSource, subproblemDestination)
+                    ? safePrune(
+                            graph, normalized, whole,
+                            subproblemSource, subproblemDestination,
+                            dominanceMemo, metrics, null, "")
                     : normalized;
-            List<CandidateProfile> selected = boundedRetain(graph, safe, whole, subproblemDomain,
+            List<CandidateProfile> selected = boundedRetainMeasured(
+                    graph, safe, whole, subproblemDomain,
                     budget, k, subproblemSource, subproblemDestination,
-                    features.representativeRetentionEnabled());
+                    features.representativeRetentionEnabled(), metrics,
+                    null, "");
             CandidateSet global = new CandidateSet();
             selected.forEach(global::add);
             return global;
         }
 
-        List<Domain.Interval> cells = ProfileCellPartition.cells(subproblemDomain, normalized, true);
-        List<Fragment> retained = new ArrayList<>();
+        List<Domain.Interval> cells = ProfileCellPartition.cells(
+                subproblemDomain, normalized, true, metrics);
+        DominanceMemo dominanceMemo =
+                new DominanceMemo();
+        List<RetainedCellReference> retained =
+                new ArrayList<>();
         for (Domain.Interval cell : cells) {
             double activeSample = cell.start() == cell.end()
                     ? cell.start()
@@ -115,11 +310,25 @@ public final class FrontierCompressor {
                     subproblemSource,
                     subproblemDestination,
                     features,
+                    dominanceMemo,
+                    metrics,
+                    null,
+                    "",
                     retained);
         }
-        return features.adjacentMergeEnabled()
-                ? mergeAdjacentFragments(retained)
-                : fragmentsWithoutMerge(retained);
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.FRAGMENT_MERGE)) {
+            CandidateSet result = features.adjacentMergeEnabled()
+                    ? mergeAdjacentFragments(retained)
+                    : fragmentsWithoutMerge(retained);
+            result.setTemporalCells(cells);
+            metrics.addCounter(
+                    "retained_fragments", result.size());
+            metrics.addCounter(
+                    "dropped_fragments",
+                    Math.max(0, normalized.size() - result.size()));
+            return result;
+        }
     }
 
     private static void retainCellExactly(
@@ -134,12 +343,17 @@ public final class FrontierCompressor {
             int source,
             int destination,
             PaceFeatures features,
-            List<Fragment> output) {
+            DominanceMemo dominanceMemo,
+            PaceExecutionMetrics metrics,
+            PaceWorkLedger ledger,
+            String workItem,
+            List<RetainedCellReference> output) {
         if (cell.start() == cell.end()) {
             for (CandidateProfile candidate : retainAtPoint(
                     graph, active, cell.start(), subproblemDomain, budget, k, policy, source, destination,
-                    features)) {
-                output.add(new Fragment(candidate, cell));
+                    features, dominanceMemo, metrics, ledger, workItem)) {
+                output.add(new RetainedCellReference(
+                        candidate, cell));
             }
             return;
         }
@@ -147,12 +361,16 @@ public final class FrontierCompressor {
         Domain.Interval interiorCell = new Domain.Interval(
                 cell.start(), cell.end(), false, false);
         List<CandidateProfile> safelyRetained = features.safeDominanceEnabled()
-                ? safePrune(graph, active, interiorCell, source, destination)
+                ? safePrune(
+                        graph, active, interiorCell,
+                        source, destination, dominanceMemo,
+                        metrics, ledger, workItem)
                 : active;
         List<CandidateProfile> interior = policy == PaceExecutionPolicy.PACE_B
-                ? boundedRetain(
+                ? boundedRetainMeasured(
                 graph, safelyRetained, interiorCell, subproblemDomain, budget, k, source, destination,
-                features.representativeRetentionEnabled())
+                features.representativeRetentionEnabled(), metrics,
+                ledger, workItem + ":interior")
                 : safelyRetained;
         List<CandidateProfile> atStart = cell.startInclusive()
                 ? retainAtPoint(
@@ -165,7 +383,11 @@ public final class FrontierCompressor {
                 policy,
                 source,
                 destination,
-                features)
+                features,
+                dominanceMemo,
+                metrics,
+                ledger,
+                workItem)
                 : List.of();
         List<CandidateProfile> atEnd = cell.endInclusive()
                 ? retainAtPoint(
@@ -178,14 +400,19 @@ public final class FrontierCompressor {
                 policy,
                 source,
                 destination,
-                features)
+                features,
+                dominanceMemo,
+                metrics,
+                ledger,
+                workItem)
                 : List.of();
 
         Set<CandidateProfile> handled = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         for (CandidateProfile candidate : interior) {
             boolean ownsStart = containsIdentity(atStart, candidate);
             boolean ownsEnd = containsIdentity(atEnd, candidate);
-            output.add(new Fragment(candidate, new Domain.Interval(
+            output.add(new RetainedCellReference(
+                    candidate, new Domain.Interval(
                     cell.start(),
                     cell.end(),
                     cell.startInclusive() && ownsStart,
@@ -194,12 +421,18 @@ public final class FrontierCompressor {
         }
         for (CandidateProfile candidate : atStart) {
             if (!handled.contains(candidate)) {
-                output.add(new Fragment(candidate, new Domain.Interval(cell.start(), cell.start())));
+                output.add(new RetainedCellReference(
+                        candidate,
+                        new Domain.Interval(
+                                cell.start(), cell.start())));
             }
         }
         for (CandidateProfile candidate : atEnd) {
             if (!handled.contains(candidate)) {
-                output.add(new Fragment(candidate, new Domain.Interval(cell.end(), cell.end())));
+                output.add(new RetainedCellReference(
+                        candidate,
+                        new Domain.Interval(
+                                cell.end(), cell.end())));
             }
         }
     }
@@ -214,7 +447,11 @@ public final class FrontierCompressor {
             PaceExecutionPolicy policy,
             int source,
             int destination,
-            PaceFeatures features) {
+            PaceFeatures features,
+            DominanceMemo dominanceMemo,
+            PaceExecutionMetrics metrics,
+            PaceWorkLedger ledger,
+            String workItem) {
         if (active.isEmpty() || policy == PaceExecutionPolicy.PACE_X) {
             if (active.isEmpty()) {
                 return active;
@@ -222,12 +459,18 @@ public final class FrontierCompressor {
         }
         Domain.Interval singleton = new Domain.Interval(point, point);
         List<CandidateProfile> safelyRetained = features.safeDominanceEnabled()
-                ? safePrune(graph, active, singleton, source, destination)
+                ? safePrune(
+                        graph, active, singleton,
+                        source, destination, dominanceMemo,
+                        metrics, ledger, workItem)
                 : active;
         return policy == PaceExecutionPolicy.PACE_B
-                ? boundedRetain(
+                ? boundedRetainMeasured(
                 graph, safelyRetained, singleton, subproblemDomain, budget, k, source, destination,
-                features.representativeRetentionEnabled())
+                features.representativeRetentionEnabled(), metrics,
+                ledger,
+                workItem + ":point:"
+                        + Domain.canonicalTick(point))
                 : safelyRetained;
     }
 
@@ -279,7 +522,12 @@ public final class FrontierCompressor {
     }
 
     private static boolean sameRepresentation(CandidateProfile left, CandidateProfile right) {
-        if (!left.stablePathId().equals(right.stablePathId()) || !left.domain().equals(right.domain())) {
+        if (!left.stablePathId().equals(right.stablePathId())
+                || !left.domain().equals(right.domain())
+                || left.explicitAnchorCount()
+                        != right.explicitAnchorCount()
+                || !left.usedPivotArcIds().equals(
+                        right.usedPivotArcIds())) {
             return false;
         }
         for (Domain.Interval component : left.domain().intervals()) {
@@ -308,33 +556,336 @@ public final class FrontierCompressor {
             List<CandidateProfile> active,
             Domain.Interval cell,
             int source,
-            int destination) {
-        List<CandidateProfile> retained = new ArrayList<>();
-        for (int dominatedIndex = 0; dominatedIndex < active.size(); dominatedIndex++) {
-            CandidateProfile dominated = active.get(dominatedIndex);
-            boolean isDominated = false;
-            for (int dominatorIndex = 0; dominatorIndex < active.size(); dominatorIndex++) {
-                if (dominatorIndex == dominatedIndex) {
-                    continue;
+            int destination,
+            DominanceMemo dominanceMemo,
+            PaceExecutionMetrics metrics,
+            PaceWorkLedger ledger,
+            String workItem) {
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.DOMINANCE)) {
+            DominancePlan plan = dominanceMemo.plan(
+                    graph, active, source, destination);
+            metrics.addCounter(
+                    "dominance_structural_rejections",
+                    plan.structuralRejections());
+            List<CandidateProfile> retained = new ArrayList<>();
+            for (int dominatedIndex = 0;
+                    dominatedIndex < active.size();
+                    dominatedIndex++) {
+                CandidateProfile dominated = active.get(dominatedIndex);
+                boolean isDominated = false;
+                for (int dominatorIndex :
+                        plan.eligibleDominators()[
+                                dominatedIndex]) {
+                    CandidateProfile dominator =
+                            active.get(dominatorIndex);
+                    /*
+                     * Exact safe dominance requires identical arrival at every
+                     * point and a no-lower score. A deterministic witness point
+                     * is therefore a necessary (not sufficient) compatibility
+                     * signature and can reject the overwhelmingly common
+                     * incompatible pair without an exact profile comparison.
+                     */
+                    double witness =
+                            ProfileCellPartition.midpoint(cell);
+                    if (!Domain.sameTime(
+                            dominator.arrivalProfile()
+                                    .valueAtClosure(witness),
+                            dominated.arrivalProfile()
+                                    .valueAtClosure(witness))
+                            || dominator.scoreProfile()
+                                    .valueAtClosure(witness)
+                            < dominated.scoreProfile()
+                                    .valueAtClosure(witness)) {
+                        metrics.increment(
+                                "dominance_arrival_signature_rejections");
+                        continue;
+                    }
+                    reserveDominance(
+                            ledger,
+                            workItem,
+                            dominatedIndex,
+                            dominatorIndex,
+                            "forward");
+                    metrics.increment("dominance_comparisons");
+                    boolean forward = SafeProfileDominance.dominates(
+                            dominator,
+                            dominated,
+                            cell,
+                            plan.internalVertices().get(
+                                    dominatorIndex),
+                            plan.internalVertices().get(
+                                    dominatedIndex));
+                    if (!forward) {
+                        continue;
+                    }
+                    boolean reverse = false;
+                    if (plan.equivalentSignatures()[
+                            dominatorIndex][dominatedIndex]) {
+                        reserveDominance(
+                                ledger,
+                                workItem,
+                                dominatedIndex,
+                                dominatorIndex,
+                                "reverse");
+                        metrics.increment(
+                                "dominance_comparisons");
+                        reverse = SafeProfileDominance.dominates(
+                                dominated,
+                                dominator,
+                                cell,
+                                plan.internalVertices().get(
+                                        dominatedIndex),
+                                plan.internalVertices().get(
+                                        dominatorIndex));
+                    }
+                    if (!reverse || dominatorIndex < dominatedIndex) {
+                        isDominated = true;
+                        break;
+                    }
                 }
-                CandidateProfile dominator = active.get(dominatorIndex);
-                boolean forward = SafeProfileDominance.dominates(
-                        graph, dominator, dominated, cell, source, destination);
-                if (!forward) {
-                    continue;
-                }
-                boolean reverse = SafeProfileDominance.dominates(
-                        graph, dominated, dominator, cell, source, destination);
-                if (!reverse || dominatorIndex < dominatedIndex) {
-                    isDominated = true;
-                    break;
+                if (!isDominated) {
+                    retained.add(dominated);
                 }
             }
-            if (!isDominated) {
-                retained.add(dominated);
-            }
+            return retained;
         }
-        return retained;
+    }
+
+    /**
+     * Query/frontier-local structural plan cache. Temporal dominance remains
+     * cell-specific; only the necessary visited/pivot subset relation is
+     * cached.
+     */
+    static final class DominanceMemo {
+        private final Map<CandidateStructure, Set<Integer>>
+                internalVertices = new HashMap<>();
+        private final Map<PlanKey, DominancePlan> plans =
+                new HashMap<>();
+
+        synchronized DominancePlan plan(
+                TDGraph graph,
+                List<CandidateProfile> active,
+                int source,
+                int destination) {
+            List<CandidateStructure> structures =
+                    active.stream()
+                            .map(CandidateStructure::of)
+                            .toList();
+            PlanKey key = new PlanKey(structures);
+            return plans.computeIfAbsent(
+                    key,
+                    ignored -> buildPlan(
+                            graph,
+                            active,
+                            structures,
+                            source,
+                            destination));
+        }
+
+        private DominancePlan buildPlan(
+                TDGraph graph,
+                List<CandidateProfile> active,
+                List<CandidateStructure> structures,
+                int source,
+                int destination) {
+            List<Set<Integer>> omega =
+                    new ArrayList<>(active.size());
+            for (int index = 0;
+                    index < active.size();
+                    index++) {
+                CandidateProfile candidate =
+                        active.get(index);
+                CandidateStructure structure =
+                        structures.get(index);
+                omega.add(internalVertices.computeIfAbsent(
+                        structure,
+                        ignored -> candidate.internalVertices(
+                                graph, source, destination)));
+            }
+            int[][] eligible = new int[active.size()][];
+            boolean[][] equivalent =
+                    new boolean[active.size()][active.size()];
+            Map<CompatibilityBucket, List<Integer>> buckets =
+                    new TreeMap<>(
+                            Comparator.comparingInt(
+                                            CompatibilityBucket::omegaSize)
+                                    .thenComparingInt(
+                                            CompatibilityBucket::pivotSize)
+                                    .thenComparing(
+                                            CompatibilityBucket
+                                                    ::arrivalSignature));
+            for (int index = 0;
+                    index < active.size();
+                    index++) {
+                CompatibilityBucket bucket =
+                        new CompatibilityBucket(
+                                omega.get(index).size(),
+                                structures.get(index)
+                                        .usedPivotArcIds().size(),
+                                active.get(index).arrivalProfile()
+                                        .fingerprint());
+                buckets.computeIfAbsent(
+                        bucket,
+                        ignored -> new ArrayList<>()).add(index);
+            }
+            long rejected = 0;
+            for (int dominated = 0;
+                    dominated < active.size();
+                    dominated++) {
+                List<Integer> indices =
+                        new ArrayList<>();
+                List<Integer> compatibleBucketMembers =
+                        new ArrayList<>();
+                int dominatedOmega =
+                        omega.get(dominated).size();
+                int dominatedPivots =
+                        structures.get(dominated)
+                                .usedPivotArcIds().size();
+                for (Map.Entry<CompatibilityBucket,
+                        List<Integer>> entry : buckets.entrySet()) {
+                    CompatibilityBucket bucket = entry.getKey();
+                    if (bucket.omegaSize() <= dominatedOmega
+                            && bucket.pivotSize()
+                            <= dominatedPivots) {
+                        compatibleBucketMembers.addAll(
+                                entry.getValue());
+                    } else {
+                        rejected += entry.getValue().size();
+                    }
+                }
+                compatibleBucketMembers.sort(
+                        Integer::compareTo);
+                for (int dominator :
+                        compatibleBucketMembers) {
+                    if (dominator == dominated) {
+                        continue;
+                    }
+                    boolean structurallyEligible =
+                            omega.get(dominated).containsAll(
+                                    omega.get(dominator))
+                            && structures.get(dominated)
+                                    .usedPivotArcIds()
+                                    .containsAll(
+                                            structures.get(dominator)
+                                                    .usedPivotArcIds());
+                    if (structurallyEligible) {
+                        indices.add(dominator);
+                        equivalent[dominator][dominated] =
+                                omega.get(dominator).equals(
+                                        omega.get(dominated))
+                                && structures.get(dominator)
+                                        .usedPivotArcIds().equals(
+                                                structures.get(dominated)
+                                                        .usedPivotArcIds());
+                    } else {
+                        rejected++;
+                    }
+                }
+                eligible[dominated] = indices.stream()
+                        .mapToInt(Integer::intValue)
+                        .toArray();
+            }
+            return new DominancePlan(
+                    List.copyOf(omega),
+                    eligible,
+                    equivalent,
+                    rejected);
+        }
+    }
+
+    private record CandidateStructure(
+            List<Integer> stablePathId,
+            Set<Integer> usedPivotArcIds) {
+        static CandidateStructure of(
+                CandidateProfile candidate) {
+            return new CandidateStructure(
+                    candidate.stablePathId(),
+                    candidate.usedPivotArcIds());
+        }
+
+        CandidateStructure {
+            stablePathId = List.copyOf(stablePathId);
+            usedPivotArcIds = Set.copyOf(
+                    usedPivotArcIds);
+        }
+    }
+
+    private record PlanKey(
+            List<CandidateStructure> structures) {
+        PlanKey {
+            structures = List.copyOf(structures);
+        }
+    }
+
+    /**
+     * Endpoint is constant for one IncrementalFrontier. These remaining fields
+     * are the safe structural/arrival buckets reused by its dominance memo.
+     */
+    private record CompatibilityBucket(
+            int omegaSize,
+            int pivotSize,
+            String arrivalSignature) {
+    }
+
+    private record DominancePlan(
+            List<Set<Integer>> internalVertices,
+            int[][] eligibleDominators,
+            boolean[][] equivalentSignatures,
+            long structuralRejections) {
+    }
+
+    private static void reserveDominance(
+            PaceWorkLedger ledger,
+            String workItem,
+            int dominatedIndex,
+            int dominatorIndex,
+            String direction) {
+        if (ledger != null
+                && !ledger.reserve(
+                        PaceWorkKind.DOMINANCE_CHECK,
+                        workItem + ":dominance:"
+                                + dominatedIndex + ":"
+                                + dominatorIndex + ":"
+                                + direction)) {
+            throw PaceWorkLimitReachedException.INSTANCE;
+        }
+    }
+
+    private static List<CandidateProfile> boundedRetainMeasured(
+            TDGraph graph,
+            List<CandidateProfile> candidates,
+            Domain.Interval cell,
+            Domain subproblemDomain,
+            double budget,
+            int k,
+            int source,
+            int destination,
+            boolean representativesEnabled,
+            PaceExecutionMetrics metrics,
+            PaceWorkLedger ledger,
+            String workItem) {
+        if (ledger != null
+                && !ledger.reserve(
+                        PaceWorkKind.RETENTION_EVALUATION,
+                        workItem + ":retention")) {
+            throw PaceWorkLimitReachedException.INSTANCE;
+        }
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.FRONTIER_RETENTION)) {
+            List<CandidateProfile> retained = boundedRetain(
+                    graph, candidates, cell, subproblemDomain,
+                    budget, k, source, destination,
+                    representativesEnabled);
+            metrics.addCounter(
+                    "frontier_retention_evaluations", 1);
+            metrics.addCounter(
+                    "retained_fragments", retained.size());
+            metrics.addCounter(
+                    "dropped_fragments",
+                    Math.max(0, candidates.size() - retained.size()));
+            return retained;
+        }
     }
 
     private static List<CandidateProfile> boundedRetain(
@@ -394,11 +945,16 @@ public final class FrontierCompressor {
         double sample = ProfileCellPartition.midpoint(cell);
         return (left, right) -> {
             int comparison = Integer.compare(
-                    right.scoreProfile().valueAt(sample), left.scoreProfile().valueAt(sample));
+                    right.scoreProfile().valueAtClosure(sample),
+                    left.scoreProfile().valueAtClosure(sample));
             if (comparison != 0) {
                 return comparison;
             }
-            comparison = Double.compare(left.travelTimeAt(sample), right.travelTimeAt(sample));
+            comparison = Double.compare(
+                    left.arrivalProfile().valueAtClosure(sample)
+                            - sample,
+                    right.arrivalProfile().valueAtClosure(sample)
+                            - sample);
             if (comparison != 0) {
                 return comparison;
             }
@@ -505,8 +1061,10 @@ public final class FrontierCompressor {
         double averageArrival;
         double averageScore;
         if (duration <= 0) {
-            averageArrival = candidate.arrivalProfile().valueAt(cell.start());
-            averageScore = candidate.scoreProfile().valueAt(cell.start());
+            averageArrival = candidate.arrivalProfile()
+                    .valueAtClosure(cell.start());
+            averageScore = candidate.scoreProfile()
+                    .valueAtClosure(cell.start());
         } else {
             averageArrival = integrateArrival(candidate.arrivalProfile(), cell) / duration;
             averageScore = integrateScore(candidate.scoreProfile(), cell) / duration;
@@ -555,7 +1113,8 @@ public final class FrontierCompressor {
         for (int i = 0; i + 1 < sorted.size(); i++) {
             double start = sorted.get(i);
             double end = sorted.get(i + 1);
-            integral += profile.valueAt(start + ((end - start) / 2.0)) * (end - start);
+            integral += profile.valueAtClosure(start)
+                    * (end - start);
         }
         return integral;
     }
@@ -577,9 +1136,10 @@ public final class FrontierCompressor {
         return maximum;
     }
 
-    private static CandidateSet mergeAdjacentFragments(List<Fragment> fragments) {
+    private static CandidateSet mergeAdjacentFragments(
+            List<RetainedCellReference> fragments) {
         List<CandidateProfile> pieces = new ArrayList<>();
-        for (Fragment fragment : fragments) {
+        for (RetainedCellReference fragment : fragments) {
             pieces.add(restrictAndMarkCompressed(fragment.source(), Domain.of(fragment.cell())));
         }
         pieces.sort(Comparator
@@ -604,9 +1164,10 @@ public final class FrontierCompressor {
         return removeExactDuplicates(result);
     }
 
-    private static CandidateSet fragmentsWithoutMerge(List<Fragment> fragments) {
+    private static CandidateSet fragmentsWithoutMerge(
+            List<RetainedCellReference> fragments) {
         CandidateSet result = new CandidateSet();
-        for (Fragment fragment : fragments) {
+        for (RetainedCellReference fragment : fragments) {
             result.add(restrictAndMarkCompressed(fragment.source(), Domain.of(fragment.cell())));
         }
         return removeExactDuplicates(result);
@@ -619,8 +1180,19 @@ public final class FrontierCompressor {
     static CandidateProfile mergeAdjacentCompatible(
             CandidateProfile first,
             CandidateProfile second) {
+        return mergeAdjacentCompatible(
+                first, second, null, "");
+    }
+
+    private static CandidateProfile mergeAdjacentCompatible(
+            CandidateProfile first,
+            CandidateProfile second,
+            PaceWorkLedger ledger,
+            String workItem) {
         if (!first.stablePathId().equals(second.stablePathId())
                 || first.explicitAnchorCount() != second.explicitAnchorCount()
+                || !first.usedPivotArcIds().equals(
+                        second.usedPivotArcIds())
                 || !sameProfileLineage(
                         first.arrivalProfile().fingerprint(),
                         second.arrivalProfile().fingerprint())
@@ -653,6 +1225,12 @@ public final class FrontierCompressor {
                 && left.scoreProfile().valueAt(boundary) != right.scoreProfile().valueAt(boundary)) {
             return null;
         }
+        if (ledger != null
+                && !ledger.reserve(
+                        PaceWorkKind.FRAGMENT_MATERIALIZATION,
+                        workItem)) {
+            throw PaceWorkLimitReachedException.INSTANCE;
+        }
 
         Domain union = left.domain().union(right.domain());
         TimeProfile arrival = mergeArrivalProfiles(left, right, union);
@@ -665,7 +1243,8 @@ public final class FrontierCompressor {
                 left.pathPointer(),
                 left.explicitAnchorCount(),
                 pivotId,
-                true);
+                true,
+                left.usedPivotArcIds());
     }
 
     private static TimeProfile mergeArrivalProfiles(
@@ -768,7 +1347,8 @@ public final class FrontierCompressor {
                 restricted.pathPointer(),
                 restricted.explicitAnchorCount(),
                 restricted.pivotId(),
-                true);
+                true,
+                restricted.usedPivotArcIds());
     }
 
     private enum MetricOrder {
@@ -786,6 +1366,8 @@ public final class FrontierCompressor {
             int omegaSize) {
     }
 
-    private record Fragment(CandidateProfile source, Domain.Interval cell) {
+    static record RetainedCellReference(
+            CandidateProfile source,
+            Domain.Interval cell) {
     }
 }

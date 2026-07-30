@@ -23,6 +23,7 @@ public final class PACE {
             PREPARED_INDEXES = new WeakHashMap<>();
     private final TDGraph graph;
     private final PaceOptions options;
+    private final PaceExecutionMetrics metrics;
     private final PaceFrontierGenerator legacyGenerator;
     private final ForwardLayeredFrontierGenerator scalableGenerator;
     private volatile PaceGenerationResult lastResult;
@@ -35,7 +36,8 @@ public final class PACE {
                         && options.engineMode()
                             == PaceEngineMode.SCALABLE
                         ? preparedIndexes(graph)
-                        : null);
+                        : null,
+                PaceExecutionMetrics.none());
     }
 
     /**
@@ -45,8 +47,20 @@ public final class PACE {
             TDGraph graph,
             PaceOptions options,
             QueryPreparationIndexes indexes) {
+        this(graph, options, indexes, PaceExecutionMetrics.none());
+    }
+
+    /**
+     * Creates PACE with prepared indexes and live query instrumentation.
+     */
+    public PACE(
+            TDGraph graph,
+            PaceOptions options,
+            QueryPreparationIndexes indexes,
+            PaceExecutionMetrics metrics) {
         this.graph = Objects.requireNonNull(graph, "graph");
         this.options = Objects.requireNonNull(options, "options");
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
         GraphValidator.validate(graph, true);
         if (options.engineMode() == PaceEngineMode.LEGACY) {
             legacyGenerator =
@@ -59,7 +73,8 @@ public final class PACE {
                             options,
                             Objects.requireNonNull(
                                     indexes,
-                                    "query preparation indexes"));
+                                    "query preparation indexes"),
+                            metrics);
             legacyGenerator = null;
         }
         lastResult = new PaceGenerationResult(
@@ -121,8 +136,13 @@ public final class PACE {
                     "PACE-X candidate generation aborted: "
                             + generated.capStatus().triggered());
         }
-        return EnvelopeExtractor.extract(
-                generated.frontier(), query.departureDomain());
+        try (PaceExecutionMetrics.Timer ignored =
+                     metrics.phase(PaceExecutionMetrics.ENVELOPE_EXTRACTION)) {
+            return EnvelopeExtractor.extract(
+                    generated.frontier(),
+                    query.departureDomain(),
+                    metrics);
+        }
     }
 
     public EnvelopeProfile runProfile(QuerySpec query) {

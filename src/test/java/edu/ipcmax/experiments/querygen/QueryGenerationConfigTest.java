@@ -23,8 +23,8 @@ class QueryGenerationConfigTest {
 
         assertEquals(1, config.schemaVersion());
         assertEquals(20260711L, config.seed());
-        assertEquals(256, config.candidatePool().sampledSources());
-        assertEquals(20_000, config.candidatePool().maximumPairs());
+        assertEquals(16, config.candidatePool().sampledSources());
+        assertEquals(2_000, config.candidatePool().maximumPairs());
         assertEquals(5, config.candidatePool().minimumLowerBoundEdges());
         assertTrue(config.candidatePool().requireReachable());
         assertTrue(config.candidatePool().requireAnchorCorridor());

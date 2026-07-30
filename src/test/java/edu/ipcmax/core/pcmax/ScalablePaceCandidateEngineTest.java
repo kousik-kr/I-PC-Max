@@ -46,6 +46,32 @@ class ScalablePaceCandidateEngineTest {
     }
 
     @Test
+    void pivotLimitAndTraversalDepthRemainIndependent() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1).node(2).node(3).node(4)
+                .edge(1, 2, 1, score(9))
+                .edge(2, 3, 1, score(8))
+                .edge(3, 4, 1)
+                .edge(1, 4, 3)
+                .build();
+        PACE pace = new PACE(
+                graph,
+                PaceOptions.bounded(
+                        1, 2, 8, 1_000,
+                        8, 1_000, 10_000, 1));
+
+        PaceGenerationResult result = pace.generate(
+                new QuerySpec(1, 4, 0, 5, 5, 1));
+
+        assertEquals(2, result.selectedPivotArcIds().size(),
+                "L selects pivots independently of theta");
+        assertTrue(result.frontier().candidates().stream()
+                .allMatch(candidate ->
+                        candidate.explicitAnchorCount() <= 1),
+                "theta limits only per-candidate pivot traversal");
+    }
+
+    @Test
     void connectorAndQueryWorkCapsAreHardUpperBoundsWithTypedStatus() {
         TDGraph connectorGraph = branchingGraph(false);
         PACE connectorLimited = new PACE(
