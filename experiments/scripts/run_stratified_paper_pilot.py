@@ -84,6 +84,17 @@ def _percentile(values: list[float], fraction: float) -> float | None:
     return ordered[math.ceil(fraction * len(ordered)) - 1]
 
 
+def _inclusive_iqr(values: list[float]) -> list[float] | None:
+    if len(values) < 2:
+        return None
+    quartiles = statistics.quantiles(
+        values,
+        n=4,
+        method="inclusive",
+    )
+    return [quartiles[0], quartiles[2]]
+
+
 def _total_memory_bytes() -> int | None:
     try:
         for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
@@ -444,7 +455,12 @@ def run_pilot(
         completion_rate >= 0.90
         and cap_rate <= 0.10
         and not any(
-            status in {"EXTERNAL_TIMEOUT", "HARNESS_ERROR"}
+            status in {
+                "EXTERNAL_TIMEOUT",
+                "HARNESS_ERROR",
+                "OUT_OF_MEMORY",
+                "ERROR",
+            }
             for status in statuses
         )
         and projected_seconds / safe_concurrency <= 90 * 86400
@@ -457,7 +473,7 @@ def run_pilot(
             "threads_per_query_maximum": 24,
             "heap_per_process": "250g",
             "dataset_reuse_within_process": False,
-            "projection_adds_preprocessing_per_isolated_job": False,
+            "projection_adds_preprocessing_per_isolated_job": True,
             "one_os_worker_process_per_query": True,
             "outer_process_group_timeout": True,
             "per_query_watchdog": True,
@@ -491,6 +507,7 @@ def run_pilot(
                 "preprocessing-plus-query only"
             ),
             "median": statistics.median(runtimes) if runtimes else None,
+            "iqr": _inclusive_iqr(runtimes),
             "p95": _percentile(runtimes, 0.95),
             "maximum": max(runtimes) if runtimes else None,
             "timeout_values_are_not_observed_runtimes": True,
@@ -501,6 +518,8 @@ def run_pilot(
                 statistics.median(observed_query_runtimes)
                 if observed_query_runtimes else None
             ),
+            "iqr": _inclusive_iqr(
+                observed_query_runtimes),
             "p95": _percentile(observed_query_runtimes, 0.95),
             "maximum": (
                 max(observed_query_runtimes)
@@ -508,6 +527,19 @@ def run_pilot(
             ),
             "right_censored_count": sum(
                 status in censored_statuses
+                for status in statuses
+            ),
+            "right_censored_rate": (
+                sum(status in censored_statuses for status in statuses)
+                / len(statuses)
+                if statuses else 0.0
+            ),
+            "competing_failure_count": sum(
+                status in {
+                    "OUT_OF_MEMORY",
+                    "ERROR",
+                    "HARNESS_ERROR",
+                }
                 for status in statuses
             ),
             "kaplan_meier_median": _kaplan_meier_median(
@@ -520,7 +552,19 @@ def run_pilot(
             "observations": len(peak_rss),
         },
         "completion_rate": completion_rate,
+        "timeout_rate": (
+            sum(status in censored_statuses for status in statuses)
+            / len(statuses)
+            if statuses else 0.0
+        ),
         "cap_rate": cap_rate,
+        "all_selected_queries_have_terminal_records": (
+            len(records) == len(executions)
+            and not any(
+                status in {"HARNESS_ERROR", "NO_RECORD"}
+                for status in statuses
+            )
+        ),
         "statuses": {
             status: statuses.count(status)
             for status in sorted(set(statuses))
@@ -541,10 +585,29 @@ def run_pilot(
         },
         "projection": {
             "ledger_rows": len(ledger_rows),
-            "pace_b_seconds": projected_pace_b_seconds,
-            "all_matrix_seconds_conservative": projected_seconds,
+            "pace_b_seconds_right_censored_floor":
+                projected_pace_b_seconds,
+            "all_matrix_seconds_censored_floor_with_non_pace_timeout_policy":
+                projected_seconds,
             "safe_concurrency": safe_concurrency,
             "projected_wall_seconds": projected_seconds / safe_concurrency,
+            "successful_completion_time_estimable": (
+                completed_count == len(executions)
+            ),
+            "interpretation": (
+                "PACE-B incomplete strata contribute only their observed "
+                "timeout/failure elapsed time, so this is a right-censored "
+                "floor rather than an estimate of successful completion; "
+                "non-PACE-B rows use the configured timeout."
+            ),
+            "required_speedup_for_target_days": {
+                str(days): (
+                    projected_seconds
+                    / safe_concurrency
+                    / (days * 86400)
+                )
+                for days in (7, 14, 30)
+            },
             "non_pace_b_policy": "configured timeout upper bound",
             "pace_b_policy": (
                 "dataset-and-distance-band pilot preprocessing plus "

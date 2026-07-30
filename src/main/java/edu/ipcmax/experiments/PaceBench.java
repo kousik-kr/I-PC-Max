@@ -136,6 +136,7 @@ public final class PaceBench {
             "memory_during_replay_used_heap_bytes",
             "memory_after_final_reduction_used_heap_bytes",
             "memory_after_query_used_heap_bytes",
+            "query_worker_ignored_cancellation",
             "frontier_layer_batches", "frontier_layer_batch_offers",
             "parallel_affected_cell_tasks",
             "feasible_entry_bands", "empty_feasible_entry_bands",
@@ -331,11 +332,17 @@ public final class PaceBench {
                 forcedReason = "PreprocessingTimeout";
             }
         } else if (!Files.exists(output) || Files.size(output) == 0) {
-            forcedStatus = options.memoryLimitMb > 0
-                    ? ExperimentStatus.OUT_OF_MEMORY.name() : ExperimentStatus.ERROR.name();
-            forcedReason = options.memoryLimitMb > 0
-                    ? "WorkerMemoryFailure"
-                    : "WorkerExitedWithoutResult";
+            String workerLogText = Files.isRegularFile(workerLog)
+                    ? Files.readString(workerLog, StandardCharsets.UTF_8)
+                    : "";
+            MissingWorkerResult missing =
+                    classifyMissingWorkerResult(
+                            process.exitValue(),
+                            Files.isRegularFile(ready),
+                            workerLogText,
+                            options.memoryLimitMb);
+            forcedStatus = missing.status().name();
+            forcedReason = missing.reason();
         }
         if (forcedStatus != null) {
             Files.deleteIfExists(output);
@@ -370,6 +377,40 @@ public final class PaceBench {
         ExperimentStatus code = ExperimentStatus.valueOf(status.get("status_code").toString());
         deleteTree(temporary);
         return isFailure(code) ? 1 : 0;
+    }
+
+    static MissingWorkerResult classifyMissingWorkerResult(
+            int exitCode,
+            boolean queryReady,
+            String workerLog,
+            int memoryLimitMb) {
+        String log = workerLog == null ? "" : workerLog;
+        if (queryReady && log.contains(
+                "query worker ignored cancellation")) {
+            return new MissingWorkerResult(
+                    ExperimentStatus.TIMEOUT,
+                    "QueryWorkerIgnoredCancellation");
+        }
+        boolean explicitOutOfMemory =
+                log.contains("java.lang.OutOfMemoryError")
+                        || log.contains("OutOfMemoryError:");
+        boolean memoryKill =
+                memoryLimitMb > 0 && exitCode == 137;
+        if (explicitOutOfMemory || memoryKill) {
+            return new MissingWorkerResult(
+                    ExperimentStatus.OUT_OF_MEMORY,
+                    explicitOutOfMemory
+                            ? "WorkerOutOfMemoryError"
+                            : "WorkerMemoryKillExit137");
+        }
+        return new MissingWorkerResult(
+                ExperimentStatus.ERROR,
+                "WorkerExitedWithoutResultExit" + exitCode);
+    }
+
+    static record MissingWorkerResult(
+            ExperimentStatus status,
+            String reason) {
     }
 
     private static List<String> isolatedCommand(
@@ -743,9 +784,19 @@ public final class PaceBench {
         try {
             if (!executor.awaitTermination(
                     30, TimeUnit.SECONDS)) {
-                throw new IllegalStateException(
-                        "query worker ignored cancellation; "
-                                + "dataset-reuse execution is unsafe");
+                /*
+                 * This method runs inside the one-query isolated child whenever
+                 * a timeout or memory limit is configured. Preserve and
+                 * serialize the already determined terminal result; the child
+                 * main method exits non-zero immediately afterwards, which
+                 * forcibly releases the daemon query thread and all
+                 * query-local state. Throwing here used to discard the formal
+                 * TIMEOUT result, and the outer process then misclassified the
+                 * missing output as OOM merely because -Xmx was configured.
+                 */
+                instrumentation.addCounter(
+                        "query_worker_ignored_cancellation",
+                        1);
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();

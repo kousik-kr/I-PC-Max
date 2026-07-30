@@ -203,7 +203,7 @@ class PaceBenchFrameworkTest {
     }
 
     @Test
-    void memoryThresholdProducesFormalOutOfMemoryStatus() throws Exception {
+    void invalidTinyHeapDoesNotMasqueradeAsOutOfMemory() throws Exception {
         Path output = temporary.resolve("memory.jsonl");
         assertEquals(1, PaceBench.execute(new String[] {
                 "--algorithm", "pace-b", "--dataset", "demo",
@@ -212,10 +212,51 @@ class PaceBenchFrameworkTest {
                 "--fail-fast"
         }));
         JsonNode record = QueryManifestIO.mapper().readTree(Files.readString(output).strip());
-        assertEquals("OUT_OF_MEMORY", record.path("status").path("status_code").asText());
+        assertEquals("ERROR", record.path("status").path("status_code").asText());
+        assertEquals(
+                "WorkerExitedWithoutResultExit1",
+                record.path("error").path("type").asText());
         assertFalse(record.path("status").path("completed").asBoolean());
         assertFalse(record.path("system").path("process_id").asLong()
                 == ProcessHandle.current().pid());
+    }
+
+    @Test
+    void missingWorkerOutputRequiresConcreteOutOfMemoryEvidence() {
+        PaceBench.MissingWorkerResult unknown =
+                PaceBench.classifyMissingWorkerResult(
+                        1, true, "", 256000);
+        assertEquals(
+                "ERROR", unknown.status().name());
+        assertEquals(
+                "WorkerExitedWithoutResultExit1",
+                unknown.reason());
+
+        PaceBench.MissingWorkerResult cancellation =
+                PaceBench.classifyMissingWorkerResult(
+                        2,
+                        true,
+                        "pace_bench: query worker ignored cancellation; "
+                                + "dataset-reuse execution is unsafe",
+                        256000);
+        assertEquals(
+                "TIMEOUT", cancellation.status().name());
+        assertEquals(
+                "QueryWorkerIgnoredCancellation",
+                cancellation.reason());
+
+        PaceBench.MissingWorkerResult heapFailure =
+                PaceBench.classifyMissingWorkerResult(
+                        1,
+                        true,
+                        "Exception in thread main "
+                                + "java.lang.OutOfMemoryError: Java heap space",
+                        256000);
+        assertEquals(
+                "OUT_OF_MEMORY", heapFailure.status().name());
+        assertEquals(
+                "WorkerOutOfMemoryError",
+                heapFailure.reason());
     }
 
     @Test
