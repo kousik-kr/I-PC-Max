@@ -8,12 +8,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1075,20 +1078,27 @@ public final class PaceBench {
         return nodes;
     }
 
-    private static String graphSemanticChecksum(TDGraph graph) {
-        StringBuilder canonical = new StringBuilder();
+    static String graphSemanticChecksum(TDGraph graph) {
+        final MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
         for (Edge edge : graph.edges()) {
-            canonical.append(edge.arcId()).append(':').append(edge.source()).append(':')
+            StringBuilder canonicalEdge = new StringBuilder(256);
+            canonicalEdge.append(edge.arcId()).append(':').append(edge.source()).append(':')
                     .append(edge.target()).append(':').append(edge.distance()).append(':');
-            edge.travelTimeFunction().breakpoints().forEach(point -> canonical
+            edge.travelTimeFunction().breakpoints().forEach(point -> canonicalEdge
                     .append(point.minute()).append('=').append(point.value()).append(','));
-            canonical.append(':');
-            edge.scoreFunction().intervals().forEach(piece -> canonical
+            canonicalEdge.append(':');
+            edge.scoreFunction().intervals().forEach(piece -> canonicalEdge
                     .append(piece.startMinute()).append('=').append(piece.endMinute())
                     .append('=').append(piece.value()).append(','));
-            canonical.append('\n');
+            canonicalEdge.append('\n');
+            digest.update(canonicalEdge.toString().getBytes(StandardCharsets.UTF_8));
         }
-        return ProfileSupport.sha256(canonical.toString());
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private static Set<String> existingRunIds(Path path) throws IOException {

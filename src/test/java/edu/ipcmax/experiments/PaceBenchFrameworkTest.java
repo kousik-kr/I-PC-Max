@@ -17,11 +17,34 @@ import org.junit.jupiter.api.io.TempDir;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import edu.ipcmax.core.graph.Edge;
+import edu.ipcmax.core.graph.TDGraph;
+import edu.ipcmax.experiments.framework.ProfileSupport;
 import edu.ipcmax.experiments.framework.QueryManifestIO;
 
 class PaceBenchFrameworkTest {
     @TempDir
     Path temporary;
+
+    @Test
+    void streamingGraphSemanticChecksumMatchesLegacyCanonicalRepresentation() {
+        TDGraph graph = ExperimentDatasets.demo();
+        StringBuilder legacyCanonical = new StringBuilder();
+        for (Edge edge : graph.edges()) {
+            legacyCanonical.append(edge.arcId()).append(':').append(edge.source()).append(':')
+                    .append(edge.target()).append(':').append(edge.distance()).append(':');
+            edge.travelTimeFunction().breakpoints().forEach(point -> legacyCanonical
+                    .append(point.minute()).append('=').append(point.value()).append(','));
+            legacyCanonical.append(':');
+            edge.scoreFunction().intervals().forEach(piece -> legacyCanonical
+                    .append(piece.startMinute()).append('=').append(piece.endMinute())
+                    .append('=').append(piece.value()).append(','));
+            legacyCanonical.append('\n');
+        }
+
+        assertEquals(ProfileSupport.sha256(legacyCanonical.toString()),
+                PaceBench.graphSemanticChecksum(graph));
+    }
 
     @Test
     void writesOneStableSchemaRecordPerQueryAndResumeDoesNotDuplicate() throws Exception {
