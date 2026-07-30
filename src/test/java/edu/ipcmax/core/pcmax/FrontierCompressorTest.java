@@ -176,6 +176,50 @@ class FrontierCompressorTest {
         assertEquals(feasible, compressed.candidates().get(0).domain());
     }
 
+    @Test
+    void maximalRunMergeMatchesHistoricalPairwiseEndpointOwnership() {
+        CandidateProfile canonical = candidate(
+                List.of(0),
+                5,
+                ScoreProfile.piecewise(
+                        ROOT,
+                        List.of(
+                                new ScoreProfile.Interval(0, 2, 1),
+                                new ScoreProfile.Interval(2, 5, 4),
+                                new ScoreProfile.Interval(5, 7, 2),
+                                new ScoreProfile.Interval(7, 10, 9)),
+                        "score-run"));
+        List<CandidateProfile> fragments = List.of(
+                canonical.restrict(Domain.halfOpen(0, 2)),
+                canonical.restrict(Domain.halfOpen(2, 5)),
+                canonical.restrict(Domain.halfOpen(5, 7)),
+                canonical.restrict(Domain.closed(7, 10)));
+
+        CandidateProfile pairwise = fragments.get(0);
+        for (int index = 1; index < fragments.size(); index++) {
+            pairwise = FrontierCompressor.mergeAdjacentCompatible(
+                    pairwise, fragments.get(index));
+        }
+        CandidateSet maximal = FrontierCompressor.mergeCandidateFragments(
+                fragments, PaceExecutionMetrics.none());
+
+        assertEquals(1, maximal.size());
+        CandidateProfile actual = maximal.candidates().get(0);
+        assertEquals(pairwise.domain(), actual.domain());
+        assertEquals(
+                pairwise.arrivalProfile().breakpoints(),
+                actual.arrivalProfile().breakpoints());
+        assertEquals(
+                pairwise.scoreProfile().intervals(),
+                actual.scoreProfile().intervals());
+        for (double departure :
+                List.of(0.0, 2.0, 5.0, 7.0, 10.0)) {
+            assertEquals(
+                    pairwise.scoreProfile().valueAt(departure),
+                    actual.scoreProfile().valueAt(departure));
+        }
+    }
+
     private static TDGraph twoPathGraph() {
         return new TinyGraphBuilder()
                 .node(1).node(2).node(3)

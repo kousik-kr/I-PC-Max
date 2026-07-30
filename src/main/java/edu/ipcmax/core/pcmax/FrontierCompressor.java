@@ -1299,8 +1299,6 @@ public final class FrontierCompressor {
         Domain union = Domain.empty();
         List<TimeProfile.Breakpoint> arrivalPoints =
                 new ArrayList<>();
-        List<ScoreProfile.Interval> scoreIntervals =
-                new ArrayList<>();
         int pivotId = first.pivotId();
         for (CandidateProfile piece : run) {
             union = union.union(piece.domain());
@@ -1325,9 +1323,6 @@ public final class FrontierCompressor {
                 }
                 arrivalPoints.add(point);
             }
-            appendScoreIntervals(
-                    scoreIntervals,
-                    piece.scoreProfile().intervals());
             if (piece.pivotId() != pivotId) {
                 pivotId = -1;
             }
@@ -1338,12 +1333,7 @@ public final class FrontierCompressor {
                 profileLineage(
                         first.arrivalProfile().fingerprint())
                         + "|restrict:" + union.intervals());
-        ScoreProfile score = ScoreProfile.piecewise(
-                union,
-                scoreIntervals,
-                profileLineage(
-                        first.scoreProfile().fingerprint())
-                        + "|restrict:" + union.intervals());
+        ScoreProfile score = mergeScoreProfiles(run, union);
         return new CandidateProfile(
                 union,
                 arrival,
@@ -1353,38 +1343,6 @@ public final class FrontierCompressor {
                 pivotId,
                 true,
                 first.usedPivotArcIds());
-    }
-
-    private static void appendScoreIntervals(
-            List<ScoreProfile.Interval> destination,
-            List<ScoreProfile.Interval> source) {
-        for (ScoreProfile.Interval interval : source) {
-            if (!destination.isEmpty()) {
-                ScoreProfile.Interval previous =
-                        destination.get(
-                                destination.size() - 1);
-                boolean previousPoint =
-                        previous.startMinute()
-                                == previous.endMinute();
-                boolean currentPoint =
-                        interval.startMinute()
-                                == interval.endMinute();
-                if (previousPoint
-                        && !currentPoint
-                        && Domain.sameTime(
-                                previous.startMinute(),
-                                interval.startMinute())) {
-                    if (previous.value() != interval.value()) {
-                        throw new IllegalArgumentException(
-                                "incompatible score fragments "
-                                        + "for one path");
-                    }
-                    destination.remove(
-                            destination.size() - 1);
-                }
-            }
-            destination.add(interval);
-        }
     }
 
     private static TimeProfile mergeArrivalProfiles(
@@ -1446,6 +1404,58 @@ public final class FrontierCompressor {
                         + "|restrict:" + union.intervals());
     }
 
+    /**
+     * Reconstructs the score profile of a maximal compatible run with the same
+     * cell and endpoint-ownership rule as the historical pairwise merge.
+     */
+    private static ScoreProfile mergeScoreProfiles(
+            List<CandidateProfile> run,
+            Domain union) {
+        List<Double> cuts =
+                new ArrayList<>(union.breakpoints());
+        for (CandidateProfile candidate : run) {
+            cuts.addAll(
+                    candidate.scoreProfile().breakpoints());
+        }
+        List<ScoreProfile.Interval> pieces =
+                new ArrayList<>();
+        for (Domain.Interval cell : union.splitAt(
+                ProfileCellPartition.uniqueSorted(cuts))
+                .intervals()) {
+            if (cell.start() == cell.end()) {
+                pieces.add(new ScoreProfile.Interval(
+                        cell.start(),
+                        cell.end(),
+                        scoreAt(run, cell.start())));
+                continue;
+            }
+            double sample =
+                    ProfileCellPartition.midpoint(cell);
+            int value = scoreAt(run, sample);
+            pieces.add(new ScoreProfile.Interval(
+                    cell.start(),
+                    cell.end(),
+                    value));
+            if (cell.endInclusive()) {
+                int endpointValue =
+                        scoreAt(run, cell.end());
+                if (endpointValue != value) {
+                    pieces.add(new ScoreProfile.Interval(
+                            cell.end(),
+                            cell.end(),
+                            endpointValue));
+                }
+            }
+        }
+        return ScoreProfile.piecewise(
+                union,
+                pieces,
+                profileLineage(
+                        run.get(0).scoreProfile()
+                                .fingerprint())
+                        + "|restrict:" + union.intervals());
+    }
+
     private static boolean sameProfileLineage(String left, String right) {
         return profileLineage(left).equals(profileLineage(right));
     }
@@ -1476,6 +1486,79 @@ public final class FrontierCompressor {
             return right.scoreProfile().valueAt(departure);
         }
         throw new IllegalArgumentException("merged profile has an uncovered departure " + departure);
+    }
+
+    private static int scoreAt(
+            List<CandidateProfile> run,
+            double departure) {
+        int low = 0;
+        int high = run.size();
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            double start = run.get(middle)
+                    .domain().intervals().get(0).start();
+            if (start < departure
+                    || Domain.sameTime(start, departure)) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        Integer value = null;
+        for (int index = Math.min(
+                run.size() - 1, low - 1);
+                index >= 0;
+                index--) {
+            Domain.Interval interval = run.get(index)
+                    .domain().intervals().get(0);
+            if (interval.end() < departure
+                    && !Domain.sameTime(
+                            interval.end(), departure)) {
+                break;
+            }
+            if (!run.get(index).domain()
+                    .contains(departure)) {
+                continue;
+            }
+            int observed = run.get(index)
+                    .scoreProfile()
+                    .valueAt(departure);
+            if (value != null && value != observed) {
+                throw new IllegalArgumentException(
+                        "incompatible score fragments "
+                                + "for one path");
+            }
+            value = observed;
+        }
+        for (int index = low;
+                index < run.size();
+                index++) {
+            Domain.Interval interval = run.get(index)
+                    .domain().intervals().get(0);
+            if (!Domain.sameTime(
+                    interval.start(), departure)) {
+                break;
+            }
+            if (!run.get(index).domain()
+                    .contains(departure)) {
+                continue;
+            }
+            int observed = run.get(index)
+                    .scoreProfile()
+                    .valueAt(departure);
+            if (value != null && value != observed) {
+                throw new IllegalArgumentException(
+                        "incompatible score fragments "
+                                + "for one path");
+            }
+            value = observed;
+        }
+        if (value == null) {
+            throw new IllegalArgumentException(
+                    "merged profile has an uncovered departure "
+                            + departure);
+        }
+        return value;
     }
 
     private static CandidateProfile restrictAndMarkCompressed(CandidateProfile source, Domain domain) {
