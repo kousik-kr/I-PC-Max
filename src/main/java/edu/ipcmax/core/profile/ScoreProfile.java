@@ -235,6 +235,7 @@ public final class ScoreProfile {
             String fingerprint) {
         Objects.requireNonNull(arrivalProfile, "arrivalProfile");
         Objects.requireNonNull(edgeScore, "edgeScore");
+        TemporalProfileWork.increment("score_compose_calls");
         Domain requested = arrivalProfile.domain().intersection(rootDomain);
         Domain feasible = arrivalProfile.preimage(edgeScore.domain(), requested);
         if (feasible.isEmpty()) {

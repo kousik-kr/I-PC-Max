@@ -11,6 +11,7 @@ import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.profile.CandidateProfile;
 import edu.ipcmax.core.profile.PathPointer;
 import edu.ipcmax.core.profile.ScoreProfile;
+import edu.ipcmax.core.profile.TemporalProfileWork;
 import edu.ipcmax.core.profile.TimeProfile;
 
 /**
@@ -90,7 +91,163 @@ final class CanonicalPathProfileBuilder {
         TimeProfile arrival = TimeProfile.identity(rootDomain);
         ScoreProfile score = ScoreProfile.constant(rootDomain, 0);
 
-        for (int arcId : arcIds) {
+        return continueReplay(
+                graph,
+                queryHorizon,
+                selectedPivotArcIds,
+                arcIds,
+                arcIds,
+                source,
+                current,
+                destination,
+                rootDomain,
+                budget,
+                pivotId,
+                compressed,
+                arrival,
+                score,
+                vertices,
+                explicitAnchorCount,
+                usedPivotArcIds);
+    }
+
+    /**
+     * Extends an exact retained prefix without replaying its temporal edges.
+     *
+     * <p>The prefix is still structurally verified edge by edge. Only temporal
+     * composition is reused, and the final fingerprints are the same canonical
+     * full-path fingerprints produced by {@link #replay}.</p>
+     */
+    static Optional<CandidateProfile> extend(
+            TDGraph graph,
+            Domain queryHorizon,
+            Set<Integer> selectedPivotArcIds,
+            CandidateProfile prefix,
+            int source,
+            int prefixEndpoint,
+            List<Integer> suffixArcIds,
+            int destination,
+            Domain requestedDomain,
+            double budget,
+            int pivotId,
+            boolean compressed) {
+        if (graph == null
+                || queryHorizon == null
+                || selectedPivotArcIds == null
+                || prefix == null
+                || suffixArcIds == null
+                || requestedDomain == null) {
+            throw new IllegalArgumentException(
+                    "graph, pivot set, prefix, suffix, and domain are required");
+        }
+        if (budget < 0 || !Double.isFinite(budget)) {
+            throw new IllegalArgumentException(
+                    "travel budget must be finite and nonnegative");
+        }
+        Domain rootDomain = requestedDomain
+                .intersection(queryHorizon)
+                .intersection(prefix.domain());
+        if (rootDomain.isEmpty()) {
+            return Optional.empty();
+        }
+        List<Integer> prefixArcIds = prefix.stablePathId();
+        List<Integer> fullArcIds = new java.util.ArrayList<>(
+                prefixArcIds.size() + suffixArcIds.size());
+        fullArcIds.addAll(prefixArcIds);
+        fullArcIds.addAll(suffixArcIds);
+        fullArcIds = List.copyOf(fullArcIds);
+
+        int current = source;
+        int explicitAnchorCount = 0;
+        Set<Integer> usedPivotArcIds = new HashSet<>();
+        Set<Integer> vertices = new HashSet<>();
+        vertices.add(source);
+        for (int arcId : prefixArcIds) {
+            if (arcId < 0 || arcId >= graph.edgeCount()) {
+                throw new IllegalArgumentException(
+                        "candidate contains unknown arc id: " + arcId);
+            }
+            Edge edge = graph.edges().get(arcId);
+            if (edge.source() != current) {
+                throw new IllegalArgumentException(
+                        "candidate prefix is discontinuous at arc " + arcId);
+            }
+            if (!vertices.add(edge.target())) {
+                throw new IllegalArgumentException(
+                        "candidate prefix is not vertex-simple: "
+                                + prefixArcIds);
+            }
+            if (selectedPivotArcIds.contains(arcId)) {
+                explicitAnchorCount++;
+                usedPivotArcIds.add(arcId);
+            }
+            current = edge.target();
+        }
+        if (current != prefixEndpoint
+                || explicitAnchorCount != prefix.explicitAnchorCount()
+                || !usedPivotArcIds.equals(prefix.usedPivotArcIds())) {
+            throw new IllegalArgumentException(
+                    "retained prefix metadata is inconsistent");
+        }
+        TimeProfile arrival = prefix.arrivalProfile().domain()
+                .equals(rootDomain)
+                ? prefix.arrivalProfile()
+                : prefix.arrivalProfile().restrict(rootDomain);
+        ScoreProfile score = prefix.scoreProfile().domain()
+                .equals(rootDomain)
+                ? prefix.scoreProfile()
+                : prefix.scoreProfile().restrict(rootDomain);
+        TemporalProfileWork.add(
+                "canonical_replay_prefix_edges_reused",
+                prefixArcIds.size());
+        return continueReplay(
+                graph,
+                queryHorizon,
+                selectedPivotArcIds,
+                fullArcIds,
+                suffixArcIds,
+                source,
+                current,
+                destination,
+                rootDomain,
+                budget,
+                pivotId,
+                compressed,
+                arrival,
+                score,
+                vertices,
+                explicitAnchorCount,
+                usedPivotArcIds);
+    }
+
+    private static Optional<CandidateProfile> continueReplay(
+            TDGraph graph,
+            Domain queryHorizon,
+            Set<Integer> selectedPivotArcIds,
+            List<Integer> fullArcIds,
+            List<Integer> remainingArcIds,
+            int source,
+            int initialCurrent,
+            int destination,
+            Domain rootDomain,
+            double budget,
+            int pivotId,
+            boolean compressed,
+            TimeProfile initialArrival,
+            ScoreProfile initialScore,
+            Set<Integer> vertices,
+            int initialExplicitAnchorCount,
+            Set<Integer> initialUsedPivotArcIds) {
+        int current = initialCurrent;
+        int explicitAnchorCount = initialExplicitAnchorCount;
+        Set<Integer> usedPivotArcIds =
+                new HashSet<>(initialUsedPivotArcIds);
+        TimeProfile arrival = initialArrival;
+        ScoreProfile score = initialScore;
+        TemporalProfileWork.add(
+                "canonical_replay_edges", remainingArcIds.size());
+
+        for (int arcId : remainingArcIds) {
             if (arcId < 0 || arcId >= graph.edgeCount()) {
                 throw new IllegalArgumentException("candidate contains unknown arc id: " + arcId);
             }
@@ -101,7 +258,8 @@ final class CanonicalPathProfileBuilder {
                                 + ": expected source " + current);
             }
             if (!vertices.add(edge.target())) {
-                throw new IllegalArgumentException("candidate path is not vertex-simple: " + arcIds);
+                throw new IllegalArgumentException(
+                        "candidate path is not vertex-simple: " + fullArcIds);
             }
             if (selectedPivotArcIds.contains(arcId)) {
                 explicitAnchorCount++;
@@ -121,18 +279,21 @@ final class CanonicalPathProfileBuilder {
                     edgeEntry,
                     edge.scoreFunction(),
                     entryDomain,
-                    "canonical-path-edge-score:path=" + arcIds + ":arc=" + arcId);
+                    "canonical-path-edge-score:path=" + fullArcIds
+                            + ":arc=" + arcId);
             TimeProfile edgeArrival = PaceProfiles.edgeArrivalProfile(
                     edge,
                     validEntry,
-                    "canonical-path-edge-arrival:path=" + arcIds);
+                    "canonical-path-edge-arrival:path=" + fullArcIds);
             arrival = edgeEntry.compose(
                     edgeArrival,
-                    "canonical-path-arrival:path=" + arcIds + ":arc=" + arcId);
+                    "canonical-path-arrival:path=" + fullArcIds
+                            + ":arc=" + arcId);
             score = scoreBeforeEdge.add(
                     edgeScore,
                     entryDomain,
-                    "canonical-path-score:path=" + arcIds + ":arc=" + arcId);
+                    "canonical-path-score:path=" + fullArcIds
+                            + ":arc=" + arcId);
             current = edge.target();
         }
 
@@ -156,7 +317,7 @@ final class CanonicalPathProfileBuilder {
                 feasible,
                 horizonArrival.restrict(feasible),
                 score.restrict(feasible),
-                PathPointer.of(arcIds),
+                PathPointer.of(fullArcIds),
                 explicitAnchorCount,
                 pivotId,
                 compressed,

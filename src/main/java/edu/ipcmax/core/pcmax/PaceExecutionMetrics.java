@@ -28,6 +28,7 @@ public final class PaceExecutionMetrics implements AutoCloseable {
     public static final String SCORE_SUPPORT_LOOKUP = "score_support_lookup";
     public static final String PIVOT_RANKING = "pivot_ranking_diversification";
     public static final String CONNECTOR_GENERATION = "connector_generation";
+    public static final String FINAL_REDUCTION = "final_connector_reduction";
     public static final String PATH_REPLAY = "canonical_path_replay_stitching";
     public static final String BREAKPOINT_PROCESSING = "breakpoint_processing";
     public static final String EQUALITY_ROOTS = "equality_root_computation";
@@ -94,6 +95,11 @@ public final class PaceExecutionMetrics implements AutoCloseable {
                 Objects.requireNonNull(listener, "listener"), true);
     }
 
+    /** True when this instance publishes live diagnostics. */
+    public boolean enabled() {
+        return enabled;
+    }
+
     /**
      * Starts one timed phase and publishes the transition immediately.
      *
@@ -119,9 +125,21 @@ public final class PaceExecutionMetrics implements AutoCloseable {
         if (!enabled || amount == 0) {
             return;
         }
+        addCounterQuiet(name, amount);
+        publish(false);
+    }
+
+    /**
+     * Adds a high-frequency diagnostic counter without forcing a publish
+     * check. The one-second heartbeat still persists the cumulative value.
+     */
+    public void addCounterQuiet(String name, long amount) {
+        Objects.requireNonNull(name, "name");
+        if (!enabled || amount == 0) {
+            return;
+        }
         counters.computeIfAbsent(
                 name, ignored -> new LongAdder()).add(amount);
-        publish(false);
     }
 
     /** Increments one typed counter. */
@@ -188,6 +206,12 @@ public final class PaceExecutionMetrics implements AutoCloseable {
         if (!enabled) {
             return;
         }
+        long usedHeap = Runtime.getRuntime().totalMemory()
+                - Runtime.getRuntime().freeMemory();
+        observedCounters.computeIfAbsent(
+                "memory_peak_used_heap_bytes",
+                ignored -> new AtomicLong())
+                .accumulateAndGet(usedHeap, Math::max);
         long now = System.nanoTime();
         if (!force) {
             long previous = lastPublishedNanos.get();

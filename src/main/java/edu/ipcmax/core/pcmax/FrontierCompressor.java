@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -173,27 +174,55 @@ public final class FrontierCompressor {
                 .thenComparing(candidate ->
                         candidate.domain().toString()));
         List<CandidateProfile> merged = new ArrayList<>();
-        for (CandidateProfile piece : pieces) {
-            if (!merged.isEmpty()) {
-                int lastIndex = merged.size() - 1;
-                CandidateProfile joined = mergeAdjacentCompatible(
-                        merged.get(lastIndex),
-                        piece,
-                        ledger,
-                        workItem + ":merge:"
-                                + lastIndex);
-                if (joined != null) {
-                    merged.set(lastIndex, joined);
-                    metrics.increment("fragments_merged");
-                    if (ledger != null) {
-                        metrics.increment(
-                                "fragment_materializations");
-                    }
-                    continue;
-                }
+        long mergeRuns = 0;
+        long maximumRun = 0;
+        metrics.addCounter(
+                "fragment_merge_input_fragments",
+                pieces.size());
+        for (int start = 0; start < pieces.size();) {
+            int end = start + 1;
+            while (end < pieces.size()
+                    && canMergeAdjacent(
+                            pieces.get(end - 1),
+                            pieces.get(end))) {
+                end++;
             }
-            merged.add(piece);
+            int mergeCount = end - start - 1;
+            if (mergeCount == 0) {
+                merged.add(pieces.get(start));
+            } else {
+                mergeRuns++;
+                maximumRun = Math.max(
+                        maximumRun, end - start);
+                if (ledger != null) {
+                    for (int offset = 0;
+                            offset < mergeCount;
+                            offset++) {
+                        if (!ledger.reserve(
+                                PaceWorkKind.FRAGMENT_MATERIALIZATION,
+                                workItem + ":merge:"
+                                        + (merged.size() + offset))) {
+                            throw PaceWorkLimitReachedException.INSTANCE;
+                        }
+                    }
+                }
+                metrics.addCounter(
+                        "fragments_merged", mergeCount);
+                if (ledger != null) {
+                    metrics.addCounter(
+                            "fragment_materializations",
+                            mergeCount);
+                }
+                merged.add(mergeCompatibleRun(
+                        pieces.subList(start, end)));
+            }
+            start = end;
         }
+        metrics.addCounter(
+                "fragment_merge_runs", mergeRuns);
+        metrics.observeCounter(
+                "fragment_merge_maximum_run",
+                maximumRun);
         CandidateSet result = new CandidateSet();
         merged.stream()
                 .sorted(CandidateSet.STABLE_ORDER)
@@ -658,10 +687,26 @@ public final class FrontierCompressor {
      * cached.
      */
     static final class DominanceMemo {
+        private static final int MAXIMUM_ENTRIES = 4_096;
         private final Map<CandidateStructure, Set<Integer>>
-                internalVertices = new HashMap<>();
+                internalVertices = boundedMap();
         private final Map<PlanKey, DominancePlan> plans =
-                new HashMap<>();
+                boundedMap();
+
+        private static <K, V> Map<K, V> boundedMap() {
+            return new LinkedHashMap<>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(
+                        Map.Entry<K, V> eldest) {
+                    return size() > MAXIMUM_ENTRIES;
+                }
+            };
+        }
+
+        synchronized void clear() {
+            internalVertices.clear();
+            plans.clear();
+        }
 
         synchronized DominancePlan plan(
                 TDGraph graph,
@@ -1189,6 +1234,21 @@ public final class FrontierCompressor {
             CandidateProfile second,
             PaceWorkLedger ledger,
             String workItem) {
+        if (!canMergeAdjacent(first, second)) {
+            return null;
+        }
+        if (ledger != null
+                && !ledger.reserve(
+                        PaceWorkKind.FRAGMENT_MATERIALIZATION,
+                        workItem)) {
+            throw PaceWorkLimitReachedException.INSTANCE;
+        }
+        return mergeCompatibleRun(List.of(first, second));
+    }
+
+    private static boolean canMergeAdjacent(
+            CandidateProfile first,
+            CandidateProfile second) {
         if (!first.stablePathId().equals(second.stablePathId())
                 || first.explicitAnchorCount() != second.explicitAnchorCount()
                 || !first.usedPivotArcIds().equals(
@@ -1201,7 +1261,7 @@ public final class FrontierCompressor {
                         second.scoreProfile().fingerprint())
                 || first.domain().intervals().size() != 1
                 || second.domain().intervals().size() != 1) {
-            return null;
+            return false;
         }
         CandidateProfile left = first;
         CandidateProfile right = second;
@@ -1213,38 +1273,118 @@ public final class FrontierCompressor {
         Domain.Interval rightInterval = right.domain().intervals().get(0);
         if (!Domain.sameTime(leftInterval.end(), rightInterval.start())
                 || !(leftInterval.endInclusive() || rightInterval.startInclusive())) {
-            return null;
+            return false;
         }
         double boundary = leftInterval.end();
         if (!Domain.sameTime(
                 left.arrivalProfile().valueAtClosure(boundary),
                 right.arrivalProfile().valueAtClosure(boundary))) {
-            return null;
+            return false;
         }
         if (leftInterval.endInclusive() && rightInterval.startInclusive()
                 && left.scoreProfile().valueAt(boundary) != right.scoreProfile().valueAt(boundary)) {
-            return null;
+            return false;
         }
-        if (ledger != null
-                && !ledger.reserve(
-                        PaceWorkKind.FRAGMENT_MATERIALIZATION,
-                        workItem)) {
-            throw PaceWorkLimitReachedException.INSTANCE;
-        }
+        return true;
+    }
 
-        Domain union = left.domain().union(right.domain());
-        TimeProfile arrival = mergeArrivalProfiles(left, right, union);
-        ScoreProfile score = mergeScoreProfiles(left, right, union);
-        int pivotId = left.pivotId() == right.pivotId() ? left.pivotId() : -1;
+    /**
+     * Materializes one maximal compatible run in linear time. The historical
+     * pairwise implementation repeatedly copied the whole accumulated profile,
+     * making a run of n temporal cells quadratic.
+     */
+    private static CandidateProfile mergeCompatibleRun(
+            List<CandidateProfile> run) {
+        CandidateProfile first = run.get(0);
+        Domain union = Domain.empty();
+        List<TimeProfile.Breakpoint> arrivalPoints =
+                new ArrayList<>();
+        List<ScoreProfile.Interval> scoreIntervals =
+                new ArrayList<>();
+        int pivotId = first.pivotId();
+        for (CandidateProfile piece : run) {
+            union = union.union(piece.domain());
+            for (TimeProfile.Breakpoint point :
+                    piece.arrivalProfile().breakpoints()) {
+                if (!arrivalPoints.isEmpty()
+                        && Domain.sameTime(
+                                arrivalPoints.get(
+                                        arrivalPoints.size() - 1)
+                                        .minute(),
+                                point.minute())) {
+                    if (!Domain.sameTime(
+                            arrivalPoints.get(
+                                    arrivalPoints.size() - 1)
+                                    .value(),
+                            point.value())) {
+                        throw new IllegalArgumentException(
+                                "incompatible arrival fragments "
+                                        + "for one path");
+                    }
+                    continue;
+                }
+                arrivalPoints.add(point);
+            }
+            appendScoreIntervals(
+                    scoreIntervals,
+                    piece.scoreProfile().intervals());
+            if (piece.pivotId() != pivotId) {
+                pivotId = -1;
+            }
+        }
+        TimeProfile arrival = TimeProfile.piecewise(
+                union,
+                arrivalPoints,
+                profileLineage(
+                        first.arrivalProfile().fingerprint())
+                        + "|restrict:" + union.intervals());
+        ScoreProfile score = ScoreProfile.piecewise(
+                union,
+                scoreIntervals,
+                profileLineage(
+                        first.scoreProfile().fingerprint())
+                        + "|restrict:" + union.intervals());
         return new CandidateProfile(
                 union,
                 arrival,
                 score,
-                left.pathPointer(),
-                left.explicitAnchorCount(),
+                first.pathPointer(),
+                first.explicitAnchorCount(),
                 pivotId,
                 true,
-                left.usedPivotArcIds());
+                first.usedPivotArcIds());
+    }
+
+    private static void appendScoreIntervals(
+            List<ScoreProfile.Interval> destination,
+            List<ScoreProfile.Interval> source) {
+        for (ScoreProfile.Interval interval : source) {
+            if (!destination.isEmpty()) {
+                ScoreProfile.Interval previous =
+                        destination.get(
+                                destination.size() - 1);
+                boolean previousPoint =
+                        previous.startMinute()
+                                == previous.endMinute();
+                boolean currentPoint =
+                        interval.startMinute()
+                                == interval.endMinute();
+                if (previousPoint
+                        && !currentPoint
+                        && Domain.sameTime(
+                                previous.startMinute(),
+                                interval.startMinute())) {
+                    if (previous.value() != interval.value()) {
+                        throw new IllegalArgumentException(
+                                "incompatible score fragments "
+                                        + "for one path");
+                    }
+                    destination.remove(
+                            destination.size() - 1);
+                }
+            }
+            destination.add(interval);
+        }
     }
 
     private static TimeProfile mergeArrivalProfiles(

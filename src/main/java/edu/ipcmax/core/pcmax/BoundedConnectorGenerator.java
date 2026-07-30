@@ -46,9 +46,9 @@ public final class BoundedConnectorGenerator {
     private final PaceWorkLedger ledger;
     private final PaceExecutionMetrics metrics;
     private final SingleFlightCache<ConnectorKey, ConnectorResult>
-            connectorCache = new SingleFlightCache<>();
+            connectorCache;
     private final SingleFlightCache<ProfileKey, Optional<CandidateProfile>>
-            profileCache = new SingleFlightCache<>();
+            profileCache;
     private final Map<Integer, Map<Integer, Double>> targetHeuristics =
             new ConcurrentHashMap<>();
 
@@ -86,6 +86,8 @@ public final class BoundedConnectorGenerator {
         this.ledger = ledger;
         this.metrics = java.util.Objects.requireNonNull(
                 metrics, "metrics");
+        this.connectorCache = new SingleFlightCache<>(4_096);
+        this.profileCache = new SingleFlightCache<>(16_384);
     }
 
     public ConnectorResult connect(
@@ -245,6 +247,7 @@ public final class BoundedConnectorGenerator {
             List<WeightedPath> output,
             Counter expansions,
             Map<Integer, Double> heuristic) {
+        PaceCancellation.checkpoint();
         expansions.value++;
         if (current == target) {
             output.add(new WeightedPath(path, pathWeight));
@@ -330,6 +333,7 @@ public final class BoundedConnectorGenerator {
                         : List.of(StreamKind.FAST);
         while (hasWork(streams)
                 && valid.size() < options.connectorLimitKc()) {
+            PaceCancellation.checkpoint();
             StreamKind kind = schedule.get(
                     scheduleIndex++ % schedule.size());
             PriorityQueue<PathState> queue = streams.get(kind);
@@ -504,6 +508,28 @@ public final class BoundedConnectorGenerator {
         return connectorCache.waits() + profileCache.waits();
     }
 
+    public long cacheEvictions() {
+        return connectorCache.evictions()
+                + profileCache.evictions();
+    }
+
+    public long cachePeakEntries() {
+        return connectorCache.peakSize()
+                + profileCache.peakSize();
+    }
+
+    /** Releases all query-local connector and profile-index state. */
+    public void releaseCaches() {
+        observeCacheMetrics();
+        metrics.observeCounter(
+                "cache_evictions", cacheEvictions());
+        metrics.observeCounter(
+                "cache_peak_entries", cachePeakEntries());
+        connectorCache.clear();
+        profileCache.clear();
+        targetHeuristics.clear();
+    }
+
     private void observeCacheMetrics() {
         metrics.observeCounter(
                 "cache_hits", cacheHits());
@@ -513,6 +539,10 @@ public final class BoundedConnectorGenerator {
                 "cache_lookups", cacheLookups());
         metrics.observeCounter(
                 "cache_waits", cacheWaits());
+        metrics.observeCounter(
+                "cache_evictions", cacheEvictions());
+        metrics.observeCounter(
+                "cache_peak_entries", cachePeakEntries());
     }
 
     private Map<Integer, Double> heuristicTo(int target) {
@@ -531,6 +561,7 @@ public final class BoundedConnectorGenerator {
         distances.put(target, 0.0);
         queue.add(new HeuristicLabel(target, 0.0));
         while (!queue.isEmpty()) {
+            PaceCancellation.checkpoint();
             HeuristicLabel current = queue.poll();
             if (current.distance() > distances.getOrDefault(
                     current.node(), Double.POSITIVE_INFINITY)) {

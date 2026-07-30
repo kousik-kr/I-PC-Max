@@ -67,6 +67,7 @@ public final class PaceBench {
             "envelope_extraction", "profile_serialization", "reference_comparison",
             "corridor_construction", "feasible_entry_band_computation",
             "score_support_lookup", "pivot_ranking_diversification",
+            "final_connector_reduction",
             "canonical_path_replay_stitching", "breakpoint_processing",
             "equality_root_computation", "fragment_restriction_merge",
             "statistics");
@@ -100,6 +101,41 @@ public final class PaceBench {
             "retained_fragments", "dropped_fragments", "fragments_merged",
             "fragment_restrictions", "fragment_materializations",
             "fragment_materialization_cache_hits",
+            "temporal_preimage_calls", "temporal_compose_calls",
+            "score_compose_calls", "temporal_segments_visited",
+            "temporal_cut_attempts", "temporal_cuts_created",
+            "temporal_cuts_deduplicated",
+            "canonical_replay_requests", "canonical_replay_unique_requests",
+            "canonical_replay_cache_hits", "canonical_replay_cache_misses",
+            "canonical_replay_cache_evictions",
+            "final_reduction_input_candidates",
+            "final_reduction_distinct_path_ids",
+            "final_reduction_observed_workers",
+            "final_reduction_maximum_active_workers",
+            "canonical_replay_repeated_prefixes",
+            "canonical_prefix_cache_hits", "canonical_prefix_cache_misses",
+            "canonical_prefix_cache_waits",
+            "canonical_prefix_cache_evictions",
+            "canonical_prefix_cache_peak_entries",
+            "canonical_replay_edges", "canonical_replay_prefix_edges_reused",
+            "canonical_replay_batches", "parallel_canonical_replay_tasks",
+            "fragment_reference_cells", "fragment_reference_components",
+            "fragment_reference_cells_coalesced",
+            "fragment_merge_input_fragments",
+            "fragment_merge_runs", "fragment_merge_maximum_run",
+            "fragment_materialization_cache_evictions",
+            "fragment_materialization_cache_peak_entries",
+            "identical_fragment_domain_requests",
+            "retained_cell_references_peak",
+            "retained_profile_fragments_peak",
+            "memory_peak_used_heap_bytes",
+            "memory_before_graph_load_used_heap_bytes",
+            "memory_after_graph_load_used_heap_bytes",
+            "memory_after_preprocess_used_heap_bytes",
+            "memory_before_final_reduction_used_heap_bytes",
+            "memory_during_replay_used_heap_bytes",
+            "memory_after_final_reduction_used_heap_bytes",
+            "memory_after_query_used_heap_bytes",
             "frontier_layer_batches", "frontier_layer_batch_offers",
             "parallel_affected_cell_tasks",
             "feasible_entry_bands", "empty_feasible_entry_bands",
@@ -109,7 +145,8 @@ public final class PaceBench {
             "mq_fragment_materialization",
             "mq_dominance_check", "mq_equality_root_check",
             "cache_hits", "cache_misses", "cache_lookups",
-            "cache_waits");
+            "cache_waits", "cache_evictions", "cache_peak_entries",
+            "canonical_replay_cache_peak_entries");
 
     private PaceBench() {
     }
@@ -133,12 +170,16 @@ public final class PaceBench {
         String configHash = ProfileSupport.sha256(normalizedJson);
         System.err.println("effective_configuration=" + normalizedJson);
 
-        if (!options.internalWorker && (options.timeoutSeconds > 0 || options.memoryLimitMb > 0)) {
+        if (!options.internalWorker
+                && (options.timeoutSeconds > 0
+                    || options.memoryLimitMb > 0)) {
             return executeIsolated(options, configHash);
         }
 
+        long beforeGraphLoadHeap = usedMemory();
         long loadStarted = System.nanoTime();
         LoadedDataset loaded = loadDataset(options.dataset);
+        long afterGraphLoadHeap = usedMemory();
         long preprocessingNanos = System.nanoTime() - loadStarted;
         List<QueryManifestEntry> queries = options.queryFile == null
                 ? generateQueries(loaded, options)
@@ -176,13 +217,15 @@ public final class PaceBench {
             if (options.internalWorker) {
                 failures += runOne(options, algorithm, reference, loaded.graph, entry, configHash,
                         preprocessingNanos, datasetRecord, systemRecord, options.internalWarmup,
-                        options.internalRepetition, completedIds, externalReferences);
+                        options.internalRepetition, completedIds, externalReferences,
+                        beforeGraphLoadHeap, afterGraphLoadHeap);
                 break;
             }
             for (int warmup = 0; warmup < options.warmupRuns; warmup++) {
                 failures += runOne(options, algorithm, reference, loaded.graph, entry, configHash,
                         preprocessingNanos, datasetRecord, systemRecord, true, warmup,
-                        completedIds, externalReferences);
+                        completedIds, externalReferences,
+                        beforeGraphLoadHeap, afterGraphLoadHeap);
                 if (failures > 0 && options.failFast) {
                     return 1;
                 }
@@ -190,7 +233,8 @@ public final class PaceBench {
             for (int repetition = 0; repetition < options.repetitions; repetition++) {
                 failures += runOne(options, algorithm, reference, loaded.graph, entry, configHash,
                         preprocessingNanos, datasetRecord, systemRecord, false, repetition,
-                        completedIds, externalReferences);
+                        completedIds, externalReferences,
+                        beforeGraphLoadHeap, afterGraphLoadHeap);
                 if (failures > 0 && options.failFast) {
                     return 1;
                 }
@@ -376,7 +420,9 @@ public final class PaceBench {
             boolean warmup,
             int repetition,
             Set<String> completedIds,
-            Map<String, String> externalReferences) throws IOException {
+            Map<String, String> externalReferences,
+            long beforeGraphLoadHeap,
+            long afterGraphLoadHeap) throws IOException {
         String runId = ProfileSupport.sha256(String.join("|", options.experimentName, configHash,
                 entry.queryId(), Boolean.toString(warmup), Integer.toString(repetition)));
         if (completedIds.contains(runId)) {
@@ -390,6 +436,12 @@ public final class PaceBench {
                 : forcedExecution(
                         options.internalForcedStatus,
                         options.internalProgressFile);
+        outcome.instrumentation.addCounter(
+                "memory_before_graph_load_used_heap_bytes",
+                beforeGraphLoadHeap);
+        outcome.instrumentation.addCounter(
+                "memory_after_graph_load_used_heap_bytes",
+                afterGraphLoadHeap);
         EnvelopeProfile referenceProfile = null;
         long referenceNanos = 0;
         if (options.internalForcedStatus == null
@@ -559,6 +611,19 @@ public final class PaceBench {
             }
         }
         executor.shutdownNow();
+        try {
+            if (!executor.awaitTermination(
+                    30, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(
+                        "query worker ignored cancellation; "
+                                + "dataset-reuse execution is unsafe");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                    "interrupted while awaiting query cleanup",
+                    interrupted);
+        }
         long runtime = System.nanoTime() - started;
         long cpuTime = processCpuTime();
         long endMemory = usedMemory();

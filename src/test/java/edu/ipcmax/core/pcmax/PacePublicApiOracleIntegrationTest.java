@@ -137,7 +137,7 @@ class PacePublicApiOracleIntegrationTest {
             String expectedChecksum =
                     repeated.lastGenerationResult()
                             .outputChecksum();
-            for (int threads : List.of(1, 2, 4, 8, 24)) {
+            for (int threads : List.of(1, 2, 4, 8, 16, 24)) {
                 PACE configured = new PACE(
                         graph, options(policy, threads));
                 byte[] configuredOutput =
@@ -170,6 +170,54 @@ class PacePublicApiOracleIntegrationTest {
         assertArrayEquals(serialOutput, parallelOutput);
         assertEquals(0, serial.stats().parallelTasksStarted());
         assertTrue(parallel.stats().parallelTasksStarted() > 0);
+    }
+
+    @Test
+    void boundedReplayAndConnectorCachesDoNotChangeCanonicalOutput() {
+        TDGraph graph = switchingGraph();
+        QuerySpec query = new QuerySpec(1, 4, 0, 10, 10, 1);
+        PaceOptions cached = options(
+                PaceExecutionPolicy.PACE_B, 4);
+        PaceFeatures defaults = PaceFeatures.defaults();
+        PaceFeatures noCaches = new PaceFeatures(
+                defaults.safeDominanceEnabled(),
+                defaults.perCellRetentionEnabled(),
+                defaults.representativeRetentionEnabled(),
+                defaults.anchorLowerBoundFilterEnabled(),
+                defaults.compressionEnabled(),
+                defaults.adjacentMergeEnabled(),
+                defaults.safeCorridorEnabled(),
+                defaults.pivotDiversificationEnabled(),
+                defaults.connectorPortfolioEnabled(),
+                false,
+                false,
+                defaults.scoreUpperBoundEnabled());
+        PaceOptions uncached = new PaceOptions(
+                cached.policy(),
+                cached.engineMode(),
+                cached.theta(),
+                cached.pivotLimitL(),
+                cached.connectorLimitKc(),
+                cached.frontierLimitKf(),
+                cached.connectorExpansionCapMc(),
+                cached.breakpointCapMb(),
+                cached.queryWorkCapMq(),
+                cached.threadCount(),
+                false,
+                noCaches,
+                cached.maxFrontierFragments());
+
+        PACE withCache = new PACE(graph, cached);
+        PACE withoutCache = new PACE(graph, uncached);
+        byte[] expected = serialize(withoutCache.run(query));
+        byte[] actual = serialize(withCache.run(query));
+
+        assertArrayEquals(expected, actual);
+        assertEquals(
+                withoutCache.lastGenerationResult()
+                        .outputChecksum(),
+                withCache.lastGenerationResult()
+                        .outputChecksum());
     }
 
     @Test

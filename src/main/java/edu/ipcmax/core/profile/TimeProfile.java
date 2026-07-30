@@ -198,6 +198,7 @@ public final class TimeProfile {
      */
     public Domain preimage(Domain target, Domain rootDomain) {
         Objects.requireNonNull(target, "target");
+        TemporalProfileWork.increment("temporal_preimage_calls");
         Domain restricted = domain.intersection(rootDomain);
         if (restricted.isEmpty() || target.isEmpty()) {
             return Domain.empty();
@@ -242,6 +243,7 @@ public final class TimeProfile {
      */
     public TimeProfile compose(TimeProfile outer, String composedFingerprint) {
         Objects.requireNonNull(outer, "outer");
+        TemporalProfileWork.increment("temporal_compose_calls");
         Domain composedDomain = preimage(outer.domain, domain);
         if (composedDomain.isEmpty()) {
             throw new IllegalArgumentException("composition domain is empty");
@@ -581,6 +583,8 @@ public final class TimeProfile {
                         i == cuts.size() - 1 ? component.endInclusive() : false));
             }
         }
+        TemporalProfileWork.add(
+                "temporal_segments_visited", result.size());
         return result;
     }
 
@@ -740,13 +744,17 @@ public final class TimeProfile {
     }
 
     private static void addCut(List<Double> cuts, double cut) {
+        TemporalProfileWork.increment("temporal_cut_attempts");
         cut = Domain.canonicalTime(cut);
         for (double existing : cuts) {
             if (approximatelyEqual(existing, cut)) {
+                TemporalProfileWork.increment(
+                        "temporal_cuts_deduplicated");
                 return;
             }
         }
         cuts.add(cut);
+        TemporalProfileWork.increment("temporal_cuts_created");
     }
 
     private static boolean lessThanOrEqual(double left, double right) {

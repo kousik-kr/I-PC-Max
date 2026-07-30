@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Run a bounded serial PACE-B query for every dataset/distance-band stratum.
 
-Queries sharing one dataset payload run sequentially in one JVM so the pilot
-does not charge repeated graph loading against a short query allowance. The
-recorded preprocessing time is added back to every stratum when projecting the
-repository's process-isolated full-job policy. Each process is bounded by an
-outer wall-clock limit and every query remains bounded by M_c, M_b, and M_q.
+Every selected query runs in its own OS worker process. The Java parent
+forcibly terminates a worker that exceeds its watchdog and serializes the last
+recovered progress snapshot as a terminal result. This deliberately pays graph
+loading per query because in-process cancellation is not safe enough for the
+large-network workload.
 """
 from __future__ import annotations
 
@@ -111,10 +111,36 @@ def _process_isolated_runtime(
     return float(query + preprocessing) / 1_000_000_000
 
 
+def _kaplan_meier_median(
+    observations: list[tuple[float, bool]],
+) -> float | None:
+    """Return the KM median; bool is True only for an observed completion."""
+    if not observations:
+        return None
+    at_risk = len(observations)
+    survival = 1.0
+    for time_value in sorted({value for value, _ in observations}):
+        events = sum(
+            observed and value == time_value
+            for value, observed in observations
+        )
+        censored = sum(
+            not observed and value == time_value
+            for value, observed in observations
+        )
+        if events:
+            survival *= 1.0 - events / at_risk
+            if survival <= 0.5:
+                return time_value
+        at_risk -= events + censored
+    return None
+
+
 def run_pilot(
     output_directory: Path,
     query_runtime_allowance: int,
     dataset_load_timeout: int,
+    resume: bool = False,
 ) -> dict[str, Any]:
     output_directory.mkdir(parents=True, exist_ok=True)
     jar = REPO_ROOT / "target/pace-bench.jar"
@@ -136,13 +162,9 @@ def run_pilot(
         manifest_rows.update({row["query_id"]: row for row in rows})
         selected_rows.extend((dataset, row) for row in _select(dataset, rows))
 
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for dataset, row in selected_rows:
-        groups.setdefault(
-            (dataset, row["metadata"]["dataset_path"]),
-            [],
-        ).append(row)
-    for group_index, ((dataset, dataset_path), rows) in enumerate(groups.items()):
+    for group_index, (dataset, row) in enumerate(selected_rows):
+        dataset_path = row["metadata"]["dataset_path"]
+        rows = [row]
         parameters = PARAMETERS[dataset]
         query_file = (
             output_directory
@@ -156,10 +178,11 @@ def run_pilot(
             / f"group-{group_index:02d}-{dataset}.jsonl"
         )
         raw.parent.mkdir(parents=True, exist_ok=True)
-        raw.unlink(missing_ok=True)
+        if not resume:
+            raw.unlink(missing_ok=True)
         command = [
             "java",
-            "-Xmx250g",
+            "-Xmx4g",
             "-jar",
             str(jar),
             "--algorithm",
@@ -188,15 +211,21 @@ def run_pilot(
             "250000000",
             "--threads",
             "24",
+            "--timeout-seconds",
+            str(query_runtime_allowance),
+            "--memory-limit-mb",
+            "256000",
             "--deterministic",
             "--collect-phase-timings",
             "--collect-memory",
             "--collect-internal-counters",
         ]
+        if resume:
+            command.append("--resume")
         external_limit = (
             dataset_load_timeout
-            + len(rows) * query_runtime_allowance
-            + 60
+            + query_runtime_allowance
+            + 120
         )
         print(
             f"pilot_group_start dataset={dataset} path={dataset_path} "
@@ -206,13 +235,25 @@ def run_pilot(
         started = time.monotonic()
         group_external_timeout = False
         return_code: int | None = None
+        log_path = (
+            output_directory
+            / "logs"
+            / f"group-{group_index:02d}-{dataset}.log"
+        )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            completed = subprocess.run(
-                command,
-                cwd=REPO_ROOT,
-                timeout=external_limit,
-                check=False,
-            )
+            with log_path.open(
+                "a" if resume else "w",
+                encoding="utf-8",
+            ) as log_stream:
+                completed = subprocess.run(
+                    command,
+                    cwd=REPO_ROOT,
+                    timeout=external_limit,
+                    check=False,
+                    stdout=log_stream,
+                    stderr=subprocess.STDOUT,
+                )
             return_code = completed.returncode
         except subprocess.TimeoutExpired:
             group_external_timeout = True
@@ -231,6 +272,7 @@ def run_pilot(
             "return_code": return_code,
             "wall_seconds": elapsed,
             "command": command,
+            "log_path": str(log_path),
         })
         for row in rows:
             record = records_by_query.get(row["query_id"])
@@ -265,7 +307,7 @@ def run_pilot(
                 if external_timeout
                 else record["status"]["status_code"]
                 if record is not None
-                else "NO_RECORD"
+                else "HARNESS_ERROR"
             )
             print(
                 f"pilot_finish dataset={dataset} "
@@ -281,7 +323,7 @@ def run_pilot(
                     "planned_jobs": len(DATASETS) * len(AXES),
                     "last_status": status,
                     "process_groups_completed": len(process_runs),
-                    "process_groups_planned": len(groups),
+                    "process_groups_planned": len(selected_rows),
                     "full_matrix_launched": False,
                 },
             )
@@ -291,15 +333,10 @@ def run_pilot(
             item["record"],
             item["wall_seconds"] + dataset_load_timeout,
         )
-        if item["record"] is not None
-        else item["wall_seconds"] + dataset_load_timeout
         for item in executions
-    ]
-    query_runtimes = [
-        _query_runtime(item["record"], item["wall_seconds"])
         if item["record"] is not None
-        else item["wall_seconds"]
-        for item in executions
+        and item["record"]["status"]["status_code"]
+        in {"COMPLETED", "NO_FEASIBLE_PATH"}
     ]
     records = [
         item["record"]
@@ -317,7 +354,7 @@ def run_pilot(
             if item["external_timeout"]
             else item["record"]["status"]["status_code"]
             if item["record"] is not None
-            else "NO_RECORD"
+            else "HARNESS_ERROR"
         )
         for item in executions
     ]
@@ -381,10 +418,33 @@ def run_pilot(
         if executions else 0.0
     )
     cap_rate = cap_count / len(executions) if executions else 0.0
+    observed_query_runtimes = [
+        _query_runtime(item["record"], item["wall_seconds"])
+        for item, status in zip(executions, statuses, strict=True)
+        if item["record"] is not None
+        and status in {"COMPLETED", "NO_FEASIBLE_PATH"}
+    ]
+    censored_statuses = {"TIMEOUT", "EXTERNAL_TIMEOUT"}
+    survival_observations = [
+        (
+            (
+                _query_runtime(item["record"], query_runtime_allowance)
+                if item["record"] is not None
+                else float(query_runtime_allowance)
+            ),
+            status not in censored_statuses,
+        )
+        for item, status in zip(executions, statuses, strict=True)
+        if status in censored_statuses
+        or status in {"COMPLETED", "NO_FEASIBLE_PATH"}
+    ]
     operationally_acceptable = (
         completion_rate >= 0.90
         and cap_rate <= 0.10
-        and not any(status in {"EXTERNAL_TIMEOUT", "NO_RECORD"} for status in statuses)
+        and not any(
+            status in {"EXTERNAL_TIMEOUT", "HARNESS_ERROR"}
+            for status in statuses
+        )
         and projected_seconds / safe_concurrency <= 90 * 86400
     )
     summary = {
@@ -394,9 +454,13 @@ def run_pilot(
             "simultaneous_queries": 1,
             "threads_per_query_maximum": 24,
             "heap_per_process": "250g",
-            "dataset_reuse_within_process": True,
-            "projection_adds_preprocessing_per_isolated_job": True,
+            "dataset_reuse_within_process": False,
+            "projection_adds_preprocessing_per_isolated_job": False,
+            "one_os_worker_process_per_query": True,
             "outer_process_group_timeout": True,
+            "per_query_watchdog": True,
+            "forced_worker_termination_before_next_query": True,
+            "resume_terminal_records": resume,
             "algorithm_caps": {
                 "M_c": 5000000,
                 "M_b": 1000000,
@@ -420,18 +484,34 @@ def run_pilot(
             "parameter_sets": PARAMETERS,
         },
         "runtime_seconds": {
-            "scope": "projected_process_isolated_preprocessing_plus_query",
+            "scope": (
+                "observed completed/no-path process-isolated "
+                "preprocessing-plus-query only"
+            ),
             "median": statistics.median(runtimes) if runtimes else None,
             "p95": _percentile(runtimes, 0.95),
             "maximum": max(runtimes) if runtimes else None,
+            "timeout_values_are_not_observed_runtimes": True,
         },
         "query_only_runtime_seconds": {
+            "scope": "observed completed/no-path queries only",
             "median": (
-                statistics.median(query_runtimes)
-                if query_runtimes else None
+                statistics.median(observed_query_runtimes)
+                if observed_query_runtimes else None
             ),
-            "p95": _percentile(query_runtimes, 0.95),
-            "maximum": max(query_runtimes) if query_runtimes else None,
+            "p95": _percentile(observed_query_runtimes, 0.95),
+            "maximum": (
+                max(observed_query_runtimes)
+                if observed_query_runtimes else None
+            ),
+            "right_censored_count": sum(
+                status in censored_statuses
+                for status in statuses
+            ),
+            "kaplan_meier_median": _kaplan_meier_median(
+                survival_observations
+            ),
+            "timeout_values_are_not_observed_runtimes": True,
         },
         "peak_rss_bytes": {
             "maximum": measured_peak,
@@ -498,6 +578,11 @@ def main() -> int:
         type=int,
         default=1800,
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="preserve terminal records and continue unfinished groups",
+    )
     args = parser.parse_args()
     if args.query_runtime_allowance_seconds < 1:
         parser.error("--query-runtime-allowance-seconds must be positive")
@@ -513,6 +598,7 @@ def main() -> int:
             output,
             args.query_runtime_allowance_seconds,
             args.dataset_load_timeout_seconds,
+            args.resume,
         )
     except (OSError, ValueError) as failure:
         print(f"stratified_pilot: {failure}", file=sys.stderr)

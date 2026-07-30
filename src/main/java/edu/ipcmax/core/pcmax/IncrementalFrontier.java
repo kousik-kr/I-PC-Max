@@ -3,6 +3,7 @@ package edu.ipcmax.core.pcmax;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,7 +32,10 @@ public final class IncrementalFrontier {
             dominanceMemo =
             new FrontierCompressor.DominanceMemo();
     private final Map<MaterializationKey, CandidateProfile>
-            materializationCache = new HashMap<>();
+            materializationCache =
+            new LinkedHashMap<>(256, 0.75f, true);
+    private final int materializationCacheLimit;
+    private long materializationCachePeak;
     private CandidateSet retained = new CandidateSet();
     private List<CellState> cells;
     private long insertions;
@@ -85,6 +89,18 @@ public final class IncrementalFrontier {
         this.metrics = java.util.Objects.requireNonNull(
                 metrics, "metrics");
         this.cellExecutor = cellExecutor;
+        long requestedCacheEntries = options.policy()
+                == PaceExecutionPolicy.PACE_X
+                ? 16_384L
+                : Math.max(
+                        1_024L,
+                        (long) options.effectiveFrontierLimit()
+                                * 512L);
+        this.materializationCacheLimit = (int) Math.min(
+                16_384L,
+                Math.min(
+                        options.maxFrontierFragments(),
+                        requestedCacheEntries));
         this.cells = domain.intervals().stream()
                 .map(interval -> new CellState(
                         interval, List.of()))
@@ -379,9 +395,11 @@ public final class IncrementalFrontier {
             List<CellState> states) {
         List<CandidateProfile> pieces =
                 new ArrayList<>();
+        long referenceCells = 0;
         for (CellState state : states) {
             for (FrontierCompressor.RetainedCellReference
                     reference : state.references()) {
+                referenceCells++;
                 RetainedKey key =
                         RetainedKey.of(reference.source());
                 Domain retainedDomain =
@@ -431,18 +449,61 @@ public final class IncrementalFrontier {
                             restricted.usedPivotArcIds());
                     materializationCache.put(
                             materializationKey, materialized);
+                    materializationCachePeak = Math.max(
+                            materializationCachePeak,
+                            materializationCache.size());
+                    trimMaterializationCache();
                 } else {
                     metrics.increment(
                             "fragment_materialization_cache_hits");
+                    metrics.increment(
+                            "identical_fragment_domain_requests");
                 }
                 pieces.add(materialized);
             }
         }
+        metrics.addCounter(
+                "fragment_reference_cells", referenceCells);
+        metrics.addCounter(
+                "fragment_reference_components", referenceCells);
+        metrics.addCounter(
+                "fragment_reference_cells_coalesced",
+                0);
+        metrics.observeCounter(
+                "fragment_materialization_cache_peak_entries",
+                materializationCachePeak);
+        metrics.observeCounter(
+                "retained_cell_references_peak",
+                referenceCells);
+        metrics.observeCounter(
+                "retained_profile_fragments_peak",
+                pieces.size());
         return FrontierCompressor.mergeCandidateFragments(
                 pieces,
                 metrics,
                 ledger,
                 "retained");
+    }
+
+    /** Clears bounded query-local materialization and dominance state. */
+    void releaseCaches() {
+        metrics.observeCounter(
+                "fragment_materialization_cache_peak_entries",
+                materializationCachePeak);
+        materializationCache.clear();
+        dominanceMemo.clear();
+    }
+
+    private void trimMaterializationCache() {
+        while (materializationCache.size()
+                > materializationCacheLimit) {
+            MaterializationKey eldest =
+                    materializationCache.keySet()
+                            .iterator().next();
+            materializationCache.remove(eldest);
+            metrics.increment(
+                    "fragment_materialization_cache_evictions");
+        }
     }
 
     private List<Double> affectedCuts(
@@ -629,4 +690,5 @@ public final class IncrementalFrontier {
             RetainedKey retainedKey,
             Domain domain) {
     }
+
 }

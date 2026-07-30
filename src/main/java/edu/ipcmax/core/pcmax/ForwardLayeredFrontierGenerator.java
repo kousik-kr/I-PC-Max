@@ -9,6 +9,7 @@ import java.util.BitSet;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -19,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import edu.ipcmax.core.cache.SingleFlightCache;
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
@@ -30,6 +32,7 @@ import edu.ipcmax.core.pcmax.PivotIndex.Pivot;
 import edu.ipcmax.core.profile.CandidateProfile;
 import edu.ipcmax.core.profile.CandidateSet;
 import edu.ipcmax.core.profile.PathPointer;
+import edu.ipcmax.core.profile.TemporalProfileWork;
 
 /**
  * Final non-recursive PACE candidate engine.
@@ -80,6 +83,18 @@ public final class ForwardLayeredFrontierGenerator {
     }
 
     public synchronized PaceGenerationResult generate(QuerySpec query) {
+        if (!metrics.enabled()) {
+            return generateMeasured(query);
+        }
+        try (TemporalProfileWork.Scope ignored =
+                TemporalProfileWork.install(
+                        metrics::addCounterQuiet)) {
+            return generateMeasured(query);
+        }
+    }
+
+    private PaceGenerationResult generateMeasured(QuerySpec query) {
+        observeMemory("memory_after_preprocess_used_heap_bytes");
         Domain rootDomain = query.departureDomain();
         double horizonEnd = Domain.canonicalTime(
                 query.departureEnd() + query.maxTravelTime());
@@ -144,6 +159,13 @@ public final class ForwardLayeredFrontierGenerator {
         IPCMaxParallelExecutor executor =
                 new IPCMaxParallelExecutor(
                         options.threadCount());
+        ReplayStore replayStore = new ReplayStore(
+                query,
+                queryHorizon,
+                pivots,
+                ledger,
+                executor,
+                stats);
         IncrementalFrontier completed =
                 new IncrementalFrontier(
                         graph,
@@ -179,11 +201,13 @@ public final class ForwardLayeredFrontierGenerator {
             for (int depth = 0;
                     depth <= maximumDepth && !current.isEmpty();
                     depth++) {
+                PaceCancellation.checkpoint();
                 Map<StateKey, IncrementalFrontier> next =
                         new TreeMap<>();
                 outer:
                 for (Map.Entry<StateKey, IncrementalFrontier> state :
                         current.entrySet()) {
+                    PaceCancellation.checkpoint();
                     StateKey key = state.getKey();
                     for (CandidateProfile profile :
                             state.getValue().candidates().candidates()) {
@@ -214,15 +238,12 @@ public final class ForwardLayeredFrontierGenerator {
                                     finalWork,
                                     stats);
                             reduceFinal(
-                                    query,
-                                    queryHorizon,
-                                    pivots,
-                                    ledger,
                                     partial,
                                     finalDomain,
                                     result,
                                     completed,
-                                    stats);
+                                    stats,
+                                    replayStore);
                             if (ledger.capStatus().reached(
                                     PaceCapKind.QUERY_WORK_M_Q)) {
                                 queryWorkStopped = true;
@@ -301,15 +322,12 @@ public final class ForwardLayeredFrontierGenerator {
                         for (PivotConnector result : results) {
                             stats.addConnector(result.result());
                             reducePivot(
-                                    query,
-                                    queryHorizon,
-                                    pivots,
-                                    ledger,
                                     partial,
                                     result,
                                     next,
                                     stats,
-                                    executor);
+                                    executor,
+                                    replayStore);
                             if (ledger.capStatus().reached(
                                     PaceCapKind.QUERY_WORK_M_Q)) {
                                 queryWorkStopped = true;
@@ -327,6 +345,9 @@ public final class ForwardLayeredFrontierGenerator {
         }
         PaceCapStatus caps = ledger.capStatus();
         CandidateSet rootFrontier = completed.candidates();
+        completed.releaseCaches();
+        current.values().forEach(
+                IncrementalFrontier::releaseCaches);
         PaceCompletion completion = completion(
                 rootFrontier, caps, options.policy());
         PaceExactnessScope exactness = exactness(
@@ -348,6 +369,9 @@ public final class ForwardLayeredFrontierGenerator {
                     ledger,
                     outputChecksum);
         }
+        replayStore.release();
+        connectors.releaseCaches();
+        observeMemory("memory_after_query_used_heap_bytes");
         lastResult = new PaceGenerationResult(
                 rootFrontier,
                 completion,
@@ -461,28 +485,50 @@ public final class ForwardLayeredFrontierGenerator {
     }
 
     private void reduceFinal(
-            QuerySpec query,
-            Domain queryHorizon,
-            PivotIndex pivots,
-            PaceWorkLedger ledger,
             PartialCandidate partial,
             Domain rootDomain,
             ConnectorResult connectors,
             IncrementalFrontier completed,
-            MutableStats stats) {
+            MutableStats stats,
+            ReplayStore replayStore) {
+        observeMemory(
+                "memory_before_final_reduction_used_heap_bytes");
+        List<ReplayRequest> requests = new ArrayList<>();
         for (CandidateProfile connector : connectors.connectors()) {
             PathPointer pointer = PathPointer.concat(
                     partial.profile().pathPointer(),
                     connector.pathPointer());
-            Optional<CandidateProfile> replayed = replay(
-                    query,
-                    queryHorizon,
-                    pivots,
-                    ledger,
+            requests.add(new ReplayRequest(
+                    partial.profile(),
+                    partial.endpoint(),
+                    connector.pathPointer(),
                     pointer,
-                    query.destination(),
                     rootDomain,
-                    "complete");
+                    replayStore.query.destination(),
+                    "complete"));
+        }
+        metrics.addCounter(
+                "final_reduction_input_candidates",
+                requests.size());
+        metrics.addCounter(
+                "final_reduction_distinct_path_ids",
+                requests.stream()
+                        .map(request ->
+                                request.pointer()
+                                        .stablePathId())
+                        .distinct()
+                        .count());
+        List<Optional<CandidateProfile>> replayedBatch;
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.FINAL_REDUCTION)) {
+            replayedBatch = replayStore.replayBatch(requests);
+        }
+        for (int index = 0; index < requests.size(); index++) {
+            ReplayRequest request = requests.get(index);
+            Optional<CandidateProfile> replayed =
+                    replayStore.accept(
+                            request,
+                            replayedBatch.get(index));
             if (replayed.isEmpty()) {
                 stats.invalidConnectors++;
                 continue;
@@ -490,49 +536,58 @@ public final class ForwardLayeredFrontierGenerator {
             stats.candidatesGenerated++;
             if (completed.insert(
                     replayed.orElseThrow(),
-                    "root:" + pointer.stablePathId())) {
+                    "root:" + request.pointer().stablePathId())) {
                 stats.candidatesRetained++;
             }
         }
+        observeMemory(
+                "memory_after_final_reduction_used_heap_bytes");
     }
 
     private void reducePivot(
-            QuerySpec query,
-            Domain queryHorizon,
-            PivotIndex pivots,
-            PaceWorkLedger ledger,
             PartialCandidate partial,
             PivotConnector connectorResult,
             Map<StateKey, IncrementalFrontier> next,
             MutableStats stats,
-            IPCMaxParallelExecutor executor) {
+            IPCMaxParallelExecutor executor,
+            ReplayStore replayStore) {
         PivotExpansion expansion = connectorResult.expansion();
         Pivot pivot = expansion.pivot();
         Edge pivotEdge = graph.edges().get(pivot.arcId());
-        List<CandidateProfile> layerOffers =
-                new ArrayList<>();
+        List<ReplayRequest> requests = new ArrayList<>();
         for (CandidateProfile connector :
                 connectorResult.result().connectors()) {
-            PathPointer pointer = PathPointer.concat(
-                    partial.profile().pathPointer(),
+            PathPointer suffix = PathPointer.concat(
                     connector.pathPointer(),
                     PathPointer.arc(pivot.arcId()));
+            PathPointer pointer = PathPointer.concat(
+                    partial.profile().pathPointer(),
+                    suffix);
             if (!isSimple(
-                    query.source(),
+                    replayStore.query.source(),
                     pointer,
                     pivotEdge.target())) {
                 stats.invalidConnectors++;
                 continue;
             }
-            Optional<CandidateProfile> replayed = replay(
-                    query,
-                    queryHorizon,
-                    pivots,
-                    ledger,
+            requests.add(new ReplayRequest(
+                    partial.profile(),
+                    partial.endpoint(),
+                    suffix,
                     pointer,
-                    pivot.target(),
                     expansion.rootDomain(),
-                    "pivot-" + pivot.arcId());
+                    pivot.target(),
+                    "pivot-" + pivot.arcId()));
+        }
+        List<CandidateProfile> layerOffers =
+                new ArrayList<>();
+        List<Optional<CandidateProfile>> replayedBatch =
+                replayStore.replayBatch(requests);
+        for (int index = 0; index < requests.size(); index++) {
+            Optional<CandidateProfile> replayed =
+                    replayStore.accept(
+                            requests.get(index),
+                            replayedBatch.get(index));
             if (replayed.isEmpty()) {
                 stats.invalidConnectors++;
                 continue;
@@ -552,77 +607,14 @@ public final class ForwardLayeredFrontierGenerator {
         IncrementalFrontier frontier = next.computeIfAbsent(
                 key,
                 ignored -> stateFrontier(
-                        query,
+                        replayStore.query,
                         pivot.target(),
-                        ledger,
+                        replayStore.ledger,
                         executor));
         stats.candidatesRetained += frontier.insertLayer(
                 layerOffers,
                 "layer=" + key.depth()
                         + ":pivot=" + pivot.arcId());
-    }
-
-    private Optional<CandidateProfile> replay(
-            QuerySpec query,
-            Domain queryHorizon,
-            PivotIndex pivots,
-            PaceWorkLedger ledger,
-            PathPointer pointer,
-            int endpoint,
-            Domain domain,
-            String context) {
-        Optional<CandidateProfile> replayed =
-                replayPath(
-                        query,
-                        queryHorizon,
-                        pivots,
-                        pointer,
-                        endpoint,
-                        domain);
-        if (replayed.isEmpty()) {
-            return replayed;
-        }
-        CandidateProfile flat = replayed.orElseThrow();
-        int breakpoints =
-                flat.arrivalProfile().breakpoints().size()
-                + flat.scoreProfile().breakpoints().size();
-        if (!ledger.acceptsBreakpoints(
-                breakpoints,
-                context + ":" + pointer.stablePathId())) {
-            return Optional.empty();
-        }
-        return Optional.of(new CandidateProfile(
-                flat.domain(),
-                flat.arrivalProfile(),
-                flat.scoreProfile(),
-                pointer,
-                flat.explicitAnchorCount(),
-                flat.pivotId(),
-                flat.compressed(),
-                flat.usedPivotArcIds()));
-    }
-
-    private Optional<CandidateProfile> replayPath(
-            QuerySpec query,
-            Domain queryHorizon,
-            PivotIndex pivots,
-            PathPointer pointer,
-            int endpoint,
-            Domain domain) {
-        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
-                PaceExecutionMetrics.PATH_REPLAY)) {
-            return CanonicalPathProfileBuilder.replay(
-                    graph,
-                    queryHorizon,
-                    Set.copyOf(pivots.selectedArcIds()),
-                    pointer.stablePathId(),
-                    query.source(),
-                    endpoint,
-                    domain,
-                    query.maxTravelTime(),
-                    -1,
-                    false);
-        }
     }
 
     private Domain residualDomain(
@@ -803,6 +795,16 @@ public final class ForwardLayeredFrontierGenerator {
         digest.update(bytes);
     }
 
+    private void observeMemory(String counter) {
+        if (!metrics.enabled()) {
+            return;
+        }
+        metrics.observeCounter(
+                counter,
+                Runtime.getRuntime().totalMemory()
+                        - Runtime.getRuntime().freeMemory());
+    }
+
     private PaceGenerationResult emptyResult() {
         return new PaceGenerationResult(
                 new CandidateSet(),
@@ -813,6 +815,405 @@ public final class ForwardLayeredFrontierGenerator {
                 "",
                 List.of(),
                 "");
+    }
+
+    /**
+     * Query-local, bounded replay coordinator. Unique suffix computations may
+     * run concurrently; their results are always returned and inserted in the
+     * original deterministic producer order.
+     */
+    private final class ReplayStore {
+        private static final int MAXIMUM_ENTRIES = 32_768;
+
+        private final QuerySpec query;
+        private final Domain queryHorizon;
+        private final List<Integer> selectedPivotArcIds;
+        private final Set<Integer> selectedPivotArcIdSet;
+        private final PaceWorkLedger ledger;
+        private final IPCMaxParallelExecutor executor;
+        private final MutableStats stats;
+        private final boolean cacheEnabled;
+        private final Set<Long> replayWorkerThreads =
+                ConcurrentHashMap.newKeySet();
+        private final AtomicInteger activeReplayWorkers =
+                new AtomicInteger();
+        private final AtomicInteger maximumReplayWorkers =
+                new AtomicInteger();
+        private final LinkedHashMap<ReplayKey,
+                Optional<CandidateProfile>> cache =
+                new LinkedHashMap<>(256, 0.75f, true);
+        private final SingleFlightCache<ReplayPrefixKey,
+                Optional<CandidateProfile>> prefixCache =
+                new SingleFlightCache<>(8_192);
+        private long peakEntries;
+
+        ReplayStore(
+                QuerySpec query,
+                Domain queryHorizon,
+                PivotIndex pivots,
+                PaceWorkLedger ledger,
+                IPCMaxParallelExecutor executor,
+                MutableStats stats) {
+            this.query = query;
+            this.queryHorizon = queryHorizon;
+            this.selectedPivotArcIds =
+                    List.copyOf(pivots.selectedArcIds());
+            this.selectedPivotArcIdSet =
+                    Set.copyOf(selectedPivotArcIds);
+            this.ledger = ledger;
+            this.executor = executor;
+            this.stats = stats;
+            this.cacheEnabled =
+                    options.memoizationEnabled()
+                    && options.features().profileCacheEnabled();
+        }
+
+        List<Optional<CandidateProfile>> replayBatch(
+                List<ReplayRequest> requests) {
+            metrics.increment("canonical_replay_batches");
+            metrics.addCounter(
+                    "canonical_replay_requests", requests.size());
+            if (requests.isEmpty()) {
+                return List.of();
+            }
+            if (!cacheEnabled) {
+                metrics.addCounter(
+                        "canonical_replay_unique_requests",
+                        requests.size());
+                metrics.addCounter(
+                        "canonical_replay_cache_misses",
+                        requests.size());
+                return executeUnique(requests);
+            }
+
+            List<Optional<CandidateProfile>> answers =
+                    new ArrayList<>(requests.size());
+            for (int index = 0; index < requests.size(); index++) {
+                answers.add(null);
+            }
+            LinkedHashMap<ReplayKey, PendingReplay> pending =
+                    new LinkedHashMap<>();
+            Set<ReplayPrefixKey> distinctPrefixes =
+                    new java.util.HashSet<>();
+            long hits = 0;
+            for (int index = 0;
+                    index < requests.size();
+                    index++) {
+                ReplayRequest request = requests.get(index);
+                ReplayKey key = key(request);
+                distinctPrefixes.add(prefixKey(request));
+                Optional<CandidateProfile> cached =
+                        cache.get(key);
+                if (cached != null) {
+                    answers.set(index, cached);
+                    hits++;
+                    continue;
+                }
+                PendingReplay existing = pending.get(key);
+                if (existing != null) {
+                    existing.indices().add(index);
+                    hits++;
+                    continue;
+                }
+                List<Integer> indices = new ArrayList<>();
+                indices.add(index);
+                pending.put(
+                        key,
+                        new PendingReplay(request, indices));
+            }
+            metrics.addCounter(
+                    "canonical_replay_cache_hits", hits);
+            metrics.addCounter(
+                    "canonical_replay_cache_misses",
+                    pending.size());
+            metrics.addCounter(
+                    "canonical_replay_unique_requests",
+                    pending.size());
+            metrics.addCounter(
+                    "canonical_replay_repeated_prefixes",
+                    Math.max(
+                            0,
+                            requests.size()
+                                    - distinctPrefixes.size()));
+            List<PendingReplay> unique =
+                    List.copyOf(pending.values());
+            List<Optional<CandidateProfile>> computed =
+                    executeUnique(unique.stream()
+                            .map(PendingReplay::request)
+                            .toList());
+            int resultIndex = 0;
+            for (Map.Entry<ReplayKey, PendingReplay> entry :
+                    pending.entrySet()) {
+                Optional<CandidateProfile> value =
+                        computed.get(resultIndex++);
+                for (int index : entry.getValue().indices()) {
+                    answers.set(index, value);
+                }
+                cache.put(entry.getKey(), value);
+                peakEntries = Math.max(peakEntries, cache.size());
+                trimCache();
+            }
+            metrics.observeCounter(
+                    "canonical_replay_cache_peak_entries",
+                    peakEntries);
+            return List.copyOf(answers);
+        }
+
+        Optional<CandidateProfile> accept(
+                ReplayRequest request,
+                Optional<CandidateProfile> replayed) {
+            if (replayed.isEmpty()) {
+                return replayed;
+            }
+            CandidateProfile flat = replayed.orElseThrow();
+            int breakpoints =
+                    flat.arrivalProfile().breakpoints().size()
+                    + flat.scoreProfile().breakpoints().size();
+            if (!ledger.acceptsBreakpoints(
+                    breakpoints,
+                    request.context() + ":"
+                            + request.pointer().stablePathId())) {
+                return Optional.empty();
+            }
+            return Optional.of(new CandidateProfile(
+                    flat.domain(),
+                    flat.arrivalProfile(),
+                    flat.scoreProfile(),
+                    request.pointer(),
+                    flat.explicitAnchorCount(),
+                    flat.pivotId(),
+                    flat.compressed(),
+                    flat.usedPivotArcIds()));
+        }
+
+        void release() {
+            metrics.observeCounter(
+                    "canonical_replay_cache_peak_entries",
+                    peakEntries);
+            cache.clear();
+            metrics.observeCounter(
+                    "canonical_prefix_cache_hits",
+                    prefixCache.hits());
+            metrics.observeCounter(
+                    "canonical_prefix_cache_misses",
+                    prefixCache.misses());
+            metrics.observeCounter(
+                    "canonical_prefix_cache_waits",
+                    prefixCache.waits());
+            metrics.observeCounter(
+                    "canonical_prefix_cache_evictions",
+                    prefixCache.evictions());
+            metrics.observeCounter(
+                    "canonical_prefix_cache_peak_entries",
+                    prefixCache.peakSize());
+            prefixCache.clear();
+            metrics.checkpoint("query_local_caches_released");
+        }
+
+        private List<Optional<CandidateProfile>> executeUnique(
+                List<ReplayRequest> requests) {
+            List<Callable<Optional<CandidateProfile>>> tasks =
+                    new ArrayList<>(requests.size());
+            for (ReplayRequest request : requests) {
+                tasks.add(() -> {
+                    stats.workerEntered();
+                    replayWorkerThreads.add(
+                            Thread.currentThread().getId());
+                    int active =
+                            activeReplayWorkers.incrementAndGet();
+                    maximumReplayWorkers.accumulateAndGet(
+                            active, Math::max);
+                    metrics.observeCounter(
+                            "final_reduction_observed_workers",
+                            replayWorkerThreads.size());
+                    metrics.observeCounter(
+                            "final_reduction_maximum_active_workers",
+                            maximumReplayWorkers.get());
+                    try {
+                        return replayUncached(request);
+                    } finally {
+                        activeReplayWorkers.decrementAndGet();
+                        stats.workerExited();
+                    }
+                });
+            }
+            if (options.threadCount() == 1
+                    || tasks.size() < 2) {
+                List<Optional<CandidateProfile>> result =
+                        new ArrayList<>(tasks.size());
+                for (Callable<Optional<CandidateProfile>> task :
+                        tasks) {
+                    try {
+                        result.add(task.call());
+                    } catch (Exception failure) {
+                        throw new IllegalStateException(
+                                "canonical replay failed",
+                                failure);
+                    }
+                }
+                return List.copyOf(result);
+            }
+            stats.parallelTasksStarted += tasks.size();
+            metrics.addCounter(
+                    "parallel_canonical_replay_tasks",
+                    tasks.size());
+            return executor.invokeAllDeterministic(tasks);
+        }
+
+        private Optional<CandidateProfile> replayUncached(
+                ReplayRequest request) {
+            observeMemory(
+                    "memory_during_replay_used_heap_bytes");
+            try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                    PaceExecutionMetrics.PATH_REPLAY)) {
+                if (!cacheEnabled) {
+                    return CanonicalPathProfileBuilder.replay(
+                            graph,
+                            queryHorizon,
+                            selectedPivotArcIdSet,
+                            request.pointer().stablePathId(),
+                            query.source(),
+                            request.endpoint(),
+                            request.domain(),
+                            query.maxTravelTime(),
+                            -1,
+                            false);
+                }
+                Optional<CandidateProfile> canonicalPrefix =
+                        prefixCache.getOrCompute(
+                                prefixKey(request),
+                                () -> CanonicalPathProfileBuilder.replay(
+                                        graph,
+                                        queryHorizon,
+                                        selectedPivotArcIdSet,
+                                        request.prefix()
+                                                .stablePathId(),
+                                        query.source(),
+                                        request.prefixEndpoint(),
+                                        request.domain(),
+                                        query.maxTravelTime(),
+                                        -1,
+                                        false));
+                observePrefixCacheMetrics();
+                if (canonicalPrefix.isEmpty()) {
+                    return Optional.empty();
+                }
+                if (request.suffix().edgeCount() == 0) {
+                    return canonicalPrefix;
+                }
+                return CanonicalPathProfileBuilder.extend(
+                        graph,
+                        queryHorizon,
+                        selectedPivotArcIdSet,
+                        canonicalPrefix.orElseThrow(),
+                        query.source(),
+                        request.prefixEndpoint(),
+                        request.suffix().stablePathId(),
+                        request.endpoint(),
+                        request.domain(),
+                        query.maxTravelTime(),
+                        -1,
+                        false);
+            }
+        }
+
+        private ReplayPrefixKey prefixKey(
+                ReplayRequest request) {
+            return new ReplayPrefixKey(
+                    request.prefix().stablePathId(),
+                    query.source(),
+                    request.prefixEndpoint(),
+                    request.domain(),
+                    queryHorizon,
+                    Domain.canonicalTime(
+                            query.maxTravelTime()),
+                    selectedPivotArcIds);
+        }
+
+        private void observePrefixCacheMetrics() {
+            metrics.observeCounter(
+                    "canonical_prefix_cache_hits",
+                    prefixCache.hits());
+            metrics.observeCounter(
+                    "canonical_prefix_cache_misses",
+                    prefixCache.misses());
+            metrics.observeCounter(
+                    "canonical_prefix_cache_waits",
+                    prefixCache.waits());
+            metrics.observeCounter(
+                    "canonical_prefix_cache_evictions",
+                    prefixCache.evictions());
+            metrics.observeCounter(
+                    "canonical_prefix_cache_peak_entries",
+                    prefixCache.peakSize());
+        }
+
+        private ReplayKey key(ReplayRequest request) {
+            return new ReplayKey(
+                    request.pointer().stablePathId(),
+                    query.source(),
+                    request.endpoint(),
+                    request.domain(),
+                    queryHorizon,
+                    Domain.canonicalTime(
+                            query.maxTravelTime()),
+                    selectedPivotArcIds);
+        }
+
+        private void trimCache() {
+            while (cache.size() > MAXIMUM_ENTRIES) {
+                ReplayKey eldest =
+                        cache.keySet().iterator().next();
+                cache.remove(eldest);
+                metrics.increment(
+                        "canonical_replay_cache_evictions");
+            }
+        }
+    }
+
+    private record ReplayRequest(
+            CandidateProfile prefix,
+            int prefixEndpoint,
+            PathPointer suffix,
+            PathPointer pointer,
+            Domain domain,
+            int endpoint,
+            String context) {
+    }
+
+    private record ReplayKey(
+            List<Integer> stablePathId,
+            int source,
+            int endpoint,
+            Domain domain,
+            Domain queryHorizon,
+            double budget,
+            List<Integer> selectedPivotArcIds) {
+        private ReplayKey {
+            stablePathId = List.copyOf(stablePathId);
+            selectedPivotArcIds =
+                    List.copyOf(selectedPivotArcIds);
+        }
+    }
+
+    private record ReplayPrefixKey(
+            List<Integer> stablePathId,
+            int source,
+            int endpoint,
+            Domain domain,
+            Domain queryHorizon,
+            double budget,
+            List<Integer> selectedPivotArcIds) {
+        private ReplayPrefixKey {
+            stablePathId = List.copyOf(stablePathId);
+            selectedPivotArcIds =
+                    List.copyOf(selectedPivotArcIds);
+        }
+    }
+
+    private record PendingReplay(
+            ReplayRequest request,
+            List<Integer> indices) {
     }
 
     private record PivotExpansion(
