@@ -170,6 +170,11 @@ public final class PaceBench {
         String configHash = ProfileSupport.sha256(normalizedJson);
         System.err.println("effective_configuration=" + normalizedJson);
 
+        if (options.internalWorker
+                && options.internalForcedStatus != null) {
+            return executeForcedWithoutDataset(options, configHash);
+        }
+
         if (!options.internalWorker
                 && (options.timeoutSeconds > 0
                     || options.memoryLimitMb > 0)) {
@@ -210,6 +215,14 @@ public final class PaceBench {
         Files.createDirectories(parent(options.outputJsonl));
         if (options.outputCsv != null) {
             Files.createDirectories(parent(options.outputCsv));
+        }
+        if (options.internalWorker
+                && options.internalProgressFile != null) {
+            Path ready = workerReadyPath(options.internalProgressFile);
+            Files.writeString(
+                    ready,
+                    Instant.now().toString(),
+                    StandardCharsets.UTF_8);
         }
 
         int failures = 0;
@@ -292,33 +305,43 @@ public final class PaceBench {
         Path output = temporary.resolve("result.jsonl");
         Path workerLog = temporary.resolve("worker.log");
         Path progress = temporary.resolve("progress.json");
+        Path ready = workerReadyPath(progress);
         Files.writeString(manifest, JSON.writeValueAsString(query) + System.lineSeparator(),
                 StandardCharsets.UTF_8);
         List<String> command = isolatedCommand(
-                options, manifest, output, progress, warmup, repetition, null);
+                options, manifest, output, progress, warmup, repetition, null,
+                null);
         Process process = new ProcessBuilder(command).redirectErrorStream(true)
                 .redirectOutput(workerLog.toFile()).start();
-        boolean exited;
-        if (options.timeoutSeconds > 0) {
-            exited = process.waitFor(options.timeoutSeconds + 15L, TimeUnit.SECONDS);
-        } else {
-            process.waitFor();
-            exited = true;
-        }
+        boolean exited = waitForIsolatedWorker(
+                process,
+                ready,
+                options.preprocessingTimeoutSeconds,
+                options.timeoutSeconds);
         String forcedStatus = null;
+        String forcedReason = null;
         if (!exited) {
             process.destroyForcibly();
             process.waitFor(5, TimeUnit.SECONDS);
-            forcedStatus = ExperimentStatus.TIMEOUT.name();
+            if (Files.isRegularFile(ready)) {
+                forcedStatus = ExperimentStatus.TIMEOUT.name();
+                forcedReason = "QueryWatchdogTimeout";
+            } else {
+                forcedStatus = ExperimentStatus.ERROR.name();
+                forcedReason = "PreprocessingTimeout";
+            }
         } else if (!Files.exists(output) || Files.size(output) == 0) {
             forcedStatus = options.memoryLimitMb > 0
                     ? ExperimentStatus.OUT_OF_MEMORY.name() : ExperimentStatus.ERROR.name();
+            forcedReason = options.memoryLimitMb > 0
+                    ? "WorkerMemoryFailure"
+                    : "WorkerExitedWithoutResult";
         }
         if (forcedStatus != null) {
             Files.deleteIfExists(output);
             List<String> fallback = isolatedCommand(
                     options, manifest, output, progress,
-                    warmup, repetition, forcedStatus);
+                    warmup, repetition, forcedStatus, forcedReason);
             Process fallbackProcess = new ProcessBuilder(fallback)
                     .redirectErrorStream(true)
                     .redirectOutput(ProcessBuilder.Redirect.appendTo(workerLog.toFile())).start();
@@ -356,7 +379,8 @@ public final class PaceBench {
             Path progress,
             boolean warmup,
             int repetition,
-            String forcedStatus) {
+            String forcedStatus,
+            String forcedReason) {
         Set<String> valued = Set.of(
                 "--query-file", "--output-jsonl", "--output-csv", "--repetitions", "--warmup-runs",
                 "--query-manifest-output");
@@ -389,6 +413,9 @@ public final class PaceBench {
         if (forcedStatus != null) {
             arguments.addAll(List.of("--internal-forced-status", forcedStatus));
         }
+        if (forcedReason != null) {
+            arguments.addAll(List.of("--internal-forced-reason", forcedReason));
+        }
         List<String> command = new ArrayList<>();
         command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
         if (options.memoryLimitMb > 0 && forcedStatus == null) {
@@ -397,6 +424,96 @@ public final class PaceBench {
         command.addAll(List.of("-cp", System.getProperty("java.class.path"), PaceBench.class.getName()));
         command.addAll(arguments);
         return command;
+    }
+
+    private static boolean waitForIsolatedWorker(
+            Process process,
+            Path ready,
+            int preprocessingTimeoutSeconds,
+            int queryTimeoutSeconds) throws InterruptedException {
+        int effectivePreprocessingTimeout = preprocessingTimeoutSeconds > 0
+                ? preprocessingTimeoutSeconds
+                : queryTimeoutSeconds;
+        if (effectivePreprocessingTimeout <= 0) {
+            process.waitFor();
+            return true;
+        }
+        long preprocessingDeadline = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(effectivePreprocessingTimeout);
+        while (process.isAlive() && !Files.isRegularFile(ready)) {
+            long remaining = preprocessingDeadline - System.nanoTime();
+            if (remaining <= 0) {
+                return false;
+            }
+            process.waitFor(
+                    Math.max(1L, Math.min(
+                            TimeUnit.NANOSECONDS.toMillis(remaining),
+                            250L)),
+                    TimeUnit.MILLISECONDS);
+        }
+        if (!process.isAlive()) {
+            return true;
+        }
+        if (queryTimeoutSeconds <= 0) {
+            process.waitFor();
+            return true;
+        }
+        return process.waitFor(
+                queryTimeoutSeconds + 60L,
+                TimeUnit.SECONDS);
+    }
+
+    private static Path workerReadyPath(Path progress) {
+        return progress.resolveSibling("query-ready");
+    }
+
+    private static int executeForcedWithoutDataset(
+            BenchOptions options,
+            String configHash) throws Exception {
+        List<QueryManifestEntry> queries = QueryManifestIO.read(
+                options.queryFile);
+        if (queries.size() != 1) {
+            throw new IOException(
+                    "forced isolated result requires exactly one query");
+        }
+        QueryManifestEntry query = queries.get(0);
+        Files.createDirectories(parent(options.outputJsonl));
+        Execution outcome = forcedExecution(
+                options.internalForcedStatus,
+                options.internalForcedReason,
+                options.internalProgressFile);
+        long usedHeap = usedMemory();
+        outcome.instrumentation.addCounter(
+                "memory_before_graph_load_used_heap_bytes",
+                usedHeap);
+        outcome.instrumentation.addCounter(
+                "memory_after_query_used_heap_bytes",
+                usedHeap);
+        String runId = ProfileSupport.sha256(String.join(
+                "|",
+                options.experimentName,
+                configHash,
+                query.queryId(),
+                Boolean.toString(options.internalWarmup),
+                Integer.toString(options.internalRepetition)));
+        Map<String, Object> value = record(
+                options,
+                query,
+                runId,
+                configHash,
+                options.internalWarmup,
+                options.internalRepetition,
+                null,
+                unavailableDatasetRecord(options, query),
+                systemRecord(options.threads),
+                outcome,
+                outcome.result,
+                ProfileSupport.emptyQuality(),
+                false,
+                false,
+                0);
+        appendJson(options.outputJsonl, value);
+        return 1;
     }
 
     private static void deleteTree(Path root) throws IOException {
@@ -435,6 +552,7 @@ public final class PaceBench {
                         options.internalProgressFile)
                 : forcedExecution(
                         options.internalForcedStatus,
+                        options.internalForcedReason,
                         options.internalProgressFile);
         outcome.instrumentation.addCounter(
                 "memory_before_graph_load_used_heap_bytes",
@@ -509,6 +627,7 @@ public final class PaceBench {
 
     private static Execution forcedExecution(
             String status,
+            String reason,
             Path progressPath) {
         ExperimentStatus code = ExperimentStatus.valueOf(status);
         ExperimentInstrumentation instrumentation =
@@ -518,9 +637,19 @@ public final class PaceBench {
         scalars.put("progress_snapshot_recovered", recovered);
         scalars.put("last_progress_phase",
                 instrumentation.currentPhase());
-        AlgorithmResult result = new AlgorithmResult(code, null, ExactnessScope.NOT_CERTIFIED, scalars,
-                code == ExperimentStatus.OUT_OF_MEMORY ? "MemoryLimitExceeded" : code.name(),
-                "isolated query worker terminated before returning an algorithm result");
+        String errorType = reason == null || reason.isBlank()
+                ? code == ExperimentStatus.OUT_OF_MEMORY
+                        ? "MemoryLimitExceeded"
+                        : code.name()
+                : reason;
+        AlgorithmResult result = new AlgorithmResult(
+                code,
+                null,
+                ExactnessScope.NOT_CERTIFIED,
+                scalars,
+                errorType,
+                "isolated query worker terminated before returning an "
+                        + "algorithm result (" + errorType + ")");
         long elapsed = instrumentation.elapsedNanos();
         instrumentation.setTiming("query_total", elapsed);
         return new Execution(
@@ -678,7 +807,7 @@ public final class PaceBench {
             String configHash,
             boolean warmup,
             int repetition,
-            long preprocessingNanos,
+            Long preprocessingNanos,
             Map<String, Object> datasetRecord,
             Map<String, Object> systemRecord,
             Execution outcome,
@@ -996,6 +1125,86 @@ public final class PaceBench {
         result.put("topology_seed", dataset.seed);
         result.put("temporal_seed", dataset.seed);
         result.put("score_seed", dataset.seed);
+        return result;
+    }
+
+    private static Map<String, Object> unavailableDatasetRecord(
+            BenchOptions options,
+            QueryManifestEntry query) throws IOException {
+        Map<String, Object> metadata = query.metadata();
+        JsonNode manifest = null;
+        Path datasetPath = Path.of(options.dataset);
+        Path manifestPath = datasetPath.resolve("manifest.json");
+        if (Files.isRegularFile(manifestPath)) {
+            manifest = JSON.readTree(manifestPath.toFile());
+        }
+        long nodes = manifest == null
+                ? 0
+                : manifest.path("num_nodes").asLong(0);
+        long edges = manifest == null
+                ? 0
+                : manifest.path("num_arcs").asLong(0);
+        long anchors = manifest == null
+                ? 0
+                : manifest.path("selected_score_edge_count").asLong(0);
+        Double density = manifest == null
+                || !manifest.has("score_edge_fraction")
+                ? null
+                : manifest.path("score_edge_fraction").asDouble();
+        Object seed = manifest == null || !manifest.has("seed")
+                ? metadata.getOrDefault("graph_seed", options.seed)
+                : manifest.path("seed").asLong();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("dataset_id", query.datasetId());
+        result.put(
+                "dataset_path",
+                metadata.getOrDefault("dataset_path", options.dataset));
+        result.put("runtime_graph_semantic_checksum", null);
+        result.put(
+                "dataset_payload_checksum",
+                metadata.get("dataset_payload_checksum"));
+        result.put(
+                "dataset_structure_checksum",
+                metadata.get("dataset_checksum"));
+        result.put(
+                "temporal_attribute_checksum",
+                metadata.get("temporal_attribute_checksum"));
+        result.put(
+                "checksum_scope_version",
+                "pace-explicit-dataset-checksum-scopes-v1");
+        result.put("vertices", nodes == 0 ? null : nodes);
+        result.put("edges", edges == 0 ? null : edges);
+        result.put("parallel_edges", null);
+        result.put(
+                "average_out_degree",
+                nodes == 0 ? null : (double) edges / nodes);
+        result.put("maximum_out_degree", null);
+        result.put(
+                "temporal_horizon_start",
+                manifest == null
+                        ? null
+                        : manifest.path("temporal_support")
+                                .path("start").asDouble());
+        result.put(
+                "temporal_horizon_end",
+                metadata.getOrDefault(
+                        "function_support_end",
+                        manifest == null
+                                ? null
+                                : manifest.path("temporal_support")
+                                        .path("end").asDouble()));
+        result.put("travel_time_piece_count", null);
+        result.put("score_piece_count", null);
+        result.put("average_travel_time_pieces_per_edge", null);
+        result.put("average_score_pieces_per_edge", null);
+        result.put("anchor_count", anchors == 0 ? null : anchors);
+        result.put("anchor_density", density);
+        result.put(
+                "zero_score_edge_fraction",
+                density == null ? null : 1.0 - density);
+        result.put("topology_seed", seed);
+        result.put("temporal_seed", seed);
+        result.put("score_seed", seed);
         return result;
     }
 

@@ -217,4 +217,40 @@ class PaceBenchFrameworkTest {
         assertFalse(record.path("system").path("process_id").asLong()
                 == ProcessHandle.current().pid());
     }
+
+    @Test
+    void forcedWorkerFailureSerializesWithoutLoadingTheDataset() throws Exception {
+        Path output = temporary.resolve("forced-preprocessing.jsonl");
+        Path progress = temporary.resolve("missing-progress.json");
+        Path query = temporary.resolve("one-query.jsonl");
+        Files.writeString(
+                query,
+                Files.readAllLines(
+                        Path.of("experiments/manifests/tiny.jsonl")).get(0)
+                        + System.lineSeparator());
+        assertEquals(1, PaceBench.execute(new String[] {
+                "--algorithm", "pace-b",
+                "--dataset", temporary.resolve("dataset-does-not-exist").toString(),
+                "--query-file", query.toString(),
+                "--output-jsonl", output.toString(),
+                "--internal-worker",
+                "--internal-repetition", "0",
+                "--internal-progress-file", progress.toString(),
+                "--internal-forced-status", "ERROR",
+                "--internal-forced-reason", "PreprocessingTimeout"
+        }));
+
+        JsonNode record = QueryManifestIO.mapper().readTree(
+                Files.readAllLines(output).get(0));
+        assertEquals(
+                "ERROR",
+                record.path("status").path("status_code").asText());
+        assertEquals(
+                "PreprocessingTimeout",
+                record.path("error").path("type").asText());
+        assertTrue(record.path("dataset")
+                .path("runtime_graph_semantic_checksum").isNull());
+        assertTrue(record.path("timing_ns")
+                .path("preprocessing_total").isNull());
+    }
 }

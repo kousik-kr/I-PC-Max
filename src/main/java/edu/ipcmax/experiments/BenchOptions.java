@@ -26,6 +26,7 @@ final class BenchOptions {
     int warmupRuns;
     int threads = 1;
     int timeoutSeconds;
+    int preprocessingTimeoutSeconds;
     int memoryLimitMb;
     long seed = 42;
     boolean deterministic;
@@ -68,6 +69,7 @@ final class BenchOptions {
     Path internalConfigQueryFile;
     boolean internalGeneratedQueries;
     String internalForcedStatus;
+    String internalForcedReason;
     Path internalProgressFile;
 
     static BenchOptions parse(String[] args) {
@@ -88,6 +90,9 @@ final class BenchOptions {
                 case "--warmup-runs" -> options.warmupRuns = integer(tokens, ++index, option);
                 case "--threads" -> options.threads = integer(tokens, ++index, option);
                 case "--timeout-seconds" -> options.timeoutSeconds = integer(tokens, ++index, option);
+                case "--preprocessing-timeout-seconds" ->
+                        options.preprocessingTimeoutSeconds =
+                                integer(tokens, ++index, option);
                 case "--memory-limit-mb" -> options.memoryLimitMb = integer(tokens, ++index, option);
                 case "--seed" -> options.seed = unsignedLong(tokens, ++index, option);
                 case "--deterministic" -> options.deterministic = true;
@@ -149,6 +154,8 @@ final class BenchOptions {
                         Path.of(value(tokens, ++index, option));
                 case "--internal-generated-queries" -> options.internalGeneratedQueries = true;
                 case "--internal-forced-status" -> options.internalForcedStatus = value(tokens, ++index, option);
+                case "--internal-forced-reason" -> options.internalForcedReason =
+                        value(tokens, ++index, option);
                 case "--internal-progress-file" -> options.internalProgressFile =
                         Path.of(value(tokens, ++index, option));
                 case "--internal-original-command-line" -> options.commandLine = new String(
@@ -181,7 +188,10 @@ final class BenchOptions {
         if (repetitions < 1 || warmupRuns < 0 || threads < 1 || theta < 0) {
             throw new IllegalArgumentException("repetitions/threads must be positive and theta/warmups nonnegative");
         }
-        if (timeoutSeconds < 0 || memoryLimitMb < 0 || maxFrontierFragments < 1) {
+        if (timeoutSeconds < 0
+                || preprocessingTimeoutSeconds < 0
+                || memoryLimitMb < 0
+                || maxFrontierFragments < 1) {
             throw new IllegalArgumentException("resource limits cannot be negative and frontier guard must be positive");
         }
         if (distanceBins < 1 || windowMinutes < 1) {
@@ -271,6 +281,9 @@ final class BenchOptions {
         result.put("rpq_step_minutes", rpqStepMinutes == 0 ? null : rpqStepMinutes);
         result.put("baseline_k", baselineK == 0 ? null : baselineK);
         result.put("timeout_seconds", timeoutSeconds);
+        result.put(
+                "preprocessing_timeout_seconds",
+                preprocessingTimeoutSeconds);
         result.put("memory_limit_mb", memoryLimitMb);
         result.put("max_enumerated_paths", maxEnumeratedPaths);
         result.put("max_labels", maxLabels);

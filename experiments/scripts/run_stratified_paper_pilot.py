@@ -213,6 +213,8 @@ def run_pilot(
             "24",
             "--timeout-seconds",
             str(query_runtime_allowance),
+            "--preprocessing-timeout-seconds",
+            str(dataset_load_timeout),
             "--memory-limit-mb",
             "256000",
             "--deterministic",

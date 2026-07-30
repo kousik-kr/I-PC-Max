@@ -55,8 +55,8 @@
       "required": ["dataset_id", "dataset_path", "runtime_graph_semantic_checksum", "dataset_payload_checksum", "dataset_structure_checksum", "temporal_attribute_checksum", "checksum_scope_version", "vertices", "edges", "parallel_edges", "average_out_degree", "maximum_out_degree", "temporal_horizon_start", "temporal_horizon_end", "travel_time_piece_count", "score_piece_count", "average_travel_time_pieces_per_edge", "average_score_pieces_per_edge", "anchor_count", "anchor_density", "zero_score_edge_fraction", "topology_seed", "temporal_seed", "score_seed"],
       "properties": {
         "runtime_graph_semantic_checksum": {
-          "type": "string",
-          "description": "SHA-256 of canonical in-memory directed arcs and decoded temporal functions."
+          "type": ["string", "null"],
+          "description": "SHA-256 of canonical in-memory directed arcs and decoded temporal functions; null only when an isolated worker terminates before graph loading completes."
         },
         "dataset_payload_checksum": {
           "type": ["string", "null"],

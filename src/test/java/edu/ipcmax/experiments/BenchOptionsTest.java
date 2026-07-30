@@ -20,6 +20,11 @@ class BenchOptionsTest {
     void appliesSemanticAblationOverrides() {
         assertEquals(0, parse("--algorithm", "pace-b", "--ablation", "no-anchor").theta);
         assertEquals(1, parse("--algorithm", "pace-b", "--ablation", "serial", "--threads", "8").threads);
+        assertEquals(
+                1800,
+                parse("--algorithm", "pace-b",
+                        "--preprocessing-timeout-seconds", "1800")
+                        .preprocessingTimeoutSeconds);
     }
 
     private static BenchOptions parse(String... prefix) {
