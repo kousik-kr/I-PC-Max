@@ -123,7 +123,9 @@ and visited vertex/edge masks; every returned alternative is wrapped by
 membership bit sets, deterministic key, budget metadata, and cap state
 (`src/main/java/edu/ipcmax/core/pcmax/QueryScopedConnectorLabelStore.java:17-252`,
 `TemporalLabelAlternative.java:9-53`,
-`TemporalLabelPortfolio.java:12-91`). The original temporal edge direction is
+`TemporalLabelPortfolio.java:12-91`). The two direction-specific caches are
+bounded to 8,192 completed requests and each portfolio retains the connector
+generator's bounded K_c alternatives. The original temporal edge direction is
 still used by `BoundedConnectorGenerator.connect`, so backward labels are not
 plain static reverse paths (`BoundedConnectorGenerator.java:93-183`). Cache
 disabled runs use the explicit online fallback and retain the same connector
