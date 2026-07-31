@@ -282,14 +282,30 @@ class ScalablePaceCandidateEngineTest {
         BitSet vertices = new BitSet();
         vertices.set(1);
 
-        CandidateProfile actual = labels.suffixLabels(
+        ConnectorResult firstResult = labels.suffixLabels(
                 1,
                 3,
                 Domain.closed(0, 5),
                 vertices,
                 new BitSet(),
                 20,
-                "suffix").connectors().get(0);
+                "suffix");
+        CandidateProfile actual = firstResult.connectors().get(0);
+        ConnectorResult reusedResult = labels.suffixLabels(
+                1,
+                3,
+                Domain.closed(0, 5),
+                vertices,
+                new BitSet(),
+                20,
+                "suffix-reused");
+        assertEquals(
+                firstResult.connectors().stream()
+                        .map(CandidateProfile::stablePathId)
+                        .toList(),
+                reusedResult.connectors().stream()
+                        .map(CandidateProfile::stablePathId)
+                        .toList());
         CandidateProfile expected =
                 CanonicalPathProfileBuilder.replay(
                         graph,

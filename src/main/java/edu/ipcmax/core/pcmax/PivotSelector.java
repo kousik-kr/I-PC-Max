@@ -151,26 +151,6 @@ public final class PivotSelector {
                 fromSource, "fromSource");
         java.util.Objects.requireNonNull(
                 toDestination, "toDestination");
-        Map<Integer, Domain> feasibleBands = new HashMap<>();
-        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
-                PaceExecutionMetrics.FEASIBLE_ENTRY_BANDS)) {
-            for (int arcId : corridor.directedArcIds()) {
-                Edge edge = graph.edges().get(arcId);
-                Domain band = QueryFeasibleEntryDomain.compute(
-                        corridor,
-                        lowerBounds,
-                        fromSource,
-                        toDestination,
-                        edge,
-                        graphFunctionHorizon);
-                feasibleBands.put(arcId, band);
-                metrics.increment("feasible_entry_bands");
-                if (band.isEmpty()) {
-                    metrics.increment("empty_feasible_entry_bands");
-                }
-            }
-        }
-
         LinkedHashSet<Integer> indexedScoreArcs =
                 new LinkedHashSet<>();
         try (PaceExecutionMetrics.Timer ignored = metrics.phase(
@@ -181,6 +161,36 @@ public final class PivotSelector {
                     if (corridor.containsArc(arcId)) {
                         indexedScoreArcs.add(arcId);
                     }
+                }
+            }
+        }
+
+        /*
+         * E_q^+ is exactly the score-bearing subset returned by the validated
+         * score-support index.  Feasible-entry bands are only meaningful for
+         * that subset; computing them for every corridor arc made the USA
+         * query spend most of its preparation time on arcs that could never
+         * become pivots.  The indexed set is still intersected with the
+         * corridor above, so this is a safe reduction rather than a ranking
+         * approximation.
+         */
+        Map<Integer, Domain> feasibleBands = new HashMap<>();
+        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                PaceExecutionMetrics.FEASIBLE_ENTRY_BANDS)) {
+            for (int arcId : indexedScoreArcs) {
+                Edge edge = graph.edges().get(arcId);
+                Domain band = QueryFeasibleEntryDomain.compute(
+                        corridor,
+                        lowerBounds,
+                        fromSource,
+                        toDestination,
+                        edge,
+                        graphFunctionHorizon);
+                feasibleBands.put(arcId, band);
+                metrics.increment("feasible_entry_bands");
+                metrics.increment("feasible_entry_band_score_arcs");
+                if (band.isEmpty()) {
+                    metrics.increment("empty_feasible_entry_bands");
                 }
             }
         }

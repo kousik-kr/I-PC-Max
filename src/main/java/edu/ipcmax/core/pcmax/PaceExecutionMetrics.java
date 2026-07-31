@@ -26,6 +26,8 @@ public final class PaceExecutionMetrics implements AutoCloseable {
     public static final String CORRIDOR_CONSTRUCTION = "corridor_construction";
     public static final String FORWARD_BACKWARD_LABELING =
             "forward_backward_labeling";
+    public static final String TEMPORAL_LABEL_BUILD =
+            "temporal_label_build";
     public static final String TOP_L_SELECTION =
             "top_l_anchor_selection";
     public static final String PIVOT_EXPLORATION =

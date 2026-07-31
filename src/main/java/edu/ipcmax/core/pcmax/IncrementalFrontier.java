@@ -3,6 +3,7 @@ package edu.ipcmax.core.pcmax;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,9 @@ public final class IncrementalFrontier {
             new LinkedHashMap<>(256, 0.75f, true);
     private final int materializationCacheLimit;
     private long materializationCachePeak;
+    /** Immutable per-cell contributions reused when a cell is unaffected. */
+    private Map<CellState, List<CandidateProfile>>
+            materializedCellContributions = new IdentityHashMap<>();
     private CandidateSet retained = new CandidateSet();
     private List<CellState> cells;
     private long insertions;
@@ -403,73 +407,33 @@ public final class IncrementalFrontier {
             List<CellState> states) {
         List<CandidateProfile> pieces =
                 new ArrayList<>();
+        Map<CellState, List<CandidateProfile>> nextContributions =
+                new IdentityHashMap<>();
         long referenceCells = 0;
         for (CellState state : states) {
-            for (FrontierCompressor.RetainedCellReference
-                    reference : state.references()) {
-                referenceCells++;
-                RetainedKey key =
-                        RetainedKey.of(reference.source());
-                Domain retainedDomain =
-                        Domain.of(reference.cell());
-                MaterializationKey materializationKey =
-                        new MaterializationKey(
-                                key,
-                                retainedDomain);
-                CandidateProfile materialized =
-                        materializationCache.get(
-                                materializationKey);
-                if (materialized == null) {
-                    CandidateProfile restricted =
-                            reference.source();
-                    if (!reference.source().domain().equals(
-                            retainedDomain)) {
-                        if (!ledger.reserve(
-                                PaceWorkKind.FRAGMENT_RESTRICTION,
-                                "retained:"
-                                        + key.stablePathId()
-                                        + ":restrict")) {
-                            throw PaceWorkLimitReachedException.INSTANCE;
-                        }
-                        metrics.increment(
-                                "fragment_restrictions");
-                        restricted =
-                                reference.source()
-                                        .restrict(retainedDomain);
-                    }
-                    if (!ledger.reserve(
-                            PaceWorkKind.FRAGMENT_MATERIALIZATION,
-                            "retained:"
-                                    + key.stablePathId()
-                                    + ":materialize")) {
-                        throw PaceWorkLimitReachedException.INSTANCE;
-                    }
-                    metrics.increment(
-                            "fragment_materializations");
-                    materialized = new CandidateProfile(
-                            restricted.domain(),
-                            restricted.arrivalProfile(),
-                            restricted.scoreProfile(),
-                            restricted.pathPointer(),
-                            restricted.explicitAnchorCount(),
-                            restricted.pivotId(),
-                            true,
-                            restricted.usedPivotArcIds());
-                    materializationCache.put(
-                            materializationKey, materialized);
-                    materializationCachePeak = Math.max(
-                            materializationCachePeak,
-                            materializationCache.size());
-                    trimMaterializationCache();
-                } else {
-                    metrics.increment(
-                            "fragment_materialization_cache_hits");
-                    metrics.increment(
-                            "identical_fragment_domain_requests");
-                }
-                pieces.add(materialized);
+            referenceCells += state.references().size();
+            List<CandidateProfile> contribution =
+                    materializedCellContributions.get(state);
+            if (contribution != null) {
+                metrics.increment("sparse_cells_reused");
+                metrics.addCounter(
+                        "sparse_reused_fragments",
+                        contribution.size());
+            } else {
+                metrics.increment("sparse_cells_rebuilt");
+                contribution = materializeCellContribution(state);
             }
+            contribution = List.copyOf(contribution);
+            nextContributions.put(state, contribution);
+            pieces.addAll(contribution);
         }
+        materializedCellContributions = nextContributions;
+        metrics.observeCounter(
+                "sparse_contribution_cells_peak",
+                nextContributions.size());
+        metrics.addCounter(
+                "sparse_contribution_fragments",
+                pieces.size());
         metrics.addCounter(
                 "fragment_reference_cells", referenceCells);
         metrics.addCounter(
@@ -493,12 +457,68 @@ public final class IncrementalFrontier {
                 "retained");
     }
 
+    /** Materializes exactly one affected cell, preserving endpoint ownership. */
+    private List<CandidateProfile> materializeCellContribution(
+            CellState state) {
+        List<CandidateProfile> contribution = new ArrayList<>();
+        for (FrontierCompressor.RetainedCellReference reference :
+                state.references()) {
+            RetainedKey key = RetainedKey.of(reference.source());
+            Domain retainedDomain = Domain.of(reference.cell());
+            MaterializationKey materializationKey =
+                    new MaterializationKey(key, retainedDomain);
+            CandidateProfile materialized =
+                    materializationCache.get(materializationKey);
+            if (materialized == null) {
+                CandidateProfile restricted = reference.source();
+                if (!reference.source().domain().equals(retainedDomain)) {
+                    if (!ledger.reserve(
+                            PaceWorkKind.FRAGMENT_RESTRICTION,
+                            "retained:" + key.stablePathId()
+                                    + ":restrict")) {
+                        throw PaceWorkLimitReachedException.INSTANCE;
+                    }
+                    metrics.increment("fragment_restrictions");
+                    restricted = reference.source().restrict(retainedDomain);
+                }
+                if (!ledger.reserve(
+                        PaceWorkKind.FRAGMENT_MATERIALIZATION,
+                        "retained:" + key.stablePathId()
+                                + ":materialize")) {
+                    throw PaceWorkLimitReachedException.INSTANCE;
+                }
+                metrics.increment("fragment_materializations");
+                materialized = new CandidateProfile(
+                        restricted.domain(),
+                        restricted.arrivalProfile(),
+                        restricted.scoreProfile(),
+                        restricted.pathPointer(),
+                        restricted.explicitAnchorCount(),
+                        restricted.pivotId(),
+                        true,
+                        restricted.usedPivotArcIds());
+                materializationCache.put(
+                        materializationKey, materialized);
+                materializationCachePeak = Math.max(
+                        materializationCachePeak,
+                        materializationCache.size());
+                trimMaterializationCache();
+            } else {
+                metrics.increment("fragment_materialization_cache_hits");
+                metrics.increment("identical_fragment_domain_requests");
+            }
+            contribution.add(materialized);
+        }
+        return contribution;
+    }
+
     /** Clears bounded query-local materialization and dominance state. */
     void releaseCaches() {
         metrics.observeCounter(
                 "fragment_materialization_cache_peak_entries",
                 materializationCachePeak);
         materializationCache.clear();
+        materializedCellContributions = new IdentityHashMap<>();
         dominanceMemo.clear();
     }
 

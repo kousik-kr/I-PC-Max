@@ -574,6 +574,17 @@ public final class BoundedConnectorGenerator {
                 + profileCache.peakSize();
     }
 
+    /** Query-local graph view used to materialize immutable temporal labels. */
+    TDGraph graph() {
+        return graph;
+    }
+
+    /** Whether this query permits reusable memoized temporal labels. */
+    boolean memoizationEnabled() {
+        return options.memoizationEnabled()
+                && options.features().connectorCacheEnabled();
+    }
+
     /** Releases all query-local connector and profile-index state. */
     public void releaseCaches() {
         observeCacheMetrics();

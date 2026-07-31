@@ -404,6 +404,7 @@ public final class ForwardLayeredFrontierGenerator {
                     outputChecksum);
         }
         replayStore.release();
+        labels.releaseCaches();
         connectors.releaseCaches();
         observeMemory("memory_after_query_used_heap_bytes");
         lastResult = new PaceGenerationResult(
@@ -944,6 +945,7 @@ public final class ForwardLayeredFrontierGenerator {
      */
     private final class ReplayStore {
         private static final int MAXIMUM_ENTRIES = 32_768;
+        private static final int REPLAY_EXECUTION_BATCH_SIZE = 256;
 
         private final QuerySpec query;
         private final Domain queryHorizon;
@@ -1065,6 +1067,8 @@ public final class ForwardLayeredFrontierGenerator {
                             0,
                             requests.size()
                                     - distinctPrefixes.size()));
+            /* executeUnique canonicalizes only its execution order and
+             * restores this pending-map order for the caller below. */
             List<PendingReplay> unique =
                     List.copyOf(pending.values());
             List<Optional<CandidateProfile>> computed =
@@ -1159,52 +1163,96 @@ public final class ForwardLayeredFrontierGenerator {
 
         private List<Optional<CandidateProfile>> executeUnique(
                 List<ReplayRequest> requests) {
-            List<Callable<Optional<CandidateProfile>>> tasks =
+            if (requests.isEmpty()) {
+                return List.of();
+            }
+            /*
+             * Canonicalize the execution order independently of producer
+             * order, then restore the caller's order.  Fixed-size batches keep
+             * the worker queue and temporary profile memory bounded while the
+             * executor still performs each batch in parallel.
+             */
+            List<Integer> order = new ArrayList<>(requests.size());
+            for (int index = 0; index < requests.size(); index++) {
+                order.add(index);
+            }
+            order.sort(Comparator.comparing(index ->
+                    key(requests.get(index)).toString()));
+            List<Optional<CandidateProfile>> restored =
                     new ArrayList<>(requests.size());
-            for (ReplayRequest request : requests) {
-                tasks.add(() -> {
-                    stats.workerEntered();
-                    replayWorkerThreads.add(
-                            Thread.currentThread().getId());
-                    int active =
-                            activeReplayWorkers.incrementAndGet();
-                    maximumReplayWorkers.accumulateAndGet(
-                            active, Math::max);
-                    metrics.observeCounter(
-                            "final_reduction_observed_workers",
-                            replayWorkerThreads.size());
-                    metrics.observeCounter(
-                            "final_reduction_maximum_active_workers",
-                            maximumReplayWorkers.get());
-                    try {
-                        return replayUncached(request);
-                    } finally {
-                        activeReplayWorkers.decrementAndGet();
-                        stats.workerExited();
-                    }
-                });
+            for (int index = 0; index < requests.size(); index++) {
+                restored.add(null);
             }
-            if (options.threadCount() == 1
-                    || tasks.size() < 2) {
-                List<Optional<CandidateProfile>> result =
-                        new ArrayList<>(tasks.size());
-                for (Callable<Optional<CandidateProfile>> task :
-                        tasks) {
-                    try {
-                        result.add(task.call());
-                    } catch (Exception failure) {
-                        throw new IllegalStateException(
-                                "canonical replay failed",
-                                failure);
-                    }
+            int batches = 0;
+            long largestBatch = 0;
+            for (int start = 0;
+                    start < order.size();
+                    start += REPLAY_EXECUTION_BATCH_SIZE) {
+                int end = Math.min(
+                        order.size(),
+                        start + REPLAY_EXECUTION_BATCH_SIZE);
+                List<Callable<Optional<CandidateProfile>>> tasks =
+                        new ArrayList<>(end - start);
+                List<Integer> batchOrder =
+                        order.subList(start, end);
+                for (int sortedIndex : batchOrder) {
+                    ReplayRequest request = requests.get(sortedIndex);
+                    tasks.add(() -> {
+                        stats.workerEntered();
+                        replayWorkerThreads.add(
+                                Thread.currentThread().getId());
+                        int active =
+                                activeReplayWorkers.incrementAndGet();
+                        maximumReplayWorkers.accumulateAndGet(
+                                active, Math::max);
+                        metrics.observeCounter(
+                                "final_reduction_observed_workers",
+                                replayWorkerThreads.size());
+                        metrics.observeCounter(
+                                "final_reduction_maximum_active_workers",
+                                maximumReplayWorkers.get());
+                        try {
+                            return replayUncached(request);
+                        } finally {
+                            activeReplayWorkers.decrementAndGet();
+                            stats.workerExited();
+                        }
+                    });
                 }
-                return List.copyOf(result);
+                List<Optional<CandidateProfile>> batchResult;
+                if (options.threadCount() == 1
+                        || tasks.size() < 2) {
+                    batchResult = new ArrayList<>(tasks.size());
+                    for (Callable<Optional<CandidateProfile>> task :
+                            tasks) {
+                        try {
+                            batchResult.add(task.call());
+                        } catch (Exception failure) {
+                            throw new IllegalStateException(
+                                    "canonical replay failed",
+                                    failure);
+                        }
+                    }
+                } else {
+                    stats.parallelTasksStarted += tasks.size();
+                    metrics.addCounter(
+                            "parallel_canonical_replay_tasks",
+                            tasks.size());
+                    batchResult = executor.invokeAllDeterministic(tasks);
+                }
+                for (int offset = 0; offset < batchResult.size(); offset++) {
+                    restored.set(
+                            batchOrder.get(offset),
+                            batchResult.get(offset));
+                }
+                batches++;
+                largestBatch = Math.max(largestBatch, tasks.size());
             }
-            stats.parallelTasksStarted += tasks.size();
             metrics.addCounter(
-                    "parallel_canonical_replay_tasks",
-                    tasks.size());
-            return executor.invokeAllDeterministic(tasks);
+                    "canonical_replay_execution_batches", batches);
+            metrics.observeCounter(
+                    "canonical_replay_execution_batch_peak", largestBatch);
+            return List.copyOf(restored);
         }
 
         private Optional<CandidateProfile> replayUncached(
