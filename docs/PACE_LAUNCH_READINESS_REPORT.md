@@ -14,19 +14,20 @@ The 60,486-job full matrix was not launched.
 ## 1. Provenance
 
 The validated production source is commit
-`acfee12ade8cc4fa42a036042d803596ae871108` on `main`. Every pilot raw record
-identifies that commit and records `git_dirty=false`. The earlier transition
+`6faf09343fc5a8384d096b9aed90c7931f75ef96` on `main`. The frozen pilot raw
+records predate this optimization and remain evidence for the prior source,
+with `git_dirty=false`; the unchanged pilot has not been rerun. The earlier transition
 from `9d808bf` to `9fe644a` contains only
 `docs/PACE_LARGE_NETWORK_OPTIMIZATION_AND_PILOT_REPORT.md`; no production file
 changed in that transition.
 
-Two consecutive `mvn -q clean package` runs from `acfee12` produced the same
+Two consecutive `mvn -q clean package` runs from `6faf093` produced the same
 benchmark JAR:
 
-`b6aec119e61ec2820fad8ff4a240d0c81a765aaca5a1253bba178dca793fedbf`
+`35c99224bb881c9310ec95553df9991c002b5d9b03f1a430fb8c0cce14890ff3`
 
-The report/evidence commit is the commit containing this file. It is
-intentionally separate from `acfee12`; retrieve it with:
+The report/evidence commit is the follow-up commit containing this file; the
+implementation commit remains independently identifiable with:
 
 ```bash
 git log -1 --format=%H -- docs/PACE_LAUNCH_READINESS_REPORT.md
@@ -44,8 +45,8 @@ git log -1 --format=%H -- docs/PACE_LAUNCH_READINESS_REPORT.md
 | USA query manifest | `19a9873ad3358d572f64af728f7168151ca60a80ddc19ea10ab66527bd28dcaa` |
 | Canonical 60,486-row ledger | `c9df350798d3cba309905308cc5c536e337b7485818200e9736f58bae8223aba` |
 | Final pilot summary | `af97f875f9fbc168d9783404ff532fe4f9c9304d813059e907fb1858c4661398` |
-| Exact-quality summary | `7cfa1bbf70a8a336185c5e6610836ac557ad8a58cda4b36cd0c47e43fa74eea9` |
-| Strict preflight report | `fddffaacdd55f3b6be8c7eded467bbaeee0aa4005509dfe3383a6c9c88ce3690` |
+| Exact-quality summary (optimization stage) | `724ce1b6267903262f16091320b056329fae0f77100dd385eaa458d975049951` |
+| Strict preflight report | `771be216d8bef6c55aa2316831694c3bce772c1c76ede65059fae90c06fc0b21` |
 
 The ledger hash changed from the older handoff because the configuration and
 result schema now explicitly name `PACE-MQ-TOTAL-WORK-v3`. A row-by-row
@@ -112,21 +113,37 @@ The current production entry is `PACE.generate`, which dispatches to
   `RESOURCE_TRUNCATED`; PACE-X aborts when an exact execution hits a cap
   (`ForwardLayeredFrontierGenerator.java:833-855`).
 
-### Algorithmic blocker: required temporal F/B alternatives are absent
+### Implemented optimization stage: temporal labels, replay, and sparse merge
 
-`QueryScopedConnectorLabelStore` does **not** build or retain the required
-multi-alternative temporal forward and backward label sets after constructing
-the corridor. It stores only one static lower-bound distance value per vertex
-and delegates every prefix/suffix request to the online connector generator
-(`src/main/java/edu/ipcmax/core/pcmax/QueryScopedConnectorLabelStore.java:7-15`,
-`:17-41`, `:52-87`).
+`QueryScopedConnectorLabelStore` now provides the primary query-local temporal
+forward (`S -> v`) and backward (`v -> D`) label portfolios. Each request is
+single-flight keyed by source/target, exact departure domain, residual budget,
+and visited vertex/edge masks; every returned alternative is wrapped by
+`TemporalLabelAlternative` with its immutable `CandidateProfile`, exact
+membership bit sets, deterministic key, budget metadata, and cap state
+(`src/main/java/edu/ipcmax/core/pcmax/QueryScopedConnectorLabelStore.java:17-252`,
+`TemporalLabelAlternative.java:9-53`,
+`TemporalLabelPortfolio.java:12-91`). The original temporal edge direction is
+still used by `BoundedConnectorGenerator.connect`, so backward labels are not
+plain static reverse paths (`BoundedConnectorGenerator.java:93-183`). Cache
+disabled runs use the explicit online fallback and retain the same connector
+alternatives.
 
-The online generator does return bounded alternative connector profiles and
-correctly evaluates suffixes in the original temporal direction. That is
-useful reuse, but it does not satisfy the agreed Phase 3 contract requiring
-reusable labels containing exact departure domain, arrival/travel/score
-profiles, immutable path handles, budget metadata, and exact membership.
-This is an algorithm-conformance blocker, not a test-inference issue.
+`ReplayStore.executeUnique` now canonically orders requests, partitions them
+into fixed 256-request batches, executes each batch through the bounded
+deterministic executor, and restores producer order
+(`src/main/java/edu/ipcmax/core/pcmax/ForwardLayeredFrontierGenerator.java:1160-1260`).
+Each worker still calls the independent continuity/looplessness and temporal
+replay path, and the bounded query-local replay/prefix caches retain the full
+replay key (`ForwardLayeredFrontierGenerator.java:1210-1370`).
+
+`IncrementalFrontier` now keeps immutable per-cell materialized contributions
+in an identity-indexed sparse cache. Unaffected cell states are reused and
+only changed cells are rebuilt before the existing deterministic global
+fragment merge (`src/main/java/edu/ipcmax/core/pcmax/IncrementalFrontier.java:402-540`).
+The canonical `ProfileCellPartition`, equality-root processing, endpoint
+ownership, and final merge comparator remain unchanged; the differential
+oracle therefore exercises the same envelope semantics.
 
 ### Scientific-matrix blocker: obsolete diversification ablation
 
@@ -154,12 +171,19 @@ as a negative control.
 | Worker cleanup | **PASS** — leak test passes and no Java pilot process remains |
 | Query validation | **PASS** — all four manifests validated without skipped checksums |
 | Strict preflight | **PASS** — all datasets and variants, horizon, FIFO, positive lower bounds, counts, and checksums |
-| Exact-quality artifact | **PASS** — `experiments/results/diagnostics/pace_launch_readiness_20260731/exact_quality_final_v2/summary.json:2-3`, `:179-205` |
+| Exact-quality artifact | **PASS** — optimized JAR, 12/12 records, zero disagreement in `experiments/results/diagnostics/pace_launch_readiness_20260731/exact_quality_optimization_stage/summary.json` |
 
 `PacePublicApiOracleIntegrationTest` contains the cross-thread equality,
 concurrent-overlap, worker-leak, cap/status equality, and cache-equivalence
 checks (`src/test/java/edu/ipcmax/core/pcmax/PacePublicApiOracleIntegrationTest.java:130-180`,
 `:183-263`).
+
+The optimization-stage equivalence gates are green on the tiny fixtures: the
+label-store regression compares a cached multi-alternative portfolio with the
+exact connector replay (`src/test/java/edu/ipcmax/core/pcmax/ScalablePaceCandidateEngineTest.java:274-315`),
+the 3,051-prefix incremental differential compares sparse contribution reuse
+with the batch oracle, and the public API suite compares serial/parallel
+replay and cache on/off checksums across 1, 2, 4, 8, 16, and 24 workers.
 
 The post-resume evidence correction makes per-query
 `process_end_to_end_seconds` use recorded preprocessing plus query time rather
@@ -244,23 +268,18 @@ The three completed queries spent most query time in profile merge:
 | NY band 3 | 143.566 s (59.6%) | 68.974 s | 20.061 s |
 | FLA band 1 | 157.746 s (64.4%) | 63.544 s | 13.050 s |
 
-USA exposes an additional front-end scaling defect. `PivotSelector` computes
-exact feasible-entry domains for every corridor arc before retrieving the
-score-bearing subset (`PivotSelector.java:154-185`). USA records reached
-millions of feasible bands and timed out in feasible-band computation,
-corridor construction, or even horizon validation. The latter currently scans
-every corridor arc (`ForwardLayeredFrontierGenerator.java:815-829`).
+USA exposes an additional front-end scaling defect. The optimization now
+retrieves and intersects score-bearing arc IDs before exact feasible-entry
+construction (`src/main/java/edu/ipcmax/core/pcmax/PivotSelector.java:145-198`),
+so non-score corridor arcs are no longer charged as candidate pivots. USA can
+still spend substantial time in corridor construction or the horizon scan,
+which remains a separate validated-index optimization opportunity
+(`ForwardLayeredFrontierGenerator.java:815-829`).
 
-The next correctness-preserving optimization should:
-
-1. retrieve and intersect score-bearing arc IDs before exact feasible-domain
-   construction;
-2. build the required reusable multi-alternative temporal F/B labels and serve
-   connector portfolios from them;
-3. replace per-query all-corridor horizon scans with a validated immutable
-   dataset/index invariant;
-4. reduce profile-merge materialization, dominance, and retention work without
-   changing endpoint ownership or the deterministic comparator.
+The remaining correctness-preserving optimization opportunities are to replace
+the per-query all-corridor horizon scan with a validated immutable
+dataset/index invariant and to reduce dominance/retention work without
+changing endpoint ownership or the deterministic comparator.
 
 ## 6. Twenty launch-readiness gates
 
@@ -280,7 +299,7 @@ The next correctness-preserving optimization should:
 | 12 | No OOM or `NO_RECORD` | PASS |
 | 13 | Predeclared operational pilot gate | **FAIL — 15% completion, required at least 90%** |
 | 14 | USA fits measured safe concurrency | PASS only at concurrency one |
-| 15 | Operationally acceptable projection | **FAIL** |
+| 15 | Operationally acceptable projection | **FAIL — unchanged pilot still has 17 right-censored queries** |
 | 16 | Non-overlapping timing categories | PASS |
 | 17 | Corridor and F/B time included in query time | PASS |
 | 18 | Startup separate and included in isolated end-to-end time | PASS after evidence correction |
@@ -294,19 +313,16 @@ floor requires a 13.40× speedup to fit 30 days and 28.72× to fit 14 days.
 
 ## 7. Exact blockers to authorization
 
-1. Implement reusable exact temporal multi-alternative forward/backward labels;
-   the present lower-bound facade plus online connector search does not satisfy
-   the agreed algorithm.
-2. Optimize exact feasible-entry-band construction, connector generation, and
-   incremental profile merge enough to pass at least 18/20 frozen pilot
-   queries under the declared limit.
-3. Re-run the unchanged pilot and obtain an operationally acceptable,
+1. Optimize exact connector generation, the remaining horizon/corridor scan,
+   dominance, and retention enough to pass at least 18/20 frozen pilot queries
+   under the declared limit. The label/replay/sparse-merge stage is now
+   implemented and must be measured on the unchanged pilot.
+2. Re-run the unchanged pilot and obtain an operationally acceptable,
    uncensored projection.
-4. Obtain user authorization to remove/replace or explicitly relabel the
+3. Obtain user authorization to remove/replace or explicitly relabel the
    obsolete `no-pivot-diversification` E10 axis, then regenerate and reconcile
    the ledger if the frozen matrix changes.
 
 Until those blockers are resolved, the correct status is:
 
 **NOT_READY**
-
