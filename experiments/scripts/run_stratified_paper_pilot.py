@@ -176,6 +176,10 @@ def _execution_metrics(
             _seconds(timings, "envelope_extraction"),
     }
     query_total = _seconds(timings, "query_total")
+    process_end_to_end = _process_isolated_runtime(
+        record,
+        process_seconds,
+    )
     phase_sum = sum(
         value for value in phases.values()
         if value is not None
@@ -191,7 +195,7 @@ def _execution_metrics(
             and phase_sum <= query_total + 1e-6
         ),
         "query_total_seconds": query_total,
-        "process_end_to_end_seconds": process_seconds,
+        "process_end_to_end_seconds": process_end_to_end,
         "peak_rss_bytes":
             record.get("memory_bytes", {}).get("peak_rss"),
         "requested_workers": requested,

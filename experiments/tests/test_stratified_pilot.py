@@ -61,7 +61,7 @@ class StratifiedPilotStatisticsTest(unittest.TestCase):
                 "forward_backward_labeling"
             ],
         )
-        self.assertEqual(5.5, metrics["process_end_to_end_seconds"])
+        self.assertEqual(5.0, metrics["process_end_to_end_seconds"])
         self.assertTrue(metrics["active_worker_overlap"])
         self.assertEqual(0.75, metrics["replay_cache_hit_rate"])
         self.assertEqual(
