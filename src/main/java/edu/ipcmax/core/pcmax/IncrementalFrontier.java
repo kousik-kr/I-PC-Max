@@ -137,7 +137,9 @@ public final class IncrementalFrontier {
             ledger.emergencyFrontierGuard(workItem);
             return false;
         }
-        try {
+        try (PaceExecutionMetrics.Timer ignoredProfileMerge =
+                     metrics.phase(
+                             PaceExecutionMetrics.PROFILE_MERGE)) {
             if (!options.features().compressionEnabled()
                     || !options.features().perCellRetentionEnabled()) {
                 insertUsingNonProductionAblation(normalized);
@@ -311,8 +313,14 @@ public final class IncrementalFrontier {
          */
         List<CellState> newCells = List.copyOf(updated);
         CandidateSet newRetained;
+        metrics.observeCounter(
+                "memory_during_profile_merge_used_heap_bytes",
+                Runtime.getRuntime().totalMemory()
+                        - Runtime.getRuntime().freeMemory());
         try (PaceExecutionMetrics.Timer ignored = metrics.phase(
-                PaceExecutionMetrics.FRAGMENT_MERGE)) {
+                     PaceExecutionMetrics.FRAGMENT_MERGE);
+             PaceExecutionMetrics.Timer ignoredProfileMerge =
+                     metrics.phase(PaceExecutionMetrics.PROFILE_MERGE)) {
             newRetained = rebuildRetained(
                     newCells);
         }

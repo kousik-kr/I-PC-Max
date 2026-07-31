@@ -6,30 +6,38 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
+import java.util.HashMap;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
-import edu.ipcmax.core.graph.Node;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.index.EdgeTemporalSummaryStore;
 import edu.ipcmax.core.index.GraphPartitionMetadata;
 import edu.ipcmax.core.index.ScoreSupportIndex;
 import edu.ipcmax.core.pcmax.PivotIndex.Pivot;
 
-/** Deterministic query-wide score-aware and coordinate-diverse pivot ranking. */
+/**
+ * Deterministic exact Top-L query-pivot ranking.
+ *
+ * <p>The canonical order is independent of {@code L}:
+ * {@code (-Psi, -Gamma, Delta, cellId, arcId)}. {@code Psi} is the exact
+ * maximum score on the positive feasible entry domain, {@code Gamma} is the
+ * exact measure of that domain, and {@code Delta} is the normalized
+ * lower-bound detour through the directed arc. This is the only production
+ * pivot order; the historical diversification switch is retained solely for
+ * configuration compatibility and cannot change the scientific result.</p>
+ */
 public final class PivotSelector {
     private PivotSelector() {
     }
 
     /**
-     * Retrieves score-bearing corridor arcs through the prepared score index and
-     * returns the first L pivots from one canonical coordinate-grid order.
+     * Retrieves score-bearing corridor arcs through the prepared score index
+     * and returns the first L pivots from the exact canonical order.
      */
     public static PivotIndex select(
             TDGraph graph,
@@ -53,7 +61,11 @@ public final class PivotSelector {
                 PaceExecutionMetrics.none());
     }
 
-    /** Selects pivots with an explicit diversification ablation switch. */
+    /**
+     * Selects pivots with the historical diversification argument retained for
+     * source compatibility. The exact Top-L contract deliberately ignores the
+     * argument.
+     */
     public static PivotIndex select(
             TDGraph graph,
             QueryCorridor corridor,
@@ -99,13 +111,52 @@ public final class PivotSelector {
         QueryLowerBounds.Distances toDestination =
                 lowerBounds.truncatedDistancesTo(
                         corridor.destination(), corridor.budget());
+        return select(
+                graph,
+                corridor,
+                lowerBounds,
+                partition,
+                summaries,
+                scoreIndex,
+                graphFunctionHorizon,
+                limit,
+                diversificationEnabled,
+                metrics,
+                fromSource,
+                toDestination);
+    }
 
+    /**
+     * Selects pivots using the forward and backward query labels already
+     * constructed for corridor assembly.
+     */
+    static PivotIndex select(
+            TDGraph graph,
+            QueryCorridor corridor,
+            QueryLowerBounds lowerBounds,
+            GraphPartitionMetadata partition,
+            EdgeTemporalSummaryStore summaries,
+            ScoreSupportIndex scoreIndex,
+            Domain graphFunctionHorizon,
+            int limit,
+            boolean diversificationEnabled,
+            PaceExecutionMetrics metrics,
+            QueryLowerBounds.Distances fromSource,
+            QueryLowerBounds.Distances toDestination) {
+        if (limit < 0) {
+            throw new IllegalArgumentException(
+                    "pivot limit cannot be negative");
+        }
+        java.util.Objects.requireNonNull(
+                fromSource, "fromSource");
+        java.util.Objects.requireNonNull(
+                toDestination, "toDestination");
         Map<Integer, Domain> feasibleBands = new HashMap<>();
         try (PaceExecutionMetrics.Timer ignored = metrics.phase(
                 PaceExecutionMetrics.FEASIBLE_ENTRY_BANDS)) {
             for (int arcId : corridor.directedArcIds()) {
                 Edge edge = graph.edges().get(arcId);
-                Domain band = FeasibleEntryBand.compute(
+                Domain band = QueryFeasibleEntryDomain.compute(
                         corridor,
                         lowerBounds,
                         fromSource,
@@ -153,78 +204,49 @@ public final class PivotSelector {
                 scoreFeatures.put(
                         arcId,
                         new ScoreFeatures(
-                                edge.scoreFunction().maxValue(band),
+                                edge.scoreFunction().maxValue(positive),
                                 measure(positive),
-                                band.toString()));
+                                positive.toString()));
             }
         }
         List<Integer> scoreRelevant =
                 scoreFeatures.keySet().stream().sorted().toList();
 
-        List<PivotFeatures> canonical;
+        List<PivotFeatures> canonical = new ArrayList<>();
         try (PaceExecutionMetrics.Timer ignored = metrics.phase(
                 PaceExecutionMetrics.PIVOT_RANKING)) {
-            Grid grid = Grid.forCorridor(
-                    graph, corridor, Math.max(1, limit));
-            TreeMap<GridCell, List<PivotFeatures>> byCell =
-                    new TreeMap<>();
+            double shortestLowerBound =
+                    fromSource.distance(corridor.destination());
             for (int arcId : scoreRelevant) {
                 Edge edge = graph.edges().get(arcId);
                 ScoreFeatures score = scoreFeatures.get(arcId);
-                double corridorBound = Domain.canonicalTime(
+                double throughEdgeLowerBound = Domain.canonicalTime(
                         fromSource.distance(edge.source())
                                 + lowerBounds.edgeWeight(arcId)
                                 + toDestination.distance(edge.target()));
-                double budgetSlack = Domain.canonicalTime(Math.max(
-                        0, corridor.budget() - corridorBound));
-                GridCell cell = grid.cellForEdge(graph, edge);
-                byCell.computeIfAbsent(
-                                cell, ignoredCell -> new ArrayList<>())
-                        .add(new PivotFeatures(
-                                arcId,
-                                edge.source(),
-                                edge.target(),
-                                score.maximumScore(),
-                                score.coverage(),
-                                budgetSlack,
-                                cell.stableId(),
-                                score.bandFingerprint()));
+                double normalizedDetour = normalizedDetour(
+                        throughEdgeLowerBound, shortestLowerBound);
+                canonical.add(new PivotFeatures(
+                        arcId,
+                        edge.source(),
+                        edge.target(),
+                        score.maximumScore(),
+                        score.coverage(),
+                        normalizedDetour,
+                        partition.cellForVertex(
+                                edge.source()).cellId(),
+                        score.bandFingerprint()));
             }
-            Comparator<PivotFeatures> withinCell = Comparator
+            canonical.sort(Comparator
                     .comparingInt(
                             PivotFeatures::maximumScore).reversed()
                     .thenComparing(
                             Comparator.comparingDouble(
                                     PivotFeatures::coverage).reversed())
                     .thenComparing(
-                            Comparator.comparingDouble(
-                                    PivotFeatures::budgetSlack).reversed())
-                    .thenComparingInt(PivotFeatures::arcId);
-            byCell.values().forEach(
-                    values -> values.sort(withinCell));
-
-            canonical = new ArrayList<>();
-            if (diversificationEnabled) {
-                for (int round = 0;
-                        canonical.size() < scoreRelevant.size();
-                        round++) {
-                    boolean added = false;
-                    for (List<PivotFeatures> values :
-                            byCell.values()) {
-                        if (round < values.size()) {
-                            canonical.add(values.get(round));
-                            added = true;
-                        }
-                    }
-                    if (!added) {
-                        break;
-                    }
-                }
-            } else {
-                byCell.values().forEach(canonical::addAll);
-                canonical.sort(withinCell.thenComparing(
-                        PivotFeatures::cellId));
-            }
+                            PivotFeatures::normalizedDetour)
+                    .thenComparing(PivotFeatures::cellId)
+                    .thenComparingInt(PivotFeatures::arcId));
         }
 
         int retained = Math.min(limit, canonical.size());
@@ -237,7 +259,7 @@ public final class PivotSelector {
                     value.target(),
                     value.maximumScore(),
                     value.coverage(),
-                    value.budgetSlack(),
+                    value.normalizedDetour(),
                     value.cellId(),
                     rank));
         }
@@ -246,8 +268,25 @@ public final class PivotSelector {
                 scoreRelevant,
                 version(
                         corridor.checksum(),
-                        canonical,
-                        diversificationEnabled));
+                        canonical));
+    }
+
+    private static double normalizedDetour(
+            double throughEdgeLowerBound,
+            double shortestLowerBound) {
+        if (!Double.isFinite(throughEdgeLowerBound)
+                || !Double.isFinite(shortestLowerBound)
+                || throughEdgeLowerBound < 0
+                || shortestLowerBound < 0) {
+            throw new IllegalArgumentException(
+                    "pivot detour inputs must be finite and nonnegative");
+        }
+        double excess = Math.max(
+                0, throughEdgeLowerBound - shortestLowerBound);
+        if (Domain.sameTime(shortestLowerBound, 0)) {
+            return Domain.canonicalTime(excess);
+        }
+        return Domain.canonicalTime(excess / shortestLowerBound);
     }
 
     private static double measure(Domain domain) {
@@ -260,8 +299,7 @@ public final class PivotSelector {
 
     private static String version(
             String corridorChecksum,
-            List<PivotFeatures> canonical,
-            boolean diversificationEnabled) {
+            List<PivotFeatures> canonical) {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -269,16 +307,19 @@ public final class PivotSelector {
             throw new IllegalStateException(
                     "SHA-256 is unavailable", failure);
         }
-        update(digest, "PACE-PIVOT-ORDER-v2");
+        update(digest, "PACE-EXACT-TOP-L-v1");
         update(digest, corridorChecksum);
-        update(
-                digest,
-                diversificationEnabled
-                        ? "COORDINATE_GRID"
-                        : "GLOBAL_RANK");
         for (PivotFeatures pivot : canonical) {
             digest.update(ByteBuffer.allocate(Integer.BYTES)
                     .putInt(pivot.arcId()).array());
+            digest.update(ByteBuffer.allocate(Integer.BYTES)
+                    .putInt(pivot.maximumScore()).array());
+            digest.update(ByteBuffer.allocate(Long.BYTES)
+                    .putLong(Double.doubleToLongBits(
+                            pivot.coverage())).array());
+            digest.update(ByteBuffer.allocate(Long.BYTES)
+                    .putLong(Double.doubleToLongBits(
+                            pivot.normalizedDetour())).array());
             update(digest, pivot.cellId());
             update(digest, pivot.bandFingerprint());
         }
@@ -306,98 +347,8 @@ public final class PivotSelector {
             int target,
             int maximumScore,
             double coverage,
-            double budgetSlack,
+            double normalizedDetour,
             String cellId,
             String bandFingerprint) {
-    }
-
-    private record Grid(
-            int side,
-            double minimumX,
-            double minimumY,
-            double maximumX,
-            double maximumY) {
-        static Grid forCorridor(
-                TDGraph graph,
-                QueryCorridor corridor,
-                int limit) {
-            int side = Math.max(
-                    1, (int) Math.ceil(Math.sqrt(limit)));
-            double minimumX = Double.POSITIVE_INFINITY;
-            double minimumY = Double.POSITIVE_INFINITY;
-            double maximumX = Double.NEGATIVE_INFINITY;
-            double maximumY = Double.NEGATIVE_INFINITY;
-            for (int vertex : corridor.vertexIds()) {
-                Node node = graph.node(vertex);
-                minimumX = Math.min(minimumX, node.x());
-                minimumY = Math.min(minimumY, node.y());
-                maximumX = Math.max(maximumX, node.x());
-                maximumY = Math.max(maximumY, node.y());
-            }
-            if (!Double.isFinite(minimumX)) {
-                minimumX = minimumY = maximumX = maximumY = 0;
-            }
-            return new Grid(
-                    side,
-                    minimumX,
-                    minimumY,
-                    maximumX,
-                    maximumY);
-        }
-
-        GridCell cellForEdge(TDGraph graph, Edge edge) {
-            Node source = graph.node(edge.source());
-            Node target = graph.node(edge.target());
-            double midpointX = source.x() / 2.0 + target.x() / 2.0;
-            double midpointY = source.y() / 2.0 + target.y() / 2.0;
-            return new GridCell(
-                    coordinate(
-                            midpointY, minimumY, maximumY, side),
-                    coordinate(
-                            midpointX, minimumX, maximumX, side));
-        }
-
-        private static int coordinate(
-                double value,
-                double minimum,
-                double maximum,
-                int side) {
-            /*
-             * Coordinates are DIMACS integer geometry, not temporal values.
-             * Do not pass them through the signed 10^-12-minute tick contract:
-             * real road coordinates can be much larger than its temporal
-             * range. The extrema originate from the same long-valued node
-             * coordinates, so direct equality is exact here.
-             */
-            if (side == 1 || minimum == maximum) {
-                return 0;
-            }
-            if (value >= maximum) {
-                return side - 1;
-            }
-            double normalized =
-                    (value - minimum) / (maximum - minimum);
-            int result = (int) Math.floor(normalized * side);
-            return Math.max(0, Math.min(side - 1, result));
-        }
-    }
-
-    private record GridCell(int row, int column)
-            implements Comparable<GridCell> {
-        String stableId() {
-            return String.format(
-                    java.util.Locale.ROOT,
-                    "GRID-R%05d-C%05d",
-                    row,
-                    column);
-        }
-
-        @Override
-        public int compareTo(GridCell other) {
-            int byRow = Integer.compare(row, other.row);
-            return byRow != 0
-                    ? byRow
-                    : Integer.compare(column, other.column);
-        }
     }
 }

@@ -2,7 +2,6 @@ package edu.ipcmax.core.pcmax;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -44,7 +43,7 @@ class FeasibleEntryBandAndSpatialPivotTest {
     }
 
     @Test
-    void scoreSupportTouchingOnlyTheOpenBandEndIsNotRelevant() {
+    void budgetEqualityAtLatestFeasibleEntryIsOwned() {
         TDGraph graph = new TinyGraphBuilder()
                 .node(1, 0, 0)
                 .node(2, 5, 5)
@@ -66,7 +65,8 @@ class FeasibleEntryBandAndSpatialPivotTest {
                 Domain.closed(0, 10),
                 4);
 
-        assertTrue(result.scoreRelevantArcIds().isEmpty());
+        assertEquals(List.of(0), result.scoreRelevantArcIds());
+        assertEquals(List.of(0), result.selectedArcIds());
     }
 
     @Test
@@ -91,7 +91,46 @@ class FeasibleEntryBandAndSpatialPivotTest {
     }
 
     @Test
-    void coordinateGridRoundRobinSelectsAcrossDistantCellsAndClampsMaximum() {
+    void exactTopLPrefersGreaterFeasibleTemporalCoverageAtEqualScore() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1).node(2)
+                .edge(1, 2, 1, score(
+                        new PiecewiseConstFn.Interval(0, 4, 7),
+                        new PiecewiseConstFn.Interval(4, 20, 0)))
+                .edge(1, 2, 1, score(
+                        new PiecewiseConstFn.Interval(0, 8, 7),
+                        new PiecewiseConstFn.Interval(8, 20, 0)))
+                .build();
+        Prepared prepared = prepare(graph, 1, 2, 5);
+
+        PivotIndex result = select(
+                graph, prepared, Domain.closed(0, 10), 8);
+
+        assertEquals(List.of(1, 0), result.selectedArcIds());
+        assertTrue(result.selected().get(0).temporalCoverage()
+                > result.selected().get(1).temporalCoverage());
+    }
+
+    @Test
+    void exactTopLBreaksCompleteFeatureTiesByStableArcId() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1).node(2)
+                .edge(1, 2, 1, positiveScore(5))
+                .edge(1, 2, 1, positiveScore(5))
+                .edge(1, 2, 1, positiveScore(5))
+                .build();
+        Prepared prepared = prepare(graph, 1, 2, 5);
+
+        PivotIndex result = select(
+                graph, prepared, Domain.closed(0, 10), 8);
+
+        assertEquals(List.of(0, 1, 2), result.selectedArcIds());
+        assertEquals(3, result.selected().size(),
+                "L is a maximum and all eligible edges are retained");
+    }
+
+    @Test
+    void exactTopLUsesStablePartitionCellsAndClampsMaximum() {
         TDGraph graph = new TinyGraphBuilder()
                 .node(1, 0, 0)
                 .node(2, 1, 1)
@@ -108,17 +147,14 @@ class FeasibleEntryBandAndSpatialPivotTest {
                 graph, prepared, Domain.closed(0, 10), 2);
 
         assertEquals(List.of(0, 3), result.selectedArcIds());
-        assertNotEquals(
-                result.selected().get(0).cellId(),
-                result.selected().get(1).cellId());
         assertEquals(
-                "GRID-R00001-C00001",
+                "CELL-00000001",
                 result.selected().get(1).cellId());
         assertFalse(result.version().isBlank());
     }
 
     @Test
-    void coordinateGridAcceptsNyScaleCoordinatesOutsideTemporalTickRange() {
+    void exactTopLDoesNotInterpretSpatialCoordinatesAsTemporalTicks() {
         TDGraph graph = new TinyGraphBuilder()
                 .node(1, 41_138_295L, -74_260_000L)
                 .node(2, 41_138_296L, -74_259_999L)

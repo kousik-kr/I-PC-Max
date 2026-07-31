@@ -61,6 +61,25 @@ class ExperimentAlgorithmsTest {
                 assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
                 assertFalse(result.completeProfile());
             }
+            assertTrue(
+                    ((Number) result.scalars().get(
+                            "final_retained_candidate_count"))
+                            .longValue() >= 1);
+            assertTrue(
+                    ((Number) result.scalars().get(
+                            "distinct_path_count"))
+                            .longValue() >= 1);
+            assertTrue(
+                    ((Number) result.scalars().get(
+                            "path_edge_count_mean"))
+                            .doubleValue() > 0);
+            assertTrue(
+                    ((Number) result.scalars().get(
+                            "path_edge_count_max"))
+                            .longValue()
+                    >= ((Number) result.scalars().get(
+                            "path_edge_count_min"))
+                            .longValue());
         }
     }
 

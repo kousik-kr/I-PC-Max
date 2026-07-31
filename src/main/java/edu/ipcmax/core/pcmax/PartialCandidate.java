@@ -23,7 +23,10 @@ public final class PartialCandidate {
     private final int endpoint;
     private final CandidateProfile profile;
     private final BitSet visitedVertices;
+    private final BitSet visitedEdges;
     private final BitSet usedPivots;
+    private final BitSet coveredPivots;
+    private final List<Integer> pivotSequence;
     private final int pivotDepth;
     private final String candidateId;
     private final Set<PaceCapKind> provenanceCaps;
@@ -35,22 +38,86 @@ public final class PartialCandidate {
             BitSet usedPivots,
             int pivotDepth,
             Set<PaceCapKind> provenanceCaps) {
+        this(
+                endpoint,
+                profile,
+                visitedVertices,
+                new BitSet(),
+                usedPivots,
+                usedPivots,
+                pivotDepth,
+                provenanceCaps);
+    }
+
+    public PartialCandidate(
+            int endpoint,
+            CandidateProfile profile,
+            BitSet visitedVertices,
+            BitSet visitedEdges,
+            BitSet usedPivots,
+            BitSet coveredPivots,
+            int pivotDepth,
+            Set<PaceCapKind> provenanceCaps) {
+        this(
+                endpoint,
+                profile,
+                visitedVertices,
+                visitedEdges,
+                usedPivots,
+                coveredPivots,
+                usedPivots.stream().boxed().toList(),
+                pivotDepth,
+                provenanceCaps);
+    }
+
+    public PartialCandidate(
+            int endpoint,
+            CandidateProfile profile,
+            BitSet visitedVertices,
+            BitSet visitedEdges,
+            BitSet usedPivots,
+            BitSet coveredPivots,
+            List<Integer> pivotSequence,
+            int pivotDepth,
+            Set<PaceCapKind> provenanceCaps) {
         if (endpoint <= 0
                 || profile == null
                 || visitedVertices == null
+                || visitedEdges == null
                 || usedPivots == null
+                || coveredPivots == null
+                || pivotSequence == null
                 || pivotDepth < 0) {
             throw new IllegalArgumentException(
                     "invalid partial candidate state");
         }
+        if (pivotDepth != pivotSequence.size()
+                || pivotSequence.stream().distinct().count()
+                        != pivotSequence.size()
+                || pivotSequence.stream().anyMatch(
+                        rank -> rank == null
+                                || rank < 0
+                                || !usedPivots.get(rank))) {
+            throw new IllegalArgumentException(
+                    "pivot sequence must contain each explicit "
+                            + "used pivot exactly once");
+        }
         this.endpoint = endpoint;
         this.profile = profile;
         this.visitedVertices = (BitSet) visitedVertices.clone();
+        this.visitedEdges = (BitSet) visitedEdges.clone();
         this.usedPivots = (BitSet) usedPivots.clone();
+        this.coveredPivots = (BitSet) coveredPivots.clone();
+        this.pivotSequence = List.copyOf(pivotSequence);
         this.pivotDepth = pivotDepth;
         this.provenanceCaps = Set.copyOf(provenanceCaps);
         this.candidateId = candidateId(
-                endpoint, profile, usedPivots, pivotDepth);
+                endpoint,
+                profile,
+                usedPivots,
+                coveredPivots,
+                pivotSequence,
+                pivotDepth);
     }
 
     public static PartialCandidate identity(
@@ -67,8 +134,10 @@ public final class PartialCandidate {
                         PathPointer.empty(),
                         0,
                         -1,
-                        false),
+                false),
                 visited,
+                new BitSet(),
+                new BitSet(),
                 new BitSet(),
                 0,
                 Set.of());
@@ -102,6 +171,14 @@ public final class PartialCandidate {
         return (BitSet) visitedVertices.clone();
     }
 
+    public boolean traversedEdge(int arcId) {
+        return arcId >= 0 && visitedEdges.get(arcId);
+    }
+
+    public BitSet visitedEdges() {
+        return (BitSet) visitedEdges.clone();
+    }
+
     public boolean usedPivot(int canonicalRank) {
         return canonicalRank >= 0 && usedPivots.get(canonicalRank);
     }
@@ -110,10 +187,26 @@ public final class PartialCandidate {
         return (BitSet) usedPivots.clone();
     }
 
+    public boolean coveredPivot(int canonicalRank) {
+        return canonicalRank >= 0
+                && coveredPivots.get(canonicalRank);
+    }
+
+    public BitSet coveredPivots() {
+        return (BitSet) coveredPivots.clone();
+    }
+
+    /** Ordered explicit pivot choices, independent of physical coverage. */
+    public List<Integer> pivotSequence() {
+        return pivotSequence;
+    }
+
     private static String candidateId(
             int endpoint,
             CandidateProfile profile,
             BitSet usedPivots,
+            BitSet coveredPivots,
+            List<Integer> pivotSequence,
             int depth) {
         MessageDigest digest;
         try {
@@ -121,7 +214,7 @@ public final class PartialCandidate {
         } catch (NoSuchAlgorithmException failure) {
             throw new IllegalStateException("SHA-256 is unavailable", failure);
         }
-        update(digest, "PACE-PARTIAL-CANDIDATE-v1");
+        update(digest, "PACE-PARTIAL-CANDIDATE-v3");
         digest.update(ByteBuffer.allocate(Integer.BYTES)
                 .putInt(endpoint).array());
         digest.update(ByteBuffer.allocate(Integer.BYTES)
@@ -132,6 +225,11 @@ public final class PartialCandidate {
         }
         update(digest, profile.domain().toString());
         digest.update(usedPivots.toByteArray());
+        digest.update(coveredPivots.toByteArray());
+        for (int rank : pivotSequence) {
+            digest.update(ByteBuffer.allocate(Integer.BYTES)
+                    .putInt(rank).array());
+        }
         return HexFormat.of().formatHex(digest.digest());
     }
 

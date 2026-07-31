@@ -5,6 +5,7 @@ import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -169,5 +170,33 @@ public record CandidateProfile(
     public boolean isVertexSimple(TDGraph graph, int subproblemSource, int subproblemDestination) {
         List<Integer> vertices = vertexSequence(graph, subproblemSource, subproblemDestination);
         return new LinkedHashSet<>(vertices).size() == vertices.size();
+    }
+
+    /** Exact vertex membership derived lazily from the immutable path handle. */
+    public BitSet vertexMembership(
+            TDGraph graph,
+            int subproblemSource,
+            int subproblemDestination) {
+        BitSet membership = new BitSet();
+        for (int vertex : vertexSequence(
+                graph,
+                subproblemSource,
+                subproblemDestination)) {
+            membership.set(vertex);
+        }
+        return membership;
+    }
+
+    /** Exact directed-arc membership with duplicate-arc rejection. */
+    public BitSet edgeMembership() {
+        BitSet membership = new BitSet();
+        for (int arcId : stablePathId()) {
+            if (membership.get(arcId)) {
+                throw new IllegalArgumentException(
+                        "candidate repeats directed arc " + arcId);
+            }
+            membership.set(arcId);
+        }
+        return membership;
     }
 }

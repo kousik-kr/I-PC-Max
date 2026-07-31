@@ -97,11 +97,30 @@ public final class BoundedConnectorGenerator {
             BitSet prefixVisited,
             double residualBudget,
             String workItem) {
+        return connect(
+                source,
+                target,
+                entryDomain,
+                prefixVisited,
+                new BitSet(),
+                residualBudget,
+                workItem);
+    }
+
+    public ConnectorResult connect(
+            int source,
+            int target,
+            Domain entryDomain,
+            BitSet prefixVisited,
+            BitSet prefixVisitedEdges,
+            double residualBudget,
+            String workItem) {
         metrics.increment("connector_requests");
         try (PaceExecutionMetrics.Timer ignored = metrics.phase(
                 PaceExecutionMetrics.CONNECTOR_GENERATION)) {
             return connectTimed(
                     source, target, entryDomain, prefixVisited,
+                    prefixVisitedEdges,
                     residualBudget, workItem);
         }
     }
@@ -111,11 +130,13 @@ public final class BoundedConnectorGenerator {
             int target,
             Domain entryDomain,
             BitSet prefixVisited,
+            BitSet prefixVisitedEdges,
             double residualBudget,
             String workItem) {
         if (entryDomain == null
                 || entryDomain.isEmpty()
                 || prefixVisited == null
+                || prefixVisitedEdges == null
                 || !Double.isFinite(residualBudget)
                 || residualBudget < 0) {
             throw new IllegalArgumentException(
@@ -128,6 +149,13 @@ public final class BoundedConnectorGenerator {
                 Domain.canonicalTime(residualBudget),
                 java.util.HexFormat.of().formatHex(
                         prefixVisited.toByteArray()),
+                java.util.HexFormat.of().formatHex(
+                        prefixVisitedEdges.toByteArray()),
+                queryHorizon.toString(),
+                corridor.checksum(),
+                pivots.version(),
+                TemporalPathVersion.SEMANTICS_VERSION,
+                options.policy().name(),
                 options.effectiveConnectorLimit(),
                 options.connectorExpansionCapMc());
         if (!options.memoizationEnabled()
@@ -137,6 +165,7 @@ public final class BoundedConnectorGenerator {
                     target,
                     entryDomain,
                     prefixVisited,
+                    prefixVisitedEdges,
                     residualBudget,
                     workItem);
         }
@@ -147,6 +176,7 @@ public final class BoundedConnectorGenerator {
                         target,
                         entryDomain,
                         prefixVisited,
+                        prefixVisitedEdges,
                         residualBudget,
                         workItem));
         observeCacheMetrics();
@@ -158,6 +188,7 @@ public final class BoundedConnectorGenerator {
             int target,
             Domain entryDomain,
             BitSet prefixVisited,
+            BitSet prefixVisitedEdges,
             double residualBudget,
             String workItem) {
         if (source == target) {
@@ -180,12 +211,14 @@ public final class BoundedConnectorGenerator {
                         target,
                         entryDomain,
                         prefixVisited,
+                        prefixVisitedEdges,
                         residualBudget)
                 : bounded(
                         source,
                         target,
                         entryDomain,
                         prefixVisited,
+                        prefixVisitedEdges,
                         residualBudget,
                         workItem);
     }
@@ -195,10 +228,12 @@ public final class BoundedConnectorGenerator {
             int target,
             Domain entryDomain,
             BitSet prefixVisited,
+            BitSet prefixVisitedEdges,
             double residualBudget) {
         List<WeightedPath> paths = new ArrayList<>();
         Counter expansions = new Counter();
         BitSet visited = (BitSet) prefixVisited.clone();
+        BitSet visitedEdges = (BitSet) prefixVisitedEdges.clone();
         visited.set(source);
         Map<Integer, Double> heuristic = heuristicTo(target);
         enumerateDepthFirst(
@@ -207,6 +242,7 @@ public final class BoundedConnectorGenerator {
                 residualBudget,
                 0,
                 visited,
+                visitedEdges,
                 PathPointer.empty(),
                 paths,
                 expansions,
@@ -243,6 +279,7 @@ public final class BoundedConnectorGenerator {
             double budget,
             double pathWeight,
             BitSet visited,
+            BitSet visitedEdges,
             PathPointer path,
             List<WeightedPath> output,
             Counter expansions,
@@ -255,6 +292,7 @@ public final class BoundedConnectorGenerator {
         }
         for (Edge edge : corridor.outgoingEdges(current)) {
             if (pivots.isSelectedPivot(edge.arcId())
+                    || visitedEdges.get(edge.arcId())
                     || visited.get(edge.target())) {
                 continue;
             }
@@ -272,18 +310,21 @@ public final class BoundedConnectorGenerator {
                 continue;
             }
             visited.set(edge.target());
+            visitedEdges.set(edge.arcId());
             enumerateDepthFirst(
                     edge.target(),
                     target,
                     budget,
                     next,
                     visited,
+                    visitedEdges,
                     PathPointer.concat(
                             path,
                             PathPointer.arc(edge.arcId())),
                     output,
                     expansions,
                     heuristic);
+            visitedEdges.clear(edge.arcId());
             visited.clear(edge.target());
         }
     }
@@ -293,6 +334,7 @@ public final class BoundedConnectorGenerator {
             int target,
             Domain entryDomain,
             BitSet prefixVisited,
+            BitSet prefixVisitedEdges,
             double residualBudget,
             String workItem) {
         Map<Integer, Double> heuristic = heuristicTo(target);
@@ -313,10 +355,13 @@ public final class BoundedConnectorGenerator {
             PriorityQueue<PathState> queue =
                     new PriorityQueue<>(stateOrder(kind));
             BitSet visited = (BitSet) prefixVisited.clone();
+            BitSet visitedEdges =
+                    (BitSet) prefixVisitedEdges.clone();
             visited.set(source);
             queue.add(PathState.root(
                     source,
                     visited,
+                    visitedEdges,
                     sourceHeuristic));
             streams.put(kind, queue);
         }
@@ -370,6 +415,7 @@ public final class BoundedConnectorGenerator {
             }
             for (Edge edge : corridor.outgoingEdges(state.node())) {
                 if (pivots.isSelectedPivot(edge.arcId())
+                        || state.visitedEdges().get(edge.arcId())
                         || state.visited().get(edge.target())) {
                     continue;
                 }
@@ -391,7 +437,10 @@ public final class BoundedConnectorGenerator {
                 }
                 BitSet nextVisited =
                         (BitSet) state.visited().clone();
+                BitSet nextVisitedEdges =
+                        (BitSet) state.visitedEdges().clone();
                 nextVisited.set(edge.target());
+                nextVisitedEdges.set(edge.arcId());
                 double scoreCost = Domain.canonicalTime(
                         state.scoreCost()
                                 + lowerBounds.edgeWeight(edge.arcId())
@@ -409,6 +458,7 @@ public final class BoundedConnectorGenerator {
                                 state.path(),
                                 PathPointer.arc(edge.arcId())),
                         nextVisited,
+                        nextVisitedEdges,
                         nextWeight,
                         completion,
                         scoreCost,
@@ -435,7 +485,11 @@ public final class BoundedConnectorGenerator {
                 source,
                 target,
                 domain.toString(),
-                Domain.canonicalTime(budget));
+                queryHorizon.toString(),
+                Domain.canonicalTime(budget),
+                TemporalPathVersion.hash(graph, arcIds),
+                pivots.version(),
+                "CONNECTOR_REPLAY");
         Optional<CandidateProfile> result;
         if (options.memoizationEnabled()
                 && options.features().profileCacheEnabled()) {
@@ -476,20 +530,22 @@ public final class BoundedConnectorGenerator {
             int target,
             Domain domain,
             double budget) {
-        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
-                PaceExecutionMetrics.PATH_REPLAY)) {
-            return CanonicalPathProfileBuilder.replay(
-                    graph,
-                    queryHorizon,
-                    Set.copyOf(pivots.selectedArcIds()),
-                    arcIds,
-                    source,
-                    target,
-                    domain,
-                    budget,
-                    -1,
-                    false);
-        }
+        /*
+         * Connector profile construction is part of connector generation.
+         * Do not also charge it to canonical full-candidate replay: the
+         * launch report's top-level phase categories must be disjoint.
+         */
+        return CanonicalPathProfileBuilder.replay(
+                graph,
+                queryHorizon,
+                Set.copyOf(pivots.selectedArcIds()),
+                arcIds,
+                source,
+                target,
+                domain,
+                budget,
+                -1,
+                false);
     }
 
     public long cacheLookups() {
@@ -660,6 +716,7 @@ public final class BoundedConnectorGenerator {
             int node,
             PathPointer path,
             BitSet visited,
+            BitSet visitedEdges,
             double lowerWeight,
             double estimatedCompletion,
             double scoreCost,
@@ -667,11 +724,13 @@ public final class BoundedConnectorGenerator {
         static PathState root(
                 int source,
                 BitSet visited,
+                BitSet visitedEdges,
                 double estimate) {
             return new PathState(
                     source,
                     PathPointer.empty(),
                     visited,
+                    visitedEdges,
                     0,
                     estimate,
                     0,
@@ -685,6 +744,12 @@ public final class BoundedConnectorGenerator {
             String domain,
             double budget,
             String visited,
+            String visitedEdges,
+            String queryHorizon,
+            String corridorChecksum,
+            String pivotContext,
+            String temporalSemanticsVersion,
+            String mode,
             int connectorLimit,
             long expansionCap) {
     }
@@ -694,7 +759,11 @@ public final class BoundedConnectorGenerator {
             int source,
             int target,
             String domain,
-            double budget) {
+            String queryHorizon,
+            double budget,
+            String temporalPathVersion,
+            String pivotContext,
+            String mode) {
         private ProfileKey {
             arcIds = List.copyOf(arcIds);
         }

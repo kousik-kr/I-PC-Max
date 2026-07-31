@@ -24,6 +24,16 @@ import java.util.function.Consumer;
 public final class PaceExecutionMetrics implements AutoCloseable {
     public static final String HORIZON_VALIDATION = "horizon_validation";
     public static final String CORRIDOR_CONSTRUCTION = "corridor_construction";
+    public static final String FORWARD_BACKWARD_LABELING =
+            "forward_backward_labeling";
+    public static final String TOP_L_SELECTION =
+            "top_l_anchor_selection";
+    public static final String PIVOT_EXPLORATION =
+            "pivot_order_exploration";
+    public static final String CANDIDATE_ASSEMBLY =
+            "candidate_assembly";
+    public static final String PROFILE_MERGE =
+            "profile_merge";
     public static final String FEASIBLE_ENTRY_BANDS = "feasible_entry_band_computation";
     public static final String SCORE_SUPPORT_LOOKUP = "score_support_lookup";
     public static final String PIVOT_RANKING = "pivot_ranking_diversification";

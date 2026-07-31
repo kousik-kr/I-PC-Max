@@ -65,7 +65,7 @@
     "connector_expansion_cap_mc": 5000000,
     "breakpoint_cap_mb": 1000000,
     "query_work_cap_mq": 250000000,
-    "query_work_accounting_contract": "PACE-MQ-TOTAL-WORK-v2",
+    "query_work_accounting_contract": "PACE-MQ-TOTAL-WORK-v3",
     "resolved_configuration": "resolved_pace_b.yaml"
   },
   "resources": {
@@ -86,7 +86,7 @@
     "pace_x_uncompressed_variant_available": true,
     "pace_parallelism_observed_and_checksum_stable": true,
     "incremental_frontier_differential_zero_mismatches": true,
-    "mq_total_work_v2_accounting": true,
+    "mq_total_work_v3_accounting": true,
     "relative_score_gap_metric_available_for_pilot": true,
     "safe_corridor_property_verified": true,
     "score_upper_bound_admissible": true

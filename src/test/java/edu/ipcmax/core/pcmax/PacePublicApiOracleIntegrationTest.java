@@ -170,6 +170,48 @@ class PacePublicApiOracleIntegrationTest {
         assertArrayEquals(serialOutput, parallelOutput);
         assertEquals(0, serial.stats().parallelTasksStarted());
         assertTrue(parallel.stats().parallelTasksStarted() > 0);
+        assertTrue(parallel.stats().observedWorkers() >= 2,
+                "independent PACE pivot/replay tasks did not overlap");
+        assertTrue(Thread.getAllStackTraces().keySet().stream()
+                .noneMatch(thread ->
+                        thread.isAlive()
+                                && thread.getName()
+                                .startsWith("pace-worker-")),
+                "PACE worker thread leaked after query completion");
+    }
+
+    @Test
+    void mqV3CapAndStatusAreDeterministicAcrossThreadCounts() {
+        TDGraph graph = switchingGraph();
+        QuerySpec query = new QuerySpec(
+                1, 4, 0, 10, 10, 1);
+        PaceGenerationResult expected = new PACE(
+                graph,
+                cappedOptions(1, 20))
+                .generate(query);
+
+        assertTrue(expected.capStatus().reached(
+                PaceCapKind.QUERY_WORK_M_Q));
+        assertTrue(expected.stats().totalWork() <= 20);
+        for (int threads : List.of(2, 4, 8, 16, 24)) {
+            PaceGenerationResult actual = new PACE(
+                    graph,
+                    cappedOptions(threads, 20))
+                    .generate(query);
+            assertEquals(
+                    expected.outputChecksum(),
+                    actual.outputChecksum());
+            assertEquals(
+                    expected.completion(),
+                    actual.completion());
+            assertEquals(
+                    expected.capStatus(),
+                    actual.capStatus());
+            assertEquals(
+                    expected.stats().totalWork(),
+                    actual.stats().totalWork());
+            assertTrue(actual.stats().totalWork() <= 20);
+        }
     }
 
     @Test
@@ -262,6 +304,25 @@ class PacePublicApiOracleIntegrationTest {
         return policy == PaceExecutionPolicy.PACE_X
                 ? new PaceOptions(policy, 1, 1, 1, threads, true)
                 : new PaceOptions(policy, 1, 2, 4, threads, true);
+    }
+
+    private static PaceOptions cappedOptions(
+            int threads,
+            long queryWorkCap) {
+        return new PaceOptions(
+                PaceExecutionPolicy.PACE_B,
+                PaceEngineMode.SCALABLE,
+                1,
+                2,
+                4,
+                4,
+                1_000,
+                1_000,
+                queryWorkCap,
+                threads,
+                true,
+                PaceFeatures.defaults(),
+                10_000);
     }
 
     private static TDGraph switchingGraph() {

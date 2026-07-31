@@ -106,10 +106,10 @@ def _validate_final_q1(
             "pilot may resolve only L, K_c, and K_f"
         )
     if defaults["query_work_accounting_contract"] != (
-        "PACE-MQ-TOTAL-WORK-v2"
+        "PACE-MQ-TOTAL-WORK-v3"
     ):
         raise ValueError(
-            "final PACE-B requires PACE-MQ-TOTAL-WORK-v2"
+            "final PACE-B requires PACE-MQ-TOTAL-WORK-v3"
         )
     for cap in (
         "connector_expansion_cap_mc",

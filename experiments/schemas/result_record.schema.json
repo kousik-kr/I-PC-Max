@@ -84,7 +84,7 @@
       "required": ["algorithm", "ablation", "execution_mode", "preprocessing_accounting", "theta", "anchor_limit", "k", "pace_engine", "pivot_limit_l", "connector_limit_kc", "frontier_limit_kf", "connector_expansion_cap_mc", "breakpoint_cap_mb", "query_work_cap_mq", "query_work_accounting_contract", "rpq_step_minutes", "baseline_k", "threads", "deterministic", "timeout_seconds", "memory_limit_bytes", "max_enumerated_paths", "max_labels", "max_expansions", "max_frontier_fragments", "anchor_decomposition_enabled", "safe_dominance_enabled", "memoization_enabled", "per_cell_retention_enabled", "representative_retention_enabled", "anchor_lower_bound_filter_enabled", "compression_enabled", "adjacent_merge_enabled", "safe_corridor_enabled", "pivot_diversification_enabled", "connector_portfolio_enabled", "connector_cache_enabled", "profile_cache_enabled", "score_upper_bound_enabled", "parallel_enabled", "exhaustive_connectors", "exhaustive_anchors", "exhaustive_frontier"],
       "properties": {
         "query_work_accounting_contract": {
-          "enum": ["PACE-MQ-TOTAL-WORK-v2", null]
+          "enum": ["PACE-MQ-TOTAL-WORK-v2", "PACE-MQ-TOTAL-WORK-v3", null]
         }
       }
     },

@@ -87,6 +87,7 @@ final class CanonicalPathProfileBuilder {
         int explicitAnchorCount = 0;
         Set<Integer> usedPivotArcIds = new HashSet<>();
         Set<Integer> vertices = new HashSet<>();
+        Set<Integer> edges = new HashSet<>();
         vertices.add(source);
         TimeProfile arrival = TimeProfile.identity(rootDomain);
         ScoreProfile score = ScoreProfile.constant(rootDomain, 0);
@@ -107,6 +108,7 @@ final class CanonicalPathProfileBuilder {
                 arrival,
                 score,
                 vertices,
+                edges,
                 explicitAnchorCount,
                 usedPivotArcIds);
     }
@@ -161,6 +163,7 @@ final class CanonicalPathProfileBuilder {
         int explicitAnchorCount = 0;
         Set<Integer> usedPivotArcIds = new HashSet<>();
         Set<Integer> vertices = new HashSet<>();
+        Set<Integer> edges = new HashSet<>();
         vertices.add(source);
         for (int arcId : prefixArcIds) {
             if (arcId < 0 || arcId >= graph.edgeCount()) {
@@ -168,6 +171,11 @@ final class CanonicalPathProfileBuilder {
                         "candidate contains unknown arc id: " + arcId);
             }
             Edge edge = graph.edges().get(arcId);
+            if (!edges.add(arcId)) {
+                throw new IllegalArgumentException(
+                        "candidate prefix repeats directed arc "
+                                + arcId + ": " + prefixArcIds);
+            }
             if (edge.source() != current) {
                 throw new IllegalArgumentException(
                         "candidate prefix is discontinuous at arc " + arcId);
@@ -216,6 +224,7 @@ final class CanonicalPathProfileBuilder {
                 arrival,
                 score,
                 vertices,
+                edges,
                 explicitAnchorCount,
                 usedPivotArcIds);
     }
@@ -236,6 +245,7 @@ final class CanonicalPathProfileBuilder {
             TimeProfile initialArrival,
             ScoreProfile initialScore,
             Set<Integer> vertices,
+            Set<Integer> edges,
             int initialExplicitAnchorCount,
             Set<Integer> initialUsedPivotArcIds) {
         int current = initialCurrent;
@@ -252,6 +262,11 @@ final class CanonicalPathProfileBuilder {
                 throw new IllegalArgumentException("candidate contains unknown arc id: " + arcId);
             }
             Edge edge = graph.edges().get(arcId);
+            if (!edges.add(arcId)) {
+                throw new IllegalArgumentException(
+                        "candidate path repeats directed arc "
+                                + arcId + ": " + fullArcIds);
+            }
             if (edge.source() != current) {
                 throw new IllegalArgumentException(
                         "candidate path is discontinuous at arc " + arcId

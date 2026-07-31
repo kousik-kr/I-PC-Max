@@ -122,6 +122,117 @@ def _process_isolated_runtime(
     return float(query + preprocessing) / 1_000_000_000
 
 
+def _seconds(
+    values: dict[str, Any],
+    name: str,
+) -> float | None:
+    value = values.get(name)
+    return (
+        None
+        if value is None
+        else float(value) / 1_000_000_000
+    )
+
+
+def _execution_metrics(
+    record: dict[str, Any] | None,
+    process_seconds: float,
+) -> dict[str, Any]:
+    if record is None:
+        return {
+            "process_end_to_end_seconds": process_seconds,
+            "terminal_record_available": False,
+        }
+    timings = record.get("timing_ns", {})
+    counters = record.get("counters", {})
+    hits = int(counters.get(
+        "canonical_replay_cache_hits") or 0)
+    misses = int(counters.get(
+        "canonical_replay_cache_misses") or 0)
+    replay_lookups = hits + misses
+    requested = int(counters.get("requested_workers") or 0)
+    observed = int(counters.get("observed_workers") or 0)
+    phases = {
+        "search_region":
+            _seconds(timings, "corridor_construction"),
+        "forward_backward_labeling":
+            _seconds(timings, "forward_backward_labeling"),
+        "top_l_selection":
+            _seconds(timings, "top_l_anchor_selection"),
+        "pivot_exploration":
+            _seconds(timings, "pivot_order_exploration"),
+        "connector_generation":
+            _seconds(timings, "connector_generation"),
+        "candidate_assembly":
+            _seconds(timings, "candidate_assembly"),
+        "canonical_replay":
+            _seconds(
+                timings,
+                "canonical_path_replay_stitching",
+            ),
+        "profile_merge":
+            _seconds(timings, "profile_merge"),
+        "envelope_extraction":
+            _seconds(timings, "envelope_extraction"),
+    }
+    query_total = _seconds(timings, "query_total")
+    phase_sum = sum(
+        value for value in phases.values()
+        if value is not None
+    )
+    return {
+        "terminal_record_available": True,
+        "dataset_startup_seconds":
+            _seconds(timings, "preprocessing_total"),
+        "phase_runtime_seconds": phases,
+        "phase_runtime_sum_seconds": phase_sum,
+        "phase_categories_nonoverlapping": (
+            query_total is not None
+            and phase_sum <= query_total + 1e-6
+        ),
+        "query_total_seconds": query_total,
+        "process_end_to_end_seconds": process_seconds,
+        "peak_rss_bytes":
+            record.get("memory_bytes", {}).get("peak_rss"),
+        "requested_workers": requested,
+        "observed_workers": observed,
+        "active_worker_overlap": observed >= 2,
+        "candidate_count":
+            counters.get("candidates_generated"),
+        "retained_candidate_count":
+            counters.get("final_retained_candidate_count"),
+        "distinct_path_count":
+            counters.get("distinct_path_count"),
+        "path_edge_count": {
+            "min": counters.get("path_edge_count_min"),
+            "mean": counters.get("path_edge_count_mean"),
+            "median": counters.get("path_edge_count_median"),
+            "p95": counters.get("path_edge_count_p95"),
+            "max": counters.get("path_edge_count_max"),
+        },
+        "replay_requests":
+            counters.get("canonical_replay_requests"),
+        "unique_replays":
+            counters.get("canonical_replay_unique_requests"),
+        "replay_cache_hit_rate": (
+            hits / replay_lookups
+            if replay_lookups else None
+        ),
+        "temporal_compose_calls":
+            counters.get("temporal_compose_calls"),
+        "temporal_preimage_calls":
+            counters.get("temporal_preimage_calls"),
+        "fragment_restrictions":
+            counters.get("fragment_restrictions"),
+        "fragment_materializations":
+            counters.get("fragment_materializations"),
+        "mq_consumption":
+            counters.get("total_candidate_work"),
+        "output_checksum":
+            counters.get("output_checksum"),
+    }
+
+
 def _kaplan_meier_median(
     observations: list[tuple[float, bool]],
 ) -> float | None:
@@ -151,6 +262,7 @@ def run_pilot(
     output_directory: Path,
     query_runtime_allowance: int,
     dataset_load_timeout: int,
+    ledger_path: Path,
     resume: bool = False,
 ) -> dict[str, Any]:
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -313,6 +425,8 @@ def run_pilot(
                     else float(query_runtime_allowance)
                 ),
                 "record": record,
+                "metrics": _execution_metrics(
+                    record, elapsed),
             }
             executions.append(execution)
             status = (
@@ -400,12 +514,10 @@ def run_pilot(
             else item["wall_seconds"] + dataset_load_timeout
         for item in executions
     }
-    ledger_path = (
-        REPO_ROOT
-        / "experiments/results/diagnostics/"
-        "pace_paper_readiness_20260729/matrices/"
-        "canonical_job_ledger.jsonl"
-    )
+    if not ledger_path.is_file():
+        raise FileNotFoundError(
+            f"missing canonical job ledger: {ledger_path}"
+        )
     projected_seconds = 0.0
     projected_pace_b_seconds = 0.0
     fallback_timeout = int(design["resources"]["timeout_seconds"])
@@ -431,6 +543,18 @@ def run_pilot(
         if executions else 0.0
     )
     cap_rate = cap_count / len(executions) if executions else 0.0
+    timing_categories_nonoverlap = (
+        bool(executions)
+        and all(
+            item["metrics"].get(
+                "phase_categories_nonoverlapping", False)
+            for item in executions
+        )
+    )
+    parallel_overlap_demonstrated = any(
+        item["metrics"].get("active_worker_overlap", False)
+        for item in executions
+    )
     observed_query_runtimes = [
         _query_runtime(item["record"], item["wall_seconds"])
         for item, status in zip(executions, statuses, strict=True)
@@ -464,6 +588,8 @@ def run_pilot(
             for status in statuses
         )
         and projected_seconds / safe_concurrency <= 90 * 86400
+        and timing_categories_nonoverlap
+        and parallel_overlap_demonstrated
     )
     summary = {
         "schema_version": 1,
@@ -483,7 +609,7 @@ def run_pilot(
                 "M_c": 5000000,
                 "M_b": 1000000,
                 "M_q": 250000000,
-                "M_q_contract": "PACE-MQ-TOTAL-WORK-v2",
+                "M_q_contract": "PACE-MQ-TOTAL-WORK-v3",
             },
         },
         "jar_sha256": sha256_file(jar),
@@ -565,6 +691,10 @@ def run_pilot(
                 for status in statuses
             )
         ),
+        "timing_categories_nonoverlap":
+            timing_categories_nonoverlap,
+        "parallel_overlap_demonstrated":
+            parallel_overlap_demonstrated,
         "statuses": {
             status: statuses.count(status)
             for status in sorted(set(statuses))
@@ -648,6 +778,16 @@ def main() -> int:
         action="store_true",
         help="preserve terminal records and continue unfinished groups",
     )
+    parser.add_argument(
+        "--ledger",
+        type=Path,
+        default=Path(
+            "experiments/results/diagnostics/"
+            "pace_paper_readiness_20260729/matrices/"
+            "canonical_job_ledger.jsonl"
+        ),
+        help="canonical matrix ledger used only for runtime projection",
+    )
     args = parser.parse_args()
     if args.query_runtime_allowance_seconds < 1:
         parser.error("--query-runtime-allowance-seconds must be positive")
@@ -658,11 +798,17 @@ def main() -> int:
         if args.output.is_absolute()
         else REPO_ROOT / args.output
     )
+    ledger = (
+        args.ledger
+        if args.ledger.is_absolute()
+        else REPO_ROOT / args.ledger
+    )
     try:
         summary = run_pilot(
             output,
             args.query_runtime_allowance_seconds,
             args.dataset_load_timeout_seconds,
+            ledger,
             args.resume,
         )
     except (OSError, ValueError) as failure:

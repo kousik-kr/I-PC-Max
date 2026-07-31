@@ -9,12 +9,14 @@ import java.util.concurrent.atomic.AtomicLong;
 /** Deterministic query-level work and typed cap ledger. */
 public final class PaceWorkLedger {
     /**
-     * M_q v2 counts every connector request, candidate offer, affected-cell
-     * evaluation, retention evaluation, fragment restriction/materialization,
-     * dominance comparison, and equality-root comparison.
+     * M_q v3 counts deterministic pivot admission, connector labels and joins,
+     * candidate assembly and verification, replay and admitted temporal
+     * composition, profile merging, candidate offers, affected-cell and
+     * retention evaluation, fragment restriction/materialization, dominance,
+     * and equality-root work.
      */
     public static final String ACCOUNTING_CONTRACT =
-            "PACE-MQ-TOTAL-WORK-v2";
+            "PACE-MQ-TOTAL-WORK-v3";
     private final PaceOptions options;
     private final AtomicLong queryWork = new AtomicLong();
     private final EnumMap<PaceWorkKind, AtomicLong> typedWork =
@@ -51,17 +53,36 @@ public final class PaceWorkLedger {
     public synchronized boolean reserve(
             PaceWorkKind kind,
             String canonicalWorkItem) {
+        return reserveUnits(kind, 1, canonicalWorkItem);
+    }
+
+    /**
+     * Atomically reserves a deterministic cohort of identical work units.
+     * Either the complete cohort fits or none of it is admitted.
+     */
+    public synchronized boolean reserveUnits(
+            PaceWorkKind kind,
+            long units,
+            String canonicalWorkItem) {
         if (kind == null) {
             throw new IllegalArgumentException(
                     "work kind is required");
         }
-        if (queryWork.get() >= options.queryWorkCapMq()) {
+        if (units < 0) {
+            throw new IllegalArgumentException(
+                    "work units cannot be negative");
+        }
+        if (units == 0) {
+            return true;
+        }
+        long remaining = remainingQueryWork();
+        if (units > remaining) {
             queryWorkCapHits.incrementAndGet();
             trigger(PaceCapKind.QUERY_WORK_M_Q, canonicalWorkItem);
             return false;
         }
-        queryWork.incrementAndGet();
-        typedWork.get(kind).incrementAndGet();
+        queryWork.addAndGet(units);
+        typedWork.get(kind).addAndGet(units);
         return true;
     }
 

@@ -13,6 +13,8 @@
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Keep compiled archives byte-reproducible across clean builds. -->
+        <project.build.outputTimestamp>2026-07-30T00:00:00Z</project.build.outputTimestamp>
         <junit.jupiter.version>5.10.2</junit.jupiter.version>
     </properties>
 
@@ -37,6 +39,14 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <configuration>
+                    <outputTimestamp>${project.build.outputTimestamp}</outputTimestamp>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>

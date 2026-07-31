@@ -85,12 +85,48 @@ public final class QueryCorridor {
                 lowerBounds.truncatedDistancesFrom(source, canonicalBudget);
         QueryLowerBounds.Distances toDestination =
                 lowerBounds.truncatedDistancesTo(destination, canonicalBudget);
+        return build(
+                graph,
+                lowerBounds,
+                partition,
+                source,
+                destination,
+                canonicalBudget,
+                fromSource,
+                toDestination);
+    }
+
+    /**
+     * Builds a corridor from query-scoped labels that were already computed
+     * for the same source, destination, and budget.
+     */
+    static QueryCorridor build(
+            TDGraph graph,
+            QueryLowerBounds lowerBounds,
+            GraphPartitionMetadata partition,
+            int source,
+            int destination,
+            double budget,
+            QueryLowerBounds.Distances fromSource,
+            QueryLowerBounds.Distances toDestination) {
+        Objects.requireNonNull(graph, "graph");
+        Objects.requireNonNull(lowerBounds, "lowerBounds");
+        Objects.requireNonNull(partition, "partition");
+        Objects.requireNonNull(fromSource, "fromSource");
+        Objects.requireNonNull(toDestination, "toDestination");
+        graph.node(source);
+        graph.node(destination);
+        if (!Double.isFinite(budget) || budget < 0) {
+            throw new IllegalArgumentException(
+                    "corridor budget must be finite and nonnegative");
+        }
+        double canonicalBudget = Domain.canonicalTime(budget);
         BitSet membership = new BitSet(graph.edgeCount());
         TreeSet<Integer> vertices = new TreeSet<>();
         List<Integer> arcs = new ArrayList<>();
         Map<Integer, List<Edge>> outgoing = new HashMap<>();
         Map<Integer, List<Edge>> incoming = new HashMap<>();
-        for (int vertex : fromSource.reachedNodes()) {
+        fromSource.forEachReached(vertex -> {
             double prefix = fromSource.distance(vertex);
             for (Edge edge : graph.outgoingEdges(vertex)) {
                 double suffix = toDestination.distance(edge.target());
@@ -113,7 +149,7 @@ public final class QueryCorridor {
                 incoming.computeIfAbsent(
                         edge.target(), ignored -> new ArrayList<>()).add(edge);
             }
-        }
+        });
         if (source == destination || !arcs.isEmpty()) {
             vertices.add(source);
             vertices.add(destination);

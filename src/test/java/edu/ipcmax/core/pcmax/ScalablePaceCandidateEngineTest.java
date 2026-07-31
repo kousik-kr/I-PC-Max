@@ -3,6 +3,7 @@ package edu.ipcmax.core.pcmax;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.BitSet;
@@ -13,11 +14,15 @@ import org.junit.jupiter.api.Test;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.function.PiecewiseConstFn;
+import edu.ipcmax.core.function.PiecewiseLinearFn;
+import edu.ipcmax.core.graph.Edge;
+import edu.ipcmax.core.graph.Node;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.graph.TinyGraphBuilder;
 import edu.ipcmax.core.index.EdgeTemporalSummaryStore;
 import edu.ipcmax.core.index.GraphPartitionMetadata;
 import edu.ipcmax.core.index.ScoreSupportIndex;
+import edu.ipcmax.core.profile.CandidateProfile;
 
 class ScalablePaceCandidateEngineTest {
     @Test
@@ -214,6 +219,98 @@ class ScalablePaceCandidateEngineTest {
     }
 
     @Test
+    void queryScopedSuffixLabelsUseForwardTemporalSemantics() {
+        Domain horizon = Domain.closed(0, 20);
+        PiecewiseConstFn zero =
+                PiecewiseConstFn.constant(horizon, 0);
+        TDGraph graph = new TDGraph(
+                List.of(
+                        new Node(1, 0, 0),
+                        new Node(2, 1, 1),
+                        new Node(3, 2, 2)),
+                List.of(
+                        new Edge(
+                                0, 1, 2, 1, 1,
+                                new PiecewiseLinearFn(List.of(
+                                        new PiecewiseLinearFn.Breakpoint(
+                                                0, 1),
+                                        new PiecewiseLinearFn.Breakpoint(
+                                                10, 5),
+                                        new PiecewiseLinearFn.Breakpoint(
+                                                20, 5))),
+                                zero),
+                        new Edge(
+                                1, 2, 3, 1, 1,
+                                new PiecewiseLinearFn(List.of(
+                                        new PiecewiseLinearFn.Breakpoint(
+                                                0, 1),
+                                        new PiecewiseLinearFn.Breakpoint(
+                                                20, 1))),
+                                zero)));
+        EdgeTemporalSummaryStore summaries =
+                EdgeTemporalSummaryStore.build(graph);
+        GraphPartitionMetadata partition =
+                GraphPartitionMetadata.partition(graph);
+        QueryLowerBounds lowerBounds =
+                new QueryLowerBounds(graph, summaries);
+        QueryCorridor corridor = QueryCorridor.build(
+                graph, lowerBounds, partition, 1, 3, 20);
+        PivotIndex pivots = new PivotIndex(
+                List.of(), List.of(), "empty");
+        PaceOptions options = PaceOptions.bounded(
+                0, 0, 4, 1_000,
+                4, 1_000, 10_000, 1);
+        PaceWorkLedger ledger = new PaceWorkLedger(options);
+        BoundedConnectorGenerator generator =
+                new BoundedConnectorGenerator(
+                        graph,
+                        corridor,
+                        pivots,
+                        lowerBounds,
+                        summaries,
+                        horizon,
+                        options,
+                        ledger);
+        QueryScopedConnectorLabelStore labels =
+                new QueryScopedConnectorLabelStore(
+                        generator,
+                        lowerBounds.truncatedDistancesFrom(
+                                1, 20),
+                        lowerBounds.truncatedDistancesTo(
+                                3, 20),
+                        PaceExecutionMetrics.none());
+        BitSet vertices = new BitSet();
+        vertices.set(1);
+
+        CandidateProfile actual = labels.suffixLabels(
+                1,
+                3,
+                Domain.closed(0, 5),
+                vertices,
+                new BitSet(),
+                20,
+                "suffix").connectors().get(0);
+        CandidateProfile expected =
+                CanonicalPathProfileBuilder.replay(
+                        graph,
+                        horizon,
+                        Set.of(),
+                        List.of(0, 1),
+                        1,
+                        3,
+                        Domain.closed(0, 5),
+                        20,
+                        -1,
+                        false).orElseThrow();
+
+        assertEquals(expected.stablePathId(), actual.stablePathId());
+        assertEquals(
+                expected.arrivalProfile().valueAt(5),
+                actual.arrivalProfile().valueAt(5));
+        assertEquals(9, actual.arrivalProfile().valueAt(5));
+    }
+
+    @Test
     void selectedPivotsAreAPrefixForLargerL() {
         TDGraph graph = new TinyGraphBuilder()
                 .node(1).node(2).node(3).node(4).node(5)
@@ -248,6 +345,107 @@ class ScalablePaceCandidateEngineTest {
                 three.selectedArcIds().subList(
                         0, one.selectedArcIds().size()));
         assertEquals(3, three.scoreRelevantArcIds().size());
+    }
+
+    @Test
+    void connectorCoveredPivotIsNotDuplicatedAndItsScoreIsCountedOnce() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1).node(2).node(3).node(4)
+                .edge(1, 2, 1, score(5))
+                .edge(2, 3, 1, score(7))
+                .edge(3, 4, 1, score(3))
+                .build();
+        PivotIndex pivots = new PivotIndex(
+                List.of(
+                        new PivotIndex.Pivot(
+                                0, 1, 2, 5, 10, 0,
+                                "CELL-00000000", 0),
+                        new PivotIndex.Pivot(
+                                1, 2, 3, 7, 10, 0,
+                                "CELL-00000000", 1),
+                        new PivotIndex.Pivot(
+                                2, 3, 4, 3, 10, 0,
+                                "CELL-00000000", 2)),
+                List.of(0, 1, 2),
+                "fixture");
+        var candidate = CanonicalPathProfileBuilder.replay(
+                graph,
+                Domain.closed(0, 20),
+                Set.of(0, 1, 2),
+                List.of(0, 1),
+                1,
+                3,
+                Domain.closed(0, 5),
+                20,
+                -1,
+                false).orElseThrow();
+
+        BitSet covered = PivotCoverage.extend(
+                new BitSet(), pivots, candidate.stablePathId());
+        BitSet explicitlyUsed = new BitSet();
+        explicitlyUsed.set(0);
+        PartialCandidate partial = new PartialCandidate(
+                3,
+                candidate,
+                candidate.vertexMembership(graph, 1, 3),
+                candidate.edgeMembership(),
+                explicitlyUsed,
+                covered,
+                List.of(0),
+                1,
+                Set.of());
+
+        assertTrue(partial.coveredPivot(0));
+        assertTrue(partial.coveredPivot(1));
+        assertFalse(partial.usedPivot(1),
+                "physically covered pivot B is not a second "
+                        + "explicit branch choice");
+        assertEquals(List.of(0), partial.pivotSequence());
+        assertEquals(1, partial.pivotDepth(),
+                "covered B must not consume a depth level");
+        assertFalse(partial.coveredPivot(2),
+                "the next distinct pivot C remains eligible");
+        assertEquals(12, candidate.scoreProfile().valueAt(0),
+                "the covered pivot score is replayed exactly once");
+        assertEquals(2, candidate.edgeMembership().cardinality());
+    }
+
+    @Test
+    void explicitDirectedArcAndVertexRepetitionAreRejected() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1).node(2).node(3)
+                .edge(1, 2, 1)
+                .edge(2, 1, 1)
+                .edge(1, 3, 1)
+                .build();
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> CanonicalPathProfileBuilder.replay(
+                        graph,
+                        Domain.closed(0, 20),
+                        Set.of(),
+                        List.of(0, 1, 2),
+                        1,
+                        3,
+                        Domain.closed(0, 5),
+                        20,
+                        -1,
+                        false));
+        var repeatedArcHandle = new edu.ipcmax.core.profile.CandidateProfile(
+                Domain.closed(0, 1),
+                edu.ipcmax.core.profile.TimeProfile.identity(
+                        Domain.closed(0, 1)),
+                edu.ipcmax.core.profile.ScoreProfile.constant(
+                        Domain.closed(0, 1), 0),
+                edu.ipcmax.core.profile.PathPointer.of(
+                        List.of(0, 0)),
+                0,
+                -1,
+                false);
+        assertThrows(
+                IllegalArgumentException.class,
+                repeatedArcHandle::edgeMembership);
     }
 
     @Test

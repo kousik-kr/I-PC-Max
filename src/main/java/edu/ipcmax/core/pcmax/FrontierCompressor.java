@@ -195,6 +195,12 @@ public final class FrontierCompressor {
                 maximumRun = Math.max(
                         maximumRun, end - start);
                 if (ledger != null) {
+                    if (!ledger.reserve(
+                            PaceWorkKind.PROFILE_MERGE,
+                            workItem + ":merge-run:"
+                                    + merged.size())) {
+                        throw PaceWorkLimitReachedException.INSTANCE;
+                    }
                     for (int offset = 0;
                             offset < mergeCount;
                             offset++) {

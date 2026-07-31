@@ -116,6 +116,8 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
         scalars.put("selected_pivot_arc_ids",
                 generation.selectedPivotArcIds());
         scalars.put("output_checksum", generation.outputChecksum());
+        addRetainedPathStatistics(
+                scalars, generation.frontier());
         return new AlgorithmResult(
                 status,
                 profile,
@@ -123,5 +125,57 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
                 scalars,
                 null,
                 null);
+    }
+
+    private static void addRetainedPathStatistics(
+            Map<String, Object> scalars,
+            edu.ipcmax.core.profile.CandidateSet frontier) {
+        java.util.Map<java.util.List<Integer>, Integer> distinct =
+                new java.util.TreeMap<>(
+                        edu.ipcmax.core.profile.PathPointer
+                                .STABLE_PATH_ORDER);
+        for (edu.ipcmax.core.profile.CandidateProfile candidate :
+                frontier.candidates()) {
+            distinct.putIfAbsent(
+                    candidate.stablePathId(),
+                    candidate.edgeCount());
+        }
+        java.util.List<Integer> counts =
+                distinct.values().stream().sorted().toList();
+        scalars.put(
+                "final_retained_candidate_count",
+                frontier.size());
+        scalars.put("distinct_path_count", distinct.size());
+        if (counts.isEmpty()) {
+            scalars.put("path_edge_count_min", 0);
+            scalars.put("path_edge_count_sum", 0);
+            scalars.put("path_edge_count_mean", 0.0);
+            scalars.put("path_edge_count_median", 0.0);
+            scalars.put("path_edge_count_p95", 0);
+            scalars.put("path_edge_count_max", 0);
+            return;
+        }
+        long sum = counts.stream()
+                .mapToLong(Integer::longValue).sum();
+        double median = counts.size() % 2 == 1
+                ? counts.get(counts.size() / 2)
+                : (counts.get(counts.size() / 2 - 1)
+                    + counts.get(counts.size() / 2)) / 2.0;
+        int p95Index = Math.max(
+                0,
+                (int) Math.ceil(
+                        0.95 * counts.size()) - 1);
+        scalars.put("path_edge_count_min", counts.get(0));
+        scalars.put("path_edge_count_sum", sum);
+        scalars.put(
+                "path_edge_count_mean",
+                (double) sum / counts.size());
+        scalars.put("path_edge_count_median", median);
+        scalars.put(
+                "path_edge_count_p95",
+                counts.get(p95Index));
+        scalars.put(
+                "path_edge_count_max",
+                counts.get(counts.size() - 1));
     }
 }

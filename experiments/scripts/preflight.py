@@ -324,17 +324,20 @@ def inspect_implementation_gates(design: dict[str, Any]) -> dict[str, Any]:
                 "deterministicRandomizedCorpusMatchesAfterEveryInsertion",
             ),
         ],
-        "mq_total_work_v2_accounting": [
+        "mq_total_work_v3_accounting": [
             lambda: _source_contains(
                 "src/main/java/edu/ipcmax/core/pcmax/"
                 "PaceWorkLedger.java",
                 r'ACCOUNTING_CONTRACT\s*=\s*'
-                r'"PACE-MQ-TOTAL-WORK-v2"',
-                "M_q uses PACE-MQ-TOTAL-WORK-v2",
+                r'"PACE-MQ-TOTAL-WORK-v3"',
+                "M_q uses PACE-MQ-TOTAL-WORK-v3",
             ),
             lambda: _source_contains(
                 "src/main/java/edu/ipcmax/core/pcmax/"
                 "PaceWorkKind.java",
+                r"PIVOT_TASK_ADMISSION[\s\S]*"
+                r"TEMPORAL_COMPOSITION[\s\S]*"
+                r"PROFILE_MERGE[\s\S]*"
                 r"RETENTION_EVALUATION[\s\S]*"
                 r"FRAGMENT_RESTRICTION[\s\S]*"
                 r"FRAGMENT_MATERIALIZATION",

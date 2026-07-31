@@ -40,6 +40,20 @@ public final class PivotIndex {
         return arcId >= 0 && selectedMembership.get(arcId);
     }
 
+    /** Canonical selected-pivot rank, or {@code -1} for an ordinary arc. */
+    public int selectedRank(int arcId) {
+        if (!isSelectedPivot(arcId)) {
+            return -1;
+        }
+        for (Pivot pivot : selected) {
+            if (pivot.arcId() == arcId) {
+                return pivot.canonicalRank();
+            }
+        }
+        throw new IllegalStateException(
+                "selected-pivot membership has no rank for arc " + arcId);
+    }
+
     public String version() {
         return version;
     }
@@ -51,7 +65,7 @@ public final class PivotIndex {
             int target,
             int maximumScore,
             double temporalCoverage,
-            double budgetSlack,
+            double normalizedDetourFactor,
             String cellId,
             int canonicalRank) {
         public Pivot {
@@ -59,8 +73,8 @@ public final class PivotIndex {
                     || maximumScore <= 0
                     || !Double.isFinite(temporalCoverage)
                     || temporalCoverage < 0
-                    || !Double.isFinite(budgetSlack)
-                    || budgetSlack < 0
+                    || !Double.isFinite(normalizedDetourFactor)
+                    || normalizedDetourFactor < 0
                     || cellId == null
                     || cellId.isBlank()
                     || canonicalRank < 0) {
