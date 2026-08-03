@@ -14,9 +14,14 @@ import edu.ipcmax.core.graph.TDGraph;
  */
 public final class EdgeTemporalSummaryStore {
     private final List<EdgeTemporalSummary> summaries;
+    private final Domain commonFunctionSupport;
 
-    private EdgeTemporalSummaryStore(List<EdgeTemporalSummary> summaries) {
+    private EdgeTemporalSummaryStore(
+            List<EdgeTemporalSummary> summaries,
+            Domain commonFunctionSupport) {
         this.summaries = List.copyOf(summaries);
+        this.commonFunctionSupport = Objects.requireNonNull(
+                commonFunctionSupport, "commonFunctionSupport");
     }
 
     /**
@@ -44,6 +49,7 @@ public final class EdgeTemporalSummaryStore {
             boolean requirePositive) {
         Objects.requireNonNull(graph, "graph");
         List<EdgeTemporalSummary> summaries = new ArrayList<>(graph.edgeCount());
+        Domain commonSupport = null;
         for (Edge edge : graph.edges()) {
             double lowerBound = Domain.canonicalTime(
                     edge.travelTimeFunction().minTravelTime());
@@ -68,8 +74,15 @@ public final class EdgeTemporalSummaryStore {
             }
             summaries.add(new EdgeTemporalSummary(
                     edge.arcId(), lowerBound, maximumScore, positive));
+            Domain edgeSupport = edge.travelTimeFunction().domain()
+                    .intersection(edge.scoreFunction().domain());
+            commonSupport = commonSupport == null
+                    ? edgeSupport
+                    : commonSupport.intersection(edgeSupport);
         }
-        return new EdgeTemporalSummaryStore(summaries);
+        return new EdgeTemporalSummaryStore(
+                summaries,
+                commonSupport == null ? Domain.empty() : commonSupport);
     }
 
     /** Number of directed arc summaries. */
@@ -88,6 +101,11 @@ public final class EdgeTemporalSummaryStore {
     /** All summaries in ascending directed arc-ID order. */
     public List<EdgeTemporalSummary> summaries() {
         return summaries;
+    }
+
+    /** Exact time domain covered by every edge travel-time and score function. */
+    public Domain commonFunctionSupport() {
+        return commonFunctionSupport;
     }
 
     /** Query-preparation summary for one directed edge. */

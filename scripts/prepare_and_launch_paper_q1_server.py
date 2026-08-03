@@ -330,14 +330,14 @@ def main() -> int:
         )
         child.add_argument("--run-id", required=True)
         child.add_argument("--cpu-list", default="0-23")
-        child.add_argument("--max-concurrent", type=int, default=24)
+        child.add_argument("--max-concurrent", type=int, default=1)
         child.add_argument("--disk-limit-gib", type=float, default=100.0)
         child.add_argument("--tail", type=int, default=10)
         child.add_argument(
             "--dataset",
             dest="datasets",
             action="append",
-            choices=("NY", "FLA", "CAL", "USA"),
+            choices=("NY", "FLA", "CAL", "OL", "NY-EXACT"),
             help="restrict preparation and experiment execution to this dataset (repeatable)",
         )
     args = parser.parse_args()

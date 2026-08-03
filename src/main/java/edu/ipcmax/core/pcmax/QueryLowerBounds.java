@@ -1,6 +1,8 @@
 package edu.ipcmax.core.pcmax;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -184,15 +186,19 @@ public final class QueryLowerBounds {
             Set<Integer> excludedArcIds,
             double maximum) {
         Map<Integer, Double> distance = new HashMap<>();
+        Map<Integer, Integer> edgeCounts = new HashMap<>();
+        Map<Integer, Integer> witnessArcs = new HashMap<>();
         PriorityQueue<Label> queue =
                 new PriorityQueue<>();
         distance.put(start, 0.0);
-        queue.add(new Label(start, 0.0));
+        edgeCounts.put(start, 0);
+        queue.add(new Label(start, 0.0, 0));
         while (!queue.isEmpty()) {
             Label current = queue.poll();
-            if (current.distance() > distance.getOrDefault(
-                    current.node(),
-                    Double.POSITIVE_INFINITY)) {
+            if (current.distance() != distance.getOrDefault(
+                    current.node(), Double.POSITIVE_INFINITY)
+                    || current.edgeCount() != edgeCounts.getOrDefault(
+                            current.node(), Integer.MAX_VALUE)) {
                 continue;
             }
             if (current.distance() > maximum) {
@@ -210,16 +216,34 @@ public final class QueryLowerBounds {
                 double candidate = Domain.canonicalTime(
                         current.distance()
                                 + edgeWeight(edge.arcId()));
-                if (candidate <= maximum
-                        && candidate < distance.getOrDefault(
-                                next,
-                                Double.POSITIVE_INFINITY)) {
+                int candidateEdges = Math.addExact(
+                        current.edgeCount(), 1);
+                double knownDistance = distance.getOrDefault(
+                        next, Double.POSITIVE_INFINITY);
+                int knownEdges = edgeCounts.getOrDefault(
+                        next, Integer.MAX_VALUE);
+                boolean improves = candidate < knownDistance
+                        || (candidate == knownDistance
+                            && candidateEdges < knownEdges);
+                boolean witnessImproves = candidate == knownDistance
+                        && candidateEdges == knownEdges
+                        && edge.arcId() < witnessArcs.getOrDefault(
+                                next, Integer.MAX_VALUE);
+                if (candidate <= maximum && improves) {
                     distance.put(next, candidate);
-                    queue.add(new Label(next, candidate));
+                    edgeCounts.put(next, candidateEdges);
+                    witnessArcs.put(next, edge.arcId());
+                    queue.add(new Label(
+                            next, candidate, candidateEdges));
+                } else if (candidate <= maximum
+                        && witnessImproves) {
+                    witnessArcs.put(next, edge.arcId());
                 }
             }
         }
-        return new Distances(distance);
+        return new Distances(
+                start, outgoing, graph,
+                distance, edgeCounts, witnessArcs);
     }
 
     private Distances denseDijkstra(
@@ -230,12 +254,17 @@ public final class QueryLowerBounds {
         graph.node(start);
         double[] distance =
                 new double[maximumNodeId + 1];
+        int[] edgeCounts = new int[maximumNodeId + 1];
+        int[] witnessArcs = new int[maximumNodeId + 1];
         Arrays.fill(
                 distance, Double.POSITIVE_INFINITY);
+        Arrays.fill(edgeCounts, Integer.MAX_VALUE);
+        Arrays.fill(witnessArcs, -1);
         DenseNodeHeap queue =
-                new DenseNodeHeap(distance);
+                new DenseNodeHeap(distance, edgeCounts);
         IntAccumulator reached = new IntAccumulator();
         distance[start] = 0;
+        edgeCounts[start] = 0;
         reached.add(start);
         queue.addOrDecrease(start);
         while (!queue.isEmpty()) {
@@ -256,20 +285,38 @@ public final class QueryLowerBounds {
                 double candidate = Domain.canonicalTime(
                         currentDistance
                                 + edgeWeight(edge.arcId()));
+                int candidateEdges = Math.addExact(
+                        edgeCounts[current], 1);
+                boolean improves = candidate < distance[next]
+                        || (candidate == distance[next]
+                            && candidateEdges < edgeCounts[next]);
+                boolean witnessImproves = candidate == distance[next]
+                        && candidateEdges == edgeCounts[next]
+                        && (witnessArcs[next] < 0
+                            || edge.arcId() < witnessArcs[next]);
                 if (candidate > maximum
-                        || candidate >= distance[next]) {
+                        || (!improves && !witnessImproves)) {
                     continue;
                 }
-                if (!Double.isFinite(distance[next])) {
+                if (improves && !Double.isFinite(distance[next])) {
                     reached.add(next);
                 }
-                distance[next] = candidate;
-                queue.addOrDecrease(next);
+                if (improves) {
+                    distance[next] = candidate;
+                    edgeCounts[next] = candidateEdges;
+                    witnessArcs[next] = edge.arcId();
+                    queue.addOrDecrease(next);
+                } else {
+                    witnessArcs[next] = edge.arcId();
+                }
             }
         }
         int[] reachedNodes = reached.toArray();
         Arrays.sort(reachedNodes);
-        return new Distances(distance, reachedNodes);
+        return new Distances(
+                start, outgoing, graph,
+                distance, edgeCounts, witnessArcs,
+                reachedNodes);
     }
 
     private static int maximumNodeId(TDGraph graph) {
@@ -292,14 +339,20 @@ public final class QueryLowerBounds {
 
     private record Label(
             int node,
-            double distance)
+            double distance,
+            int edgeCount)
             implements Comparable<Label> {
         @Override
         public int compareTo(Label other) {
             int byDistance = Double.compare(
                     distance, other.distance);
-            return byDistance != 0
-                    ? byDistance
+            if (byDistance != 0) {
+                return byDistance;
+            }
+            int byEdges = Integer.compare(
+                    edgeCount, other.edgeCount);
+            return byEdges != 0
+                    ? byEdges
                     : Integer.compare(node, other.node);
         }
     }
@@ -324,22 +377,64 @@ public final class QueryLowerBounds {
 
     /** Immutable distance lookup. */
     public static final class Distances {
+        private final int start;
+        private final boolean outgoing;
+        private final TDGraph graph;
         private final Map<Integer, Double> values;
+        private final Map<Integer, Integer> sparseEdgeCounts;
+        private final Map<Integer, Integer> sparseWitnessArcs;
         private final double[] denseValues;
+        private final int[] denseEdgeCounts;
+        private final int[] denseWitnessArcs;
         private final int[] denseReachedNodes;
 
-        private Distances(Map<Integer, Double> values) {
+        private Distances(
+                int start,
+                boolean outgoing,
+                TDGraph graph,
+                Map<Integer, Double> values,
+                Map<Integer, Integer> edgeCounts,
+                Map<Integer, Integer> witnessArcs) {
+            this.start = start;
+            this.outgoing = outgoing;
+            this.graph = graph;
             this.values = Map.copyOf(values);
+            this.sparseEdgeCounts = Map.copyOf(edgeCounts);
+            this.sparseWitnessArcs = Map.copyOf(witnessArcs);
             this.denseValues = null;
+            this.denseEdgeCounts = null;
+            this.denseWitnessArcs = null;
             this.denseReachedNodes = null;
         }
 
         private Distances(
+                int start,
+                boolean outgoing,
+                TDGraph graph,
                 double[] denseValues,
+                int[] denseEdgeCounts,
+                int[] denseWitnessArcs,
                 int[] denseReachedNodes) {
+            this.start = start;
+            this.outgoing = outgoing;
+            this.graph = graph;
             this.values = null;
+            this.sparseEdgeCounts = null;
+            this.sparseWitnessArcs = null;
             this.denseValues = denseValues;
+            this.denseEdgeCounts = denseEdgeCounts;
+            this.denseWitnessArcs = denseWitnessArcs;
             this.denseReachedNodes = denseReachedNodes;
+        }
+
+        /** Root vertex of this lower-bound labeling. */
+        public int start() {
+            return start;
+        }
+
+        /** True for source-to-vertex labels; false for vertex-to-target labels. */
+        public boolean outgoing() {
+            return outgoing;
         }
 
         public double distance(int node) {
@@ -355,6 +450,66 @@ public final class QueryLowerBounds {
 
         public boolean reached(int node) {
             return Double.isFinite(distance(node));
+        }
+
+        /** Number of arcs in the stable witness, or -1 when unreachable. */
+        public int edgeCount(int node) {
+            if (!reached(node)) {
+                return -1;
+            }
+            if (denseEdgeCounts != null) {
+                return denseEdgeCounts[node];
+            }
+            return sparseEdgeCounts.getOrDefault(node, -1);
+        }
+
+        /**
+         * Returns the deterministic minimum-distance witness. Forward labels
+         * return {@code start -> node}; reverse labels return
+         * {@code node -> start}.
+         */
+        public List<Integer> witnessArcIds(int node) {
+            if (!reached(node)) {
+                throw new IllegalArgumentException(
+                        "node is unreachable in lower-bound graph: " + node);
+            }
+            if (node == start) {
+                return List.of();
+            }
+            int expectedEdges = edgeCount(node);
+            List<Integer> arcs = new ArrayList<>(expectedEdges);
+            int current = node;
+            while (current != start) {
+                int arcId = witnessArc(current);
+                if (arcId < 0) {
+                    throw new IllegalStateException(
+                            "missing lower-bound witness for node " + current);
+                }
+                arcs.add(arcId);
+                Edge edge = graph.edges().get(arcId);
+                current = outgoing ? edge.source() : edge.target();
+                if (arcs.size() > expectedEdges) {
+                    throw new IllegalStateException(
+                            "cyclic lower-bound witness for node " + node);
+                }
+            }
+            if (arcs.size() != expectedEdges) {
+                throw new IllegalStateException(
+                        "lower-bound witness edge-count mismatch for node "
+                                + node);
+            }
+            if (outgoing) {
+                Collections.reverse(arcs);
+            }
+            return List.copyOf(arcs);
+        }
+
+        private int witnessArc(int node) {
+            if (denseWitnessArcs != null) {
+                return node >= 0 && node < denseWitnessArcs.length
+                        ? denseWitnessArcs[node] : -1;
+            }
+            return sparseWitnessArcs.getOrDefault(node, -1);
         }
 
         public List<Integer> reachedNodes() {
@@ -389,15 +544,19 @@ public final class QueryLowerBounds {
         }
     }
 
-    /** Allocation-stable indexed heap ordered by distance then node ID. */
+    /** Allocation-stable heap ordered by distance, hops, then node ID. */
     private static final class DenseNodeHeap {
         private int[] nodes;
         private final int[] positions;
         private final double[] distances;
+        private final int[] edgeCounts;
         private int size;
 
-        DenseNodeHeap(double[] distances) {
+        DenseNodeHeap(
+                double[] distances,
+                int[] edgeCounts) {
             this.distances = distances;
+            this.edgeCounts = edgeCounts;
             positions = new int[distances.length];
             Arrays.fill(positions, -1);
             nodes = new int[Math.min(
@@ -476,8 +635,13 @@ public final class QueryLowerBounds {
             int byDistance = Double.compare(
                     distances[left],
                     distances[right]);
-            return byDistance != 0
-                    ? byDistance
+            if (byDistance != 0) {
+                return byDistance;
+            }
+            int byEdges = Integer.compare(
+                    edgeCounts[left], edgeCounts[right]);
+            return byEdges != 0
+                    ? byEdges
                     : Integer.compare(left, right);
         }
 

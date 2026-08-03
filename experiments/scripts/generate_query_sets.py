@@ -115,7 +115,7 @@ def _study_datasets(
 
 
 def derive_requirements(design: dict[str, Any]) -> dict[str, Any]:
-    """Derive query axes and variant reuse from the checked E00-E13 matrix."""
+    """Derive query axes and variant reuse from the checked T01-T06 matrix."""
     workload = design["workload"]
     default_window = int(workload["default_window_minutes"])
     default_overhead = float(workload["default_budget_overhead"])
@@ -244,10 +244,12 @@ def expected_instance_counts(
 ) -> dict[str, int]:
     """Independent arithmetic for base and matrix-derived query rows."""
     centers = len(requirements["centers"])
+    # The final matrix consumes the full window x rho Cartesian product.  A
+    # single base pair set is reused for every cell; no source/destination
+    # resampling occurs for derived instances.
     evaluation_cells = centers * (
         len(requirements["window_minutes"])
-        + len(requirements["budget_overheads"])
-        - 1
+        * len(requirements["budget_overheads"])
     )
     counts = {
         "pilot": int(requirements["split_pairs"]["pilot"]) * centers,
@@ -306,9 +308,13 @@ def _dataset_asset_errors(
         except (OSError, ValueError, json.JSONDecodeError) as failure:
             errors.append(f"{dataset}: invalid manifest {directory}: {failure}")
             continue
-        if manifest.get("num_nodes") != definition["expected_nodes"]:
+        if definition.get("expected_nodes") is None and not isinstance(manifest.get("num_nodes"), int):
+            errors.append(f"{dataset}: {directory}: manifest lacks a valid node count")
+        elif definition.get("expected_nodes") is not None and manifest.get("num_nodes") != definition["expected_nodes"]:
             errors.append(f"{dataset}: {directory}: node count mismatch")
-        if manifest.get("num_arcs") != definition["expected_edges"]:
+        if definition.get("expected_edges") is None and not isinstance(manifest.get("num_arcs"), int):
+            errors.append(f"{dataset}: {directory}: manifest lacks a valid directed arc count")
+        elif definition.get("expected_edges") is not None and manifest.get("num_arcs") != definition["expected_edges"]:
             errors.append(f"{dataset}: {directory}: arc count mismatch")
         support_end = _support_end(manifest)
         if (

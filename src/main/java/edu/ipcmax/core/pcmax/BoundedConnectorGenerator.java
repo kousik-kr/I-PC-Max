@@ -49,8 +49,10 @@ public final class BoundedConnectorGenerator {
             connectorCache;
     private final SingleFlightCache<ProfileKey, Optional<CandidateProfile>>
             profileCache;
-    private final Map<Integer, Map<Integer, Double>> targetHeuristics =
+    private final Map<Integer, ConnectorHeuristic> targetHeuristics =
             new ConcurrentHashMap<>();
+    private volatile QueryLowerBounds.Distances queryForwardLabels;
+    private volatile QueryLowerBounds.Distances queryBackwardLabels;
 
     public BoundedConnectorGenerator(
             TDGraph graph,
@@ -155,7 +157,7 @@ public final class BoundedConnectorGenerator {
                 corridor.checksum(),
                 pivots.version(),
                 TemporalPathVersion.SEMANTICS_VERSION,
-                options.policy().name(),
+                connectorMode(),
                 options.effectiveConnectorLimit(),
                 options.connectorExpansionCapMc());
         if (!options.memoizationEnabled()
@@ -205,6 +207,16 @@ public final class BoundedConnectorGenerator {
         if (prefixVisited.get(target)) {
             return new ConnectorResult(List.of(), 0, 1, false);
         }
+        if (usesSingleFastestWitness()) {
+            return fastestLowerBoundWitness(
+                    source,
+                    target,
+                    entryDomain,
+                    prefixVisited,
+                    prefixVisitedEdges,
+                    residualBudget,
+                    workItem);
+        }
         return options.policy() == PaceExecutionPolicy.PACE_X
                 ? exhaustive(
                         source,
@@ -221,6 +233,147 @@ public final class BoundedConnectorGenerator {
                         prefixVisitedEdges,
                         residualBudget,
                         workItem);
+    }
+
+    /**
+     * Attaches the already-computed query forward/backward labels. This is
+     * deliberately query-scoped and happens before connector tasks start.
+     */
+    void attachQueryLabels(
+            QueryLowerBounds.Distances forwardLabels,
+            QueryLowerBounds.Distances backwardLabels) {
+        if (forwardLabels == null || !forwardLabels.outgoing()
+                || backwardLabels == null || backwardLabels.outgoing()) {
+            throw new IllegalArgumentException(
+                    "connector query labels have incompatible directions");
+        }
+        queryForwardLabels = forwardLabels;
+        queryBackwardLabels = backwardLabels;
+    }
+
+    private boolean usesSingleFastestWitness() {
+        return options.singleFastestLowerBoundWitnessEnabled();
+    }
+
+    private String connectorMode() {
+        return usesSingleFastestWitness()
+                ? "PACE_B_FASTEST_LOWER_BOUND_WITNESS_V1"
+                : options.policy().name();
+    }
+
+    /**
+     * Aggressive PACE-B connector: replay exactly one stable shortest path in
+     * the lower-bound connector graph. It reuses only the query's stored F/B
+     * witnesses; a connector that is not represented by those labels is
+     * rejected immediately. No target-specific search or second path is
+     * enumerated after either structural or temporal rejection.
+     */
+    private ConnectorResult fastestLowerBoundWitness(
+            int source,
+            int target,
+            Domain entryDomain,
+            BitSet prefixVisited,
+            BitSet prefixVisitedEdges,
+            double residualBudget,
+            String workItem) {
+        metrics.increment("connector_witness_requests");
+        Optional<List<Integer>> queryWitness =
+                reusableQueryWitness(source, target);
+        if (queryWitness.isEmpty()) {
+            metrics.increment("connector_query_label_witness_misses");
+            return new ConnectorResult(List.of(), 0, 0, false);
+        }
+        List<Integer> arcIds = queryWitness.orElseThrow();
+        if (!witnessAllowed(
+                arcIds,
+                source,
+                target,
+                prefixVisited,
+                prefixVisitedEdges)) {
+            metrics.increment("connector_witness_mask_rejections");
+            return new ConnectorResult(List.of(), 0, 0, false);
+        }
+        metrics.increment("connector_query_label_witness_hits");
+        double lowerWeight = lowerWeight(arcIds);
+        if (lowerWeight > Domain.canonicalTime(residualBudget)) {
+            metrics.increment("connector_witness_budget_rejections");
+            return new ConnectorResult(List.of(), 0, 0, false);
+        }
+        long expansions = arcIds.size();
+        if (expansions > options.connectorExpansionCapMc()) {
+            long admitted = options.connectorExpansionCapMc();
+            ledger.addConnectorExpansions(admitted);
+            metrics.addCounter("connector_expansions", admitted);
+            ledger.connectorCapReached(workItem);
+            metrics.increment("connector_witness_cap_rejections");
+            return new ConnectorResult(List.of(), admitted, 0, true);
+        }
+        ledger.addConnectorExpansions(expansions);
+        metrics.addCounter("connector_expansions", expansions);
+        metrics.addCounter("connector_witness_arcs", expansions);
+        Optional<CandidateProfile> profile = replay(
+                arcIds, source, target, entryDomain, residualBudget);
+        if (profile.isEmpty()) {
+            metrics.increment("connector_witness_temporal_rejections");
+            return new ConnectorResult(List.of(), expansions, 1, false);
+        }
+        metrics.increment("connector_witness_temporal_accepts");
+        return new ConnectorResult(
+                List.of(profile.orElseThrow()), expansions, 0, false);
+    }
+
+    private Optional<List<Integer>> reusableQueryWitness(
+            int source,
+            int target) {
+        QueryLowerBounds.Distances backward = queryBackwardLabels;
+        if (backward != null
+                && backward.start() == target
+                && backward.reached(source)) {
+            return Optional.of(backward.witnessArcIds(source));
+        }
+        QueryLowerBounds.Distances forward = queryForwardLabels;
+        if (forward != null
+                && forward.start() == source
+                && forward.reached(target)) {
+            return Optional.of(forward.witnessArcIds(target));
+        }
+        return Optional.empty();
+    }
+
+    private boolean witnessAllowed(
+            List<Integer> arcIds,
+            int source,
+            int target,
+            BitSet prefixVisited,
+            BitSet prefixVisitedEdges) {
+        int current = source;
+        BitSet localVertices = new BitSet();
+        localVertices.set(source);
+        for (int arcId : arcIds) {
+            if (!corridor.containsArc(arcId)
+                    || pivots.isSelectedPivot(arcId)
+                    || prefixVisitedEdges.get(arcId)) {
+                return false;
+            }
+            Edge edge = graph.edges().get(arcId);
+            if (edge.source() != current
+                    || prefixVisited.get(edge.target())
+                    || localVertices.get(edge.target())) {
+                return false;
+            }
+            current = edge.target();
+            localVertices.set(current);
+        }
+        return current == target;
+    }
+
+    private double lowerWeight(List<Integer> arcIds) {
+        double weight = 0;
+        for (int arcId : arcIds) {
+            weight = Domain.canonicalTime(
+                    weight + lowerBounds.edgeWeight(arcId));
+        }
+        return weight;
     }
 
     private ConnectorResult exhaustive(
@@ -535,6 +688,19 @@ public final class BoundedConnectorGenerator {
          * Do not also charge it to canonical full-candidate replay: the
          * launch report's top-level phase categories must be disjoint.
          */
+        if (usesSingleFastestWitness()) {
+            return GridPathProfileBuilder.replay(
+                    graph,
+                    queryHorizon,
+                    Set.copyOf(pivots.selectedArcIds()),
+                    arcIds,
+                    source,
+                    target,
+                    domain,
+                    budget,
+                    -1,
+                    1);
+        }
         return CanonicalPathProfileBuilder.replay(
                 graph,
                 queryHorizon,
@@ -613,6 +779,10 @@ public final class BoundedConnectorGenerator {
     }
 
     private Map<Integer, Double> heuristicTo(int target) {
+        return connectorHeuristicTo(target).distances();
+    }
+
+    private ConnectorHeuristic connectorHeuristicTo(int target) {
         return targetHeuristics.computeIfAbsent(
                 target, this::buildHeuristic);
     }
@@ -621,35 +791,67 @@ public final class BoundedConnectorGenerator {
      * Exact static reverse distances in the query connector graph. The search
      * touches only corridor incoming arcs and excludes selected pivots.
      */
-    private Map<Integer, Double> buildHeuristic(int target) {
+    private ConnectorHeuristic buildHeuristic(int target) {
+        metrics.increment("connector_target_label_builds");
         Map<Integer, Double> distances = new HashMap<>();
+        Map<Integer, Integer> edgeCounts = new HashMap<>();
+        Map<Integer, Integer> witnessArcs = new HashMap<>();
         PriorityQueue<HeuristicLabel> queue =
                 new PriorityQueue<>();
         distances.put(target, 0.0);
-        queue.add(new HeuristicLabel(target, 0.0));
+        edgeCounts.put(target, 0);
+        queue.add(new HeuristicLabel(target, 0.0, 0));
+        long scannedArcs = 0;
         while (!queue.isEmpty()) {
             PaceCancellation.checkpoint();
             HeuristicLabel current = queue.poll();
-            if (current.distance() > distances.getOrDefault(
-                    current.node(), Double.POSITIVE_INFINITY)) {
+            if (current.distance() != distances.getOrDefault(
+                    current.node(), Double.POSITIVE_INFINITY)
+                    || current.edgeCount() != edgeCounts.getOrDefault(
+                            current.node(), Integer.MAX_VALUE)) {
                 continue;
             }
             for (Edge edge : corridor.incomingEdges(current.node())) {
+                scannedArcs++;
                 if (pivots.isSelectedPivot(edge.arcId())) {
                     continue;
                 }
                 double candidate = Domain.canonicalTime(
                         current.distance()
                                 + lowerBounds.edgeWeight(edge.arcId()));
-                if (candidate < distances.getOrDefault(
-                        edge.source(), Double.POSITIVE_INFINITY)) {
+                int candidateEdges = Math.addExact(
+                        current.edgeCount(), 1);
+                double knownDistance = distances.getOrDefault(
+                        edge.source(), Double.POSITIVE_INFINITY);
+                int knownEdges = edgeCounts.getOrDefault(
+                        edge.source(), Integer.MAX_VALUE);
+                boolean improves = candidate < knownDistance
+                        || (candidate == knownDistance
+                            && candidateEdges < knownEdges);
+                boolean witnessImproves = candidate == knownDistance
+                        && candidateEdges == knownEdges
+                        && edge.arcId() < witnessArcs.getOrDefault(
+                                edge.source(), Integer.MAX_VALUE);
+                if (improves) {
                     distances.put(edge.source(), candidate);
+                    edgeCounts.put(edge.source(), candidateEdges);
+                    witnessArcs.put(edge.source(), edge.arcId());
                     queue.add(new HeuristicLabel(
-                            edge.source(), candidate));
+                            edge.source(), candidate, candidateEdges));
+                } else if (witnessImproves) {
+                    witnessArcs.put(edge.source(), edge.arcId());
                 }
             }
         }
-        return Map.copyOf(distances);
+        metrics.addCounter(
+                "connector_target_label_scanned_arcs", scannedArcs);
+        metrics.addCounter(
+                "connector_target_label_vertices", distances.size());
+        return new ConnectorHeuristic(
+                target,
+                Map.copyOf(distances),
+                Map.copyOf(edgeCounts),
+                Map.copyOf(witnessArcs));
     }
 
     private static boolean hasWork(
@@ -711,15 +913,73 @@ public final class BoundedConnectorGenerator {
 
     private record HeuristicLabel(
             int node,
-            double distance)
+            double distance,
+            int edgeCount)
             implements Comparable<HeuristicLabel> {
         @Override
         public int compareTo(HeuristicLabel other) {
             int comparison = Double.compare(
                     distance, other.distance);
-            return comparison != 0
-                    ? comparison
+            if (comparison != 0) {
+                return comparison;
+            }
+            int byEdges = Integer.compare(
+                    edgeCount, other.edgeCount);
+            return byEdges != 0
+                    ? byEdges
                     : Integer.compare(node, other.node);
+        }
+    }
+
+    private record ConnectorHeuristic(
+            int target,
+            Map<Integer, Double> distances,
+            Map<Integer, Integer> edgeCounts,
+            Map<Integer, Integer> witnessArcs) {
+        double distance(int source) {
+            return distances.getOrDefault(
+                    source, Double.POSITIVE_INFINITY);
+        }
+
+        List<Integer> witnessArcIds(
+                TDGraph graph,
+                int source,
+                int expectedTarget) {
+            if (target != expectedTarget
+                    || !Double.isFinite(distance(source))) {
+                return List.of();
+            }
+            int expectedEdges = edgeCounts.getOrDefault(source, -1);
+            if (expectedEdges < 0) {
+                return List.of();
+            }
+            List<Integer> result = new ArrayList<>(expectedEdges);
+            int current = source;
+            while (current != target) {
+                Integer arcId = witnessArcs.get(current);
+                if (arcId == null) {
+                    throw new IllegalStateException(
+                            "missing connector witness for vertex " + current);
+                }
+                Edge edge = graph.edges().get(arcId);
+                if (edge.source() != current) {
+                    throw new IllegalStateException(
+                            "discontinuous connector witness at arc " + arcId);
+                }
+                result.add(arcId);
+                current = edge.target();
+                if (result.size() > expectedEdges) {
+                    throw new IllegalStateException(
+                            "cyclic connector witness from " + source
+                                    + " to " + target);
+                }
+            }
+            if (result.size() != expectedEdges) {
+                throw new IllegalStateException(
+                        "connector witness edge-count mismatch from "
+                                + source + " to " + target);
+            }
+            return List.copyOf(result);
         }
     }
 

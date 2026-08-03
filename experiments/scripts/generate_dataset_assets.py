@@ -808,10 +808,10 @@ def refresh_manifest_checksums(directory: Path) -> bool:
 
 def validate_dataset_directory(
     directory: Path,
-    expected_nodes: int,
-    expected_edges: int,
+    expected_nodes: int | None,
+    expected_edges: int | None,
     expected_seed: int,
-    expected_density: float,
+    expected_density: float | None,
     expected_contract: str,
     support_end: int,
     raw_travel_path: Path | None,
@@ -848,23 +848,22 @@ def validate_dataset_directory(
     temporal = temporal_attribute_checksum(directory)
     full = graph_checksum(directory, REQUIRED_GRAPH_FILES)
     errors: list[str] = []
-    if actual_nodes != expected_nodes or data.get("num_nodes") != expected_nodes:
+    if expected_nodes is not None and (
+        actual_nodes != expected_nodes or data.get("num_nodes") != expected_nodes
+    ):
         errors.append(
             f"node count mismatch: payload={actual_nodes}, "
             f"manifest={data.get('num_nodes')}, expected={expected_nodes}"
         )
-    if not (
-        conversion_edges
-        == travel_edges
-        == expected_edges
-        == data.get("num_arcs")
+    if expected_edges is not None and not (
+        conversion_edges == travel_edges == expected_edges == data.get("num_arcs")
     ):
         errors.append(
             f"directed arc count mismatch: edges={conversion_edges}, "
             f"travel={travel_edges}, manifest={data.get('num_arcs')}, "
             f"expected={expected_edges}"
         )
-    if fifo_edges != expected_edges:
+    if expected_edges is not None and fifo_edges != expected_edges:
         errors.append(
             f"FIFO edge count {fifo_edges} != expected {expected_edges}"
         )
@@ -872,13 +871,16 @@ def validate_dataset_directory(
         errors.append(
             f"graph seed {data.get('seed')} != expected {expected_seed}"
         )
-    if float(data.get("score_edge_fraction", -1)) != expected_density:
+    if expected_density is not None and float(data.get("score_edge_fraction", -1)) != expected_density:
         errors.append(
             f"score density {data.get('score_edge_fraction')} "
             f"!= expected {expected_density}"
         )
-    expected_score_edges = math.floor(expected_density * expected_edges)
-    if score_edges != expected_score_edges:
+    expected_score_edges = (
+        math.floor(expected_density * expected_edges)
+        if expected_edges is not None and expected_density is not None else None
+    )
+    if expected_score_edges is not None and score_edges != expected_score_edges:
         errors.append(
             f"score edge count {score_edges} != expected {expected_score_edges}"
         )
@@ -928,6 +930,11 @@ def generate_base_dataset(
     overwrite: bool,
 ) -> dict[str, Any]:
     definition = design["dataset_definitions"][dataset]
+    if definition.get("induced_subgraph"):
+        raise ValueError(
+            f"{dataset}: this is a derived payload; run "
+            "experiments/scripts/create_ny_exact.py instead of the DIMACS generator"
+        )
     directory = repo_path(definition["path"])
     directory.mkdir(parents=True, exist_ok=True)
     if is_converted(directory, config) and not overwrite:
@@ -1005,11 +1012,17 @@ def _generate_dataset_variants(
     overwrite: bool,
 ) -> list[dict[str, Any]]:
     definition = design["dataset_definitions"][dataset]
+    if not definition.get("required_score_density_percent") and not definition.get("required_graph_seeds"):
+        # External canonical payloads such as OL may intentionally provide only
+        # the base graph.  Do not require unavailable DIMACS source files when
+        # there are no configured derived variants to build.
+        return []
     base = repo_path(definition["path"])
     paths = raw_paths(config, dataset)
     hashes = raw_hashes(paths)
-    node_count = int(definition["expected_nodes"])
-    edge_count = int(definition["expected_edges"])
+    base_manifest = load_document(base / "manifest.json")
+    node_count = int(definition["expected_nodes"] or base_manifest["num_nodes"])
+    edge_count = int(definition["expected_edges"] or base_manifest["num_arcs"])
     records = []
     for percent in definition.get("required_score_density_percent", []):
         density = int(percent) / 100.0
@@ -1152,6 +1165,8 @@ def generate_required_variants(
 ) -> list[dict[str, Any]]:
     records = []
     for dataset in design["datasets"]:
+        if design["dataset_definitions"][dataset].get("induced_subgraph"):
+            continue
         for record in _generate_dataset_variants(
             dataset, design, config, config_hash, overwrite
         ):
@@ -1240,13 +1255,16 @@ def validate_assets(
         try:
             validated = validate_dataset_directory(
                 directory,
-                int(definition["expected_nodes"]),
-                int(definition["expected_edges"]),
+                definition.get("expected_nodes"),
+                definition.get("expected_edges"),
                 int(design["seeds"]["graph_main"]),
-                float(config["defaults"]["score_edge_fraction"]),
+                definition.get("expected_score_density", config["defaults"]["score_edge_fraction"]),
                 expected_contract,
                 int(definition["required_support_end"]),
-                raw_paths(config, dataset)["travel_time"],
+                None if (
+                    definition.get("induced_subgraph")
+                    or definition.get("asset_status") == "external_input_required"
+                ) else raw_paths(config, dataset)["travel_time"],
                 numerator,
                 denominator,
                 collect_score_ids=dataset == "NY",
@@ -1275,8 +1293,8 @@ def validate_assets(
             try:
                 validated = validate_dataset_directory(
                     directory,
-                    int(ny["expected_nodes"]),
-                    int(ny["expected_edges"]),
+                    ny.get("expected_nodes"),
+                    ny.get("expected_edges"),
                     int(design["seeds"]["graph_main"]),
                     int(percent) / 100.0,
                     expected_contract,
@@ -1338,8 +1356,8 @@ def validate_assets(
             try:
                 validated = validate_dataset_directory(
                     directory,
-                    int(ny["expected_nodes"]),
-                    int(ny["expected_edges"]),
+                    ny.get("expected_nodes"),
+                    ny.get("expected_edges"),
                     int(seed),
                     float(config["defaults"]["score_edge_fraction"]),
                     expected_contract,
@@ -1385,8 +1403,8 @@ def validate_assets(
             try:
                 validated = validate_dataset_directory(
                     directory,
-                    int(definition["expected_nodes"]),
-                    int(definition["expected_edges"]),
+                    definition.get("expected_nodes"),
+                    definition.get("expected_edges"),
                     int(seed),
                     float(config["defaults"]["score_edge_fraction"]),
                     expected_contract,
@@ -1429,7 +1447,14 @@ def plan_assets(
     actions = []
     for dataset, kind, value, directory in dataset_directories(design):
         exists = is_converted(directory, config)
-        action = "regenerate" if overwrite else ("validate" if exists else "generate")
+        derived = bool(design["dataset_definitions"][dataset].get("induced_subgraph"))
+        action = (
+            "derive-with-create_ny_exact"
+            if derived and not exists
+            else "validate-derived"
+            if derived
+            else "regenerate" if overwrite else ("validate" if exists else "generate")
+        )
         actions.append({
             "dataset_id": dataset,
             "kind": kind,
@@ -1461,10 +1486,21 @@ def run(
     if validate_only:
         return validate_assets(design, generation_config)
     refreshed = refresh_all_manifest_checksums(design) if resume else []
-    base_records = [
-        generate_base_dataset(dataset, design, generation_config, config_hash, overwrite)
-        for dataset in design["datasets"]
-    ]
+    base_records = []
+    for dataset in design["datasets"]:
+        if design["dataset_definitions"][dataset].get("induced_subgraph"):
+            base_records.append({
+                "dataset_id": dataset,
+                "path": design["dataset_definitions"][dataset]["path"],
+                "skipped": True,
+                "reason": "derived dataset; use create_ny_exact.py",
+            })
+        else:
+            base_records.append(
+                generate_base_dataset(
+                    dataset, design, generation_config, config_hash, overwrite
+                )
+            )
     variants = generate_required_variants(
         design, generation_config, config_hash, overwrite
     )

@@ -2,9 +2,11 @@
 
 ## Q1 single-command workflow
 
-The publication controller is `experiments/scripts/run_all.py`. The supported paper datasets are
-NY, FLA, CAL, and USA; OL is intentionally excluded. Python orchestrates Java and validates its
-records but never loads or reimplements the road graph.
+The publication controller is `experiments/scripts/run_all.py`. The canonical two-track design is
+`experiments/configs/paper_q1_server_24c_250g.yaml`: NY, FLA, CAL, and OL are the real-network
+scope, while NY-EXACT is a deterministic induced NY subgraph for small exact probes. USA is not
+part of the executable design. Python orchestrates Java and validates its records but never loads
+or reimplements the road graph.
 
 ```sh
 make paper-preflight
@@ -25,7 +27,7 @@ make paper-monitor-server
 `experiments/configs/dataset_generation.yaml`: `minutes = DIMACS_weight * 1 / 6000`.
 Generated assets explicitly cover `[0,10080]`; travel time is flat after minute `1440`
 at the converted static travel time, and score is zero after minute `1440`.
-`paper-plan` writes the exact E00-E13 matrix and starts no algorithm. `paper-smoke` runs the Maven
+`paper-plan` writes the exact T01-T06 two-track matrix and starts no algorithm. `paper-smoke` runs the Maven
 suite plus a tiny/demo end-to-end workflow. `paper-reproduce` is the only full execution target;
 it refuses the default planning run ID and is safe to resume only when the config, Git state, and
 backend identity match.
@@ -41,7 +43,7 @@ in `paper_q1_server_24c_250g.yaml`. The dataset conversion contract is an author
 not an official DIMACS physical-unit claim; see `experiments/DATASET_GENERATION.md`.
 
 `paper-generate-queries` derives its split sizes, time centers, windows, budgets, and graph variants
-from `paper_q1_server_24c_250g.yaml` and E00-E13. Python performs configuration and asset checks;
+from `paper_q1_server_24c_250g.yaml` and T01-T06. Python performs configuration and asset checks;
 the production Java loader and routing code select and validate graph-backed pairs. Outputs are
 written under `experiments/manifests/queries/<dataset>/`: `paper_q1.jsonl` is the combined runner
 manifest, and `pilot.jsonl`, `warmup.jsonl`, and `evaluation.jsonl` are audited split exports with
@@ -102,7 +104,12 @@ The final E10 PACE-B variants are `none`, `no-safe-corridor`,
 `no-score-upper-bound`, `no-memo`, `no-compression`, theta zero, and `serial`.
 Legacy diagnostic switches remain CLI-compatible but are not part of the final Q1 ablation table.
 `no-memo` disables memoization and both single-flight caches; `serial` forces one thread.
-PACE-B is exact over its retained frontier, not globally exact. RPQ is sampled with left-closed,
+With `K_c=1`, `fast-only-connector` is the explicit aggressive scalability policy: it reuses the
+stored forward/backward lower-bound witness, does not enumerate an alternative connector, and
+replays that retained path on the query's declared departure grid. Result records identify this as
+`DECLARED_DEPARTURE_GRID_LINEARIZED-v1`; PACE-X and normal PACE-B retain exact continuous replay.
+Normal PACE-B is exact over its retained frontier, not globally exact; the explicit aggressive
+grid policy is exact only at declared departure-grid points. RPQ is sampled with left-closed,
 right-open cells and a separately evaluated final endpoint. IntervalBest returns one selected
 departure/path and an evaluation-only profile for that path.
 

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "study_id": "E14",
+  "stage": "scalability_pilot",
+  "mode": "execute",
+  "datasets": ["NY"],
+  "split": "evaluation",
+  "pair_indices": [3, 6],
+  "pairs_per_dataset": 2,
+  "centers": [510, 1110],
+  "trials": 1,
+  "algorithms": [
+    {
+      "id": "pace-b",
+      "variant": "bounded-aggressive",
+      "parameters": {
+        "pivot_limit_l": 4,
+        "connector_limit_kc": 4,
+        "frontier_limit_kf": 2,
+        "connector_expansion_cap_mc": 250000,
+        "breakpoint_cap_mb": 100000,
+        "query_work_cap_mq": 5000000,
+        "threads": 24
+      },
+      "axes": [
+        {"theta": 1, "budget_overhead": 0.10},
+        {"theta": 1, "budget_overhead": 0.20},
+        {"theta": 2, "budget_overhead": 0.10},
+        {"theta": 2, "budget_overhead": 0.20},
+        {"theta": 3, "budget_overhead": 0.10},
+        {"theta": 3, "budget_overhead": 0.20}
+      ]
+    },
+    {
+      "id": "pace-x",
+      "variant": "exact-small-budget",
+      "parameters": {"theta": 2, "threads": 1},
+      "axes": [{"budget_overhead": 0.10}]
+    }
+  ]
+}

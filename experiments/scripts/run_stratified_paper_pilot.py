@@ -29,7 +29,7 @@ from experiments.scripts.common.provenance import physical_core_count
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATASETS = ("NY", "FLA", "CAL", "USA")
+DATASETS = ("NY", "FLA", "CAL", "OL")
 AXES = (
     {"distance_bin": 1, "window": 120, "rho": 0.1},
     {"distance_bin": 2, "window": 360, "rho": 0.3},
@@ -38,10 +38,12 @@ AXES = (
     {"distance_bin": 5, "window": 120, "rho": 0.3},
 )
 PARAMETERS = {
-    "NY": {"theta": 1, "l": 4, "kc": 4, "kf": 2},
+    # The final scalable policy fixes theta globally at 2.  L/K values remain
+    # dataset-size controls; theta is not silently varied by dataset.
+    "NY": {"theta": 2, "l": 4, "kc": 4, "kf": 2},
     "FLA": {"theta": 2, "l": 8, "kc": 8, "kf": 4},
-    "CAL": {"theta": 3, "l": 16, "kc": 16, "kf": 8},
-    "USA": {"theta": 4, "l": 32, "kc": 32, "kf": 16},
+    "CAL": {"theta": 2, "l": 16, "kc": 16, "kf": 8},
+    "OL": {"theta": 2, "l": 4, "kc": 4, "kf": 2},
 }
 
 

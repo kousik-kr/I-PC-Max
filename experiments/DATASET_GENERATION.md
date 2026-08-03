@@ -20,7 +20,9 @@ The conversion contract is stored in
 `manifest.json`. Since `manifest.json` is one of the files hashed by the graph
 identity checksum, a change to the conversion contract changes dataset identity.
 
-Only NY, FLA, CAL, and USA are in scope. The generator uses the single
+The two-track design uses NY, FLA, CAL, and OL; NY-EXACT is derived from the
+validated NY payload with `create_ny_exact.py`. USA is removed from the
+executable design. The generator uses the single
 `iter_dimacs_arcs` conversion path to rebuild `edges_static.csv.gz`; temporal
 payloads are then derived from those canonical directed arcs. It never rescales
 an already converted graph. Directed arc IDs must be unique and consecutive

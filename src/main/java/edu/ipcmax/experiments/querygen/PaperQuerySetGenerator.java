@@ -45,7 +45,7 @@ import edu.ipcmax.experiments.framework.QueryManifestIO;
  */
 public final class PaperQuerySetGenerator {
     public static final String GENERATOR_VERSION =
-            "pace-paper-query-preparation-v3";
+            "pace-paper-query-preparation-v4";
     public static final String BUDGET_EVIDENCE =
             "lower_bound_witness_path_grid_replay-v2";
     public static final String REQUIRED_BUDGET_DEFINITION =
@@ -276,23 +276,30 @@ public final class PaperQuerySetGenerator {
                 .filter(pair -> "evaluation".equals(pair.split())
                         && pair.pairIndex() <= variant.maximumPairs())
                 .toList();
+        double variantOverhead = spec.budgetOverheads().stream()
+                .mapToDouble(Double::doubleValue)
+                .min()
+                .orElseThrow();
         boolean sameTravelPayload = Files.mismatch(
                 spec.datasetPath().resolve(
                         "travel_time_functions.jsonl.gz"),
                 variant.path().resolve(
                         "travel_time_functions.jsonl.gz")) == -1;
+        boolean reuseDefaultBudget = sameTravelPayload
+                && Domain.sameTime(
+                        variantOverhead, spec.defaultBudgetOverhead());
         Map<DefaultBudgetKey, GridBudget> reusedBudgets =
-                sameTravelPayload
+                reuseDefaultBudget
                         ? defaultBudgetMap(spec, baseRows)
                         : Map.of();
         GridWitnessBudgetStore computedBudgets =
-                sameTravelPayload
+                reuseDefaultBudget
                         ? null
                         : new GridWitnessBudgetStore(
                                 dataset,
                                 variantPairs,
                                 spec.evaluationGridMinutes(),
-                                defaultCells(spec),
+                                variantCells(spec, variantOverhead),
                                 false);
         List<QueryManifestEntry> rows = new ArrayList<>();
         for (SelectedPair pair : variantPairs) {
@@ -300,8 +307,8 @@ public final class PaperQuerySetGenerator {
                 Cell cell = new Cell(
                         center,
                         spec.defaultWindowMinutes(),
-                        spec.defaultBudgetOverhead());
-                GridBudget temporal = sameTravelPayload
+                        variantOverhead);
+                GridBudget temporal = reuseDefaultBudget
                         ? reusedBudgets.get(new DefaultBudgetKey(
                                 pair.pairIndex(), center))
                         : computedBudgets.build(
@@ -515,28 +522,16 @@ public final class PaperQuerySetGenerator {
             if ("evaluation".equals(pair.split())) {
                 for (int center : spec.centers()) {
                     for (int window : spec.windowMinutes()) {
-                        Cell cell = new Cell(
-                                center,
-                                window,
-                                spec.defaultBudgetOverhead());
-                        rows.add(entry(
-                                spec, pair,
-                                budgets.build(pair.candidate(), cell), cell, "",
-                                dataset, checksums, spec.datasetPath(), null));
-                    }
-                    for (double overhead : spec.budgetOverheads()) {
-                        if (Domain.sameTime(
-                                overhead, spec.defaultBudgetOverhead())) {
-                            continue;
+                        for (double overhead : spec.budgetOverheads()) {
+                            Cell cell = new Cell(
+                                    center,
+                                    window,
+                                    overhead);
+                            rows.add(entry(
+                                    spec, pair,
+                                    budgets.build(pair.candidate(), cell), cell, "",
+                                    dataset, checksums, spec.datasetPath(), null));
                         }
-                        Cell cell = new Cell(
-                                center,
-                                spec.defaultWindowMinutes(),
-                                overhead);
-                        rows.add(entry(
-                                spec, pair,
-                                budgets.build(pair.candidate(), cell), cell, "",
-                                dataset, checksums, spec.datasetPath(), null));
                     }
                 }
             } else {
@@ -574,6 +569,17 @@ public final class PaperQuerySetGenerator {
                         center,
                         spec.defaultWindowMinutes(),
                         spec.defaultBudgetOverhead()))
+                .toList();
+    }
+
+    private static List<Cell> variantCells(
+            GenerationSpec spec,
+            double overhead) {
+        return spec.centers().stream()
+                .map(center -> new Cell(
+                        center,
+                        spec.defaultWindowMinutes(),
+                        overhead))
                 .toList();
     }
 

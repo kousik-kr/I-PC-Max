@@ -9,7 +9,7 @@ from .hashing import sha256_file, sha256_json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SUPPORTED_DATASETS = ("NY", "FLA", "CAL", "USA")
+SUPPORTED_DATASETS = ("NY", "FLA", "CAL", "OL", "NY-EXACT")
 FINAL_ABLATIONS = {
     "full",
     "no-safe-corridor",
@@ -162,6 +162,59 @@ def _validate_final_q1(
         )
 
 
+def _validate_two_track(
+    design: dict[str, Any],
+    studies: list[dict[str, Any]],
+) -> None:
+    """Validate the explicit PACE-X oracle/PACE-B scalability protocol."""
+    expected_studies = {f"T0{index}" for index in range(1, 7)}
+    by_id = {study["study_id"]: study for study in studies}
+    if set(by_id) != expected_studies:
+        raise ValueError(
+            "two_track study set must be T01..T06: "
+            f"got {sorted(by_id)}"
+        )
+    if set(design["datasets"]) != {"NY", "FLA", "CAL", "OL", "NY-EXACT"}:
+        raise ValueError(
+            "two_track requires NY, FLA, CAL, OL, and NY-EXACT"
+        )
+    defaults = design.get("pace_b_defaults")
+    if not isinstance(defaults, dict):
+        raise ValueError("two_track is missing pace_b_defaults")
+    expected_defaults = {
+        "theta": 2,
+        "pivot_limit_l": 4,
+        "connector_limit_kc": 4,
+        "frontier_limit_kf": 2,
+        "connector_expansion_cap_mc": 250000,
+        "breakpoint_cap_mb": 100000,
+        "query_work_cap_mq": 5000000,
+    }
+    for name, value in expected_defaults.items():
+        if defaults.get(name) != value:
+            raise ValueError(
+                f"two_track PACE-B default {name} must be {value!r}"
+            )
+    if design["protocol"].get("algorithm_comparison_threads") != 1:
+        raise ValueError("PACE-X/PACE-B comparisons must use one worker")
+    if int(design["resources"].get("max_threads_per_query", 0)) != 24:
+        raise ValueError("two_track requires a 24-thread query maximum")
+    guard = design.get("exact_algorithm_guard")
+    if not isinstance(guard, dict):
+        raise ValueError("two_track requires an exact_algorithm_guard")
+    if set(guard.get("allowed_studies", [])) != {"T01", "T02"}:
+        raise ValueError("PACE-X must be limited to T01 and T02")
+    if set(guard.get("datasets", [])) != {"NY-EXACT", "NY", "FLA", "CAL", "OL"}:
+        raise ValueError("PACE-X guard has an unsafe dataset scope")
+    per_study_rho = guard.get("max_budget_overhead_by_study", {})
+    if float(per_study_rho.get("T01", 1.0)) > 0.10:
+        raise ValueError("NY-Exact PACE-X must be limited to very-low-budget rho<=0.10")
+    if float(per_study_rho.get("T02", 1.0)) > 0.10:
+        raise ValueError("full-network PACE-X probes must be limited to rho<=0.10")
+    if set(guard.get("splits", [])) != {"evaluation"}:
+        raise ValueError("PACE-X must use evaluation manifests only")
+
+
 def load_design(path: Path) -> dict[str, Any]:
     path = path.resolve()
     design = load_document(path)
@@ -180,8 +233,6 @@ def load_design(path: Path) -> dict[str, Any]:
     unknown = sorted(set(datasets) - set(SUPPORTED_DATASETS))
     if unknown:
         raise ValueError(f"unsupported datasets: {', '.join(unknown)}")
-    if "OL" in datasets:
-        raise ValueError("OL is intentionally excluded from this experiment design")
     dataset_definitions: dict[str, dict[str, Any]] = {}
     for dataset in datasets:
         if dataset not in design["dataset_configs"]:
@@ -196,11 +247,23 @@ def load_design(path: Path) -> dict[str, Any]:
             raise ValueError(f"invalid or duplicate study id in {reference}")
         study_ids.add(study_id)
         studies.append(study)
-    expected = {"E01"} if design.get("smoke", False) else {f"E{index:02d}" for index in range(14)}
+    profile = design.get("profile")
+    if design.get("smoke", False):
+        expected = {"E01"}
+    elif profile == "scalability_pilot":
+        # The scalability plan is intentionally opt-in and is not the frozen
+        # paper E00-E13 matrix.  Its study set is still checked for unique,
+        # declarative IDs below; the paper-only gates must not rewrite it.
+        expected = set(study_ids)
+        if not expected:
+            raise ValueError("scalability_pilot requires at least one study")
+    elif profile == "two_track":
+        expected = {f"T0{index}" for index in range(1, 7)}
+    else:
+        expected = {f"E{index:02d}" for index in range(14)}
     if study_ids != expected:
         raise ValueError(f"study set mismatch: expected {sorted(expected)}, got {sorted(study_ids)}")
     if not design.get("smoke", False):
-        _validate_final_q1(design, studies)
         query_generation = design.get("query_generation")
         if not isinstance(query_generation, dict):
             raise ValueError("paper configuration is missing query_generation")
@@ -213,6 +276,10 @@ def load_design(path: Path) -> dict[str, Any]:
             raise ValueError(
                 "query_generation is missing: " + ", ".join(query_missing)
             )
+    if not design.get("smoke", False) and profile == "two_track":
+        _validate_two_track(design, studies)
+    elif not design.get("smoke", False) and profile != "scalability_pilot":
+        _validate_final_q1(design, studies)
     effective = dict(design)
     effective["config_path"] = path.relative_to(REPO_ROOT).as_posix()
     effective["dataset_definitions"] = dataset_definitions

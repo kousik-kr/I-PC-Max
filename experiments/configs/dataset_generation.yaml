@@ -47,10 +47,10 @@
       "travel_time": "../Synthetic-data-generator/datasets/CAL/USA-road-t.CAL.gr.gz",
       "distance": "../Synthetic-data-generator/datasets/CAL/USA-road-d.CAL.gr.gz"
     },
-    "USA": {
-      "coords": "../Synthetic-data-generator/datasets/USA/USA-road-d.USA.co.gz",
-      "travel_time": "../Synthetic-data-generator/datasets/USA/USA-road-t.USA.gr.gz",
-      "distance": "../Synthetic-data-generator/datasets/USA/USA-road-d.USA.gr.gz"
+    "OL": {
+      "coords": "../Synthetic-data-generator/datasets/OL/USA-road-d.OL.co.gz",
+      "travel_time": "../Synthetic-data-generator/datasets/OL/USA-road-t.OL.gr.gz",
+      "distance": "../Synthetic-data-generator/datasets/OL/USA-road-d.OL.gr.gz"
     }
   }
 }

@@ -17,9 +17,14 @@ from experiments.scripts.build_matrices import build_all
 from experiments.scripts.collect_results import collect
 from experiments.scripts.common.atomic_io import atomic_write_json, atomic_write_text, mark_stage
 from experiments.scripts.common.config import filtered_design, load_design, repo_path
+from experiments.scripts.common.hashing import sha256_file
 from experiments.scripts.common.provenance import git_state, host_environment
 from experiments.scripts.common.toolchain import environment, executable
-from experiments.scripts.execute_matrix import execute_one, read_jsonl
+from experiments.scripts.execute_matrix import (
+    execute_batched,
+    execute_one,
+    read_jsonl,
+)
 from experiments.scripts.executors.local import run_jobs
 from experiments.scripts.executors.slurm import submit, write_array_script
 from experiments.scripts.generate_queries import validate_all
@@ -31,15 +36,21 @@ from experiments.scripts.validate_results import validate, validate_planned_cell
 
 
 STAGES = (
-    "preflight", "build", "data", "queries", "plan", "smoke", "correctness", "pilot",
-    "main", "sensitivity", "ablation", "parallel", "robustness", "collect", "validate",
-    "summarize", "plot", "table", "package",
+    "preflight", "build", "data", "queries", "plan", "smoke", "exactness", "main",
+    "sensitivity", "ablation", "precomputation", "correctness", "pilot", "parallel",
+    "robustness", "scalability", "collect", "validate", "summarize",
+    "plot", "table", "package",
 )
 
 STAGE_STUDIES = {
-    "correctness": ("E01",), "pilot": ("E02",), "main": ("E03",),
-    "sensitivity": ("E05", "E06", "E07", "E08", "E09"), "ablation": ("E10",),
-    "parallel": ("E11",), "robustness": ("E12",),
+    "exactness": ("T01", "T02"),
+    "main": ("T03",),
+    "ablation": ("T04",),
+    "sensitivity": ("T05",),
+    "precomputation": ("T06",),
+    # Legacy aliases remain available for the opt-in scalability_pilot profile.
+    "correctness": ("E01",), "pilot": ("E02",), "parallel": ("E11",),
+    "robustness": ("E12",), "scalability": ("E14",),
 }
 
 
@@ -105,9 +116,20 @@ def _execute_studies(
         )
         submission = submit(script, wait=True)
         return {"jobs": len(selected), "slurm_script": str(script), "submitted": True, "submission": submission}
-    results = run_jobs(
-        selected, lambda job: execute_one(job, design, run_id, "local"), max_concurrent
-    )
+    if design["protocol"].get("shared_preprocessing"):
+        if max_concurrent != 1:
+            raise ValueError(
+                "shared preprocessing requires one serial query stream"
+            )
+        results = execute_batched(
+            selected, design, run_id, "local"
+        )
+    else:
+        results = run_jobs(
+            selected,
+            lambda job: execute_one(job, design, run_id, "local"),
+            max_concurrent,
+        )
     counts: dict[str, int] = {}
     for result in results:
         counts[result["completion_status"]] = counts.get(result["completion_status"], 0) + 1
@@ -130,7 +152,22 @@ def _load_reused_preflight(path: Path, design: dict[str, Any]) -> dict[str, Any]
     report = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(report, dict) or not report.get("passed"):
         raise ValueError(f"reused preflight is not passed: {path}")
-    if report.get("config_hash") != design["config_hash"]:
+    # run_preflight validates the selected dataset payloads and the complete
+    # implementation-gate configuration; it intentionally does not filter by
+    # study.  Accept that dataset-scoped hash when run_all itself is filtered
+    # to one or more studies.
+    source_design = load_design(repo_path(design["config_path"]))
+    preflight_design = filtered_design(
+        source_design, set(design["datasets"]), None
+    )
+    compatible_hashes = {
+        design["config_hash"],
+        preflight_design["config_hash"],
+    }
+    if (
+        report.get("config_hash") not in compatible_hashes
+        and not _preflight_scope_matches(report, design)
+    ):
         raise ValueError(
             "reused preflight config hash does not match the filtered design"
         )
@@ -146,6 +183,75 @@ def _load_reused_preflight(path: Path, design: dict[str, Any]) -> dict[str, Any]
         )
     report["reused_from"] = path.as_posix()
     return report
+
+
+def _preflight_scope_matches(
+    report: dict[str, Any], design: dict[str, Any]
+) -> bool:
+    """Allow study-only changes to reuse immutable data/query validation."""
+    if (
+        report.get("mode") != "deep"
+        or not report.get("checksums_computed")
+        or report.get("resources") != design.get("resources")
+    ):
+        return False
+    integrity_rows = {
+        row.get("dataset_id"): row
+        for row in report.get("dataset_integrity", {}).get("datasets", [])
+        if isinstance(row, dict)
+    }
+    query_rows = {
+        row.get("dataset_id"): row
+        for row in report.get("queries", {}).get("datasets", [])
+        if isinstance(row, dict)
+    }
+    if set(integrity_rows) != set(design["datasets"]):
+        return False
+    if set(query_rows) != set(design["datasets"]):
+        return False
+    manifest_pattern = design["query_generation"]["manifest_pattern"]
+    for dataset in design["datasets"]:
+        definition = design["dataset_definitions"][dataset]
+        integrity = integrity_rows[dataset]
+        expected_path = repo_path(definition["path"]).resolve()
+        if Path(str(integrity.get("path", ""))).resolve() != expected_path:
+            return False
+        expected_fields = {
+            "nodes": definition.get("expected_nodes"),
+            "directed_arcs": definition.get("expected_edges"),
+            "support_end": definition.get("required_support_end"),
+            "contract_id": definition.get(
+                "required_conversion_contract"
+            ),
+        }
+        if any(
+            expected is not None and integrity.get(field) != expected
+            for field, expected in expected_fields.items()
+        ):
+            return False
+        query_path = repo_path(
+            manifest_pattern.format(dataset=dataset)
+        ).resolve()
+        query = query_rows[dataset]
+        if Path(str(query.get("path", ""))).resolve() != query_path:
+            return False
+        if (
+            not query_path.is_file()
+            or query.get("checksum") != sha256_file(query_path)
+        ):
+            return False
+    configured_gates = {
+        name for name, enabled in design.get("implementation_gates", {}).items()
+        if enabled is True
+    }
+    passed_gates = {
+        row.get("gate")
+        for row in report.get("implementation_gates", {}).get("gates", [])
+        if isinstance(row, dict)
+        and row.get("enabled") is True
+        and not row.get("errors")
+    }
+    return configured_gates == passed_gates
 
 
 def main() -> int:
@@ -191,7 +297,9 @@ def main() -> int:
         atomic_write_json(root / "provenance" / "preflight.json", preflight)
         plan = build_all(design, root / "plan" / "matrices")
         planned_rows = []
-        for matrix_path in sorted((root / "plan" / "matrices").glob("e*.jsonl")):
+        for matrix_path in sorted((root / "plan" / "matrices").glob("*.jsonl")):
+            if matrix_path.name == "canonical_job_ledger.jsonl":
+                continue
             planned_rows.extend(read_jsonl(matrix_path))
         independent_cells = validate_planned_cells(planned_rows, design)
         plan["matrix_validation"] = {

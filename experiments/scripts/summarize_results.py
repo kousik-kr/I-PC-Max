@@ -79,7 +79,9 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     normalized = run_root / "normalized" / "run_records.jsonl"
     records = [json.loads(line) for line in normalized.read_text(encoding="utf-8").splitlines() if line.strip()]
     plan_rows = []
-    for path in sorted((run_root / "plan" / "matrices").glob("e*.jsonl")):
+    for path in sorted((run_root / "plan" / "matrices").glob("*.jsonl")):
+        if path.name == "canonical_job_ledger.jsonl":
+            continue
         plan_rows.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
     plans = {row["job_id"]: row for row in plan_rows}
     metric_paths = {

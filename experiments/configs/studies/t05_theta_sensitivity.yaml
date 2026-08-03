@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "study_id": "T05",
+  "stage": "sensitivity",
+  "mode": "execute",
+  "datasets": ["NY"],
+  "split": "evaluation",
+  "pair_indices": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+  "pairs_per_dataset": 20,
+  "centers": [510, 1110],
+  "trials": 3,
+  "algorithms": [{"id": "pace-b", "variant": "theta-sweep", "parameters": {"resolved_pace_b": false}}],
+  "axes": [{"theta": 1, "window_minutes": 120, "budget_overhead": 0.10}, {"theta": 2, "window_minutes": 120, "budget_overhead": 0.10}, {"theta": 3, "window_minutes": 120, "budget_overhead": 0.10}],
+  "purpose": "justify the fixed scalable default theta=2"
+}

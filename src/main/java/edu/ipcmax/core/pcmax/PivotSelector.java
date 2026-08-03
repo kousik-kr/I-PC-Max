@@ -166,98 +166,131 @@ public final class PivotSelector {
         }
 
         /*
-         * E_q^+ is exactly the score-bearing subset returned by the validated
-         * score-support index.  Feasible-entry bands are only meaningful for
-         * that subset; computing them for every corridor arc made the USA
-         * query spend most of its preparation time on arcs that could never
-         * become pivots.  The indexed set is still intersected with the
-         * corridor above, so this is a safe reduction rather than a ranking
-         * approximation.
+         * The all-support maximum score is an admissible upper bound on Psi.
+         * Process equal-upper-bound cohorts from high to low. Once the exact
+         * Lth score is strictly above the next cohort's upper bound, no unseen
+         * arc can enter the canonical Top-L order. This preserves the exact
+         * (-Psi,-Gamma,Delta,cell,arc) result while avoiding exact temporal-band
+         * construction for provably irrelevant low-score cohorts.
          */
-        Map<Integer, Domain> feasibleBands = new HashMap<>();
-        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
-                PaceExecutionMetrics.FEASIBLE_ENTRY_BANDS)) {
-            for (int arcId : indexedScoreArcs) {
-                Edge edge = graph.edges().get(arcId);
-                Domain band = QueryFeasibleEntryDomain.compute(
-                        corridor,
-                        lowerBounds,
-                        fromSource,
-                        toDestination,
-                        edge,
-                        graphFunctionHorizon);
-                feasibleBands.put(arcId, band);
-                metrics.increment("feasible_entry_bands");
-                metrics.increment("feasible_entry_band_score_arcs");
-                if (band.isEmpty()) {
-                    metrics.increment("empty_feasible_entry_bands");
-                }
-            }
-        }
-
-        Map<Integer, ScoreFeatures> scoreFeatures = new HashMap<>();
-        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
-                PaceExecutionMetrics.SCORE_SUPPORT_LOOKUP)) {
-            for (int arcId : indexedScoreArcs) {
-                metrics.increment("score_support_edges_examined");
-                Domain band = feasibleBands.getOrDefault(
-                        arcId, Domain.empty());
-                if (band.isEmpty()) {
-                    continue;
-                }
-                Edge edge = graph.edges().get(arcId);
-                Domain positive = edge.scoreFunction()
-                        .positiveDomain().intersection(band);
-                if (positive.isEmpty()) {
-                    continue;
-                }
-                scoreFeatures.put(
-                        arcId,
-                        new ScoreFeatures(
-                                edge.scoreFunction().maxValue(positive),
-                                measure(positive),
-                                positive.toString()));
-            }
-        }
-        List<Integer> scoreRelevant =
-                scoreFeatures.keySet().stream().sorted().toList();
-
+        List<Integer> upperBoundOrder = indexedScoreArcs.stream()
+                .sorted(Comparator
+                        .comparingInt((Integer arcId) ->
+                                summaries.summary(arcId).maximumScore())
+                        .reversed()
+                        .thenComparingInt(Integer::intValue))
+                .toList();
+        metrics.addCounter(
+                "pivot_upper_bound_candidates", upperBoundOrder.size());
+        List<Integer> scoreRelevant = new ArrayList<>();
         List<PivotFeatures> canonical = new ArrayList<>();
-        try (PaceExecutionMetrics.Timer ignored = metrics.phase(
-                PaceExecutionMetrics.PIVOT_RANKING)) {
-            double shortestLowerBound =
-                    fromSource.distance(corridor.destination());
-            for (int arcId : scoreRelevant) {
-                Edge edge = graph.edges().get(arcId);
-                ScoreFeatures score = scoreFeatures.get(arcId);
-                double throughEdgeLowerBound = Domain.canonicalTime(
-                        fromSource.distance(edge.source())
-                                + lowerBounds.edgeWeight(arcId)
-                                + toDestination.distance(edge.target()));
-                double normalizedDetour = normalizedDetour(
-                        throughEdgeLowerBound, shortestLowerBound);
-                canonical.add(new PivotFeatures(
-                        arcId,
-                        edge.source(),
-                        edge.target(),
-                        score.maximumScore(),
-                        score.coverage(),
-                        normalizedDetour,
-                        partition.cellForVertex(
-                                edge.source()).cellId(),
-                        score.bandFingerprint()));
+        double shortestLowerBound =
+                fromSource.distance(corridor.destination());
+        int cursor = 0;
+        while (cursor < upperBoundOrder.size()) {
+            int cohortScore = summaries.summary(
+                    upperBoundOrder.get(cursor)).maximumScore();
+            int cohortEnd = cursor + 1;
+            while (cohortEnd < upperBoundOrder.size()
+                    && summaries.summary(
+                            upperBoundOrder.get(cohortEnd)).maximumScore()
+                            == cohortScore) {
+                cohortEnd++;
             }
-            canonical.sort(Comparator
-                    .comparingInt(
-                            PivotFeatures::maximumScore).reversed()
-                    .thenComparing(
-                            Comparator.comparingDouble(
-                                    PivotFeatures::coverage).reversed())
-                    .thenComparing(
-                            PivotFeatures::normalizedDetour)
-                    .thenComparing(PivotFeatures::cellId)
-                    .thenComparingInt(PivotFeatures::arcId));
+            Map<Integer, Domain> feasibleBands = new HashMap<>();
+            try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                    PaceExecutionMetrics.FEASIBLE_ENTRY_BANDS)) {
+                for (int index = cursor; index < cohortEnd; index++) {
+                    int arcId = upperBoundOrder.get(index);
+                    Edge edge = graph.edges().get(arcId);
+                    Domain band = QueryFeasibleEntryDomain.compute(
+                            corridor,
+                            lowerBounds,
+                            fromSource,
+                            toDestination,
+                            edge,
+                            graphFunctionHorizon);
+                    feasibleBands.put(arcId, band);
+                    metrics.increment("feasible_entry_bands");
+                    metrics.increment("feasible_entry_band_score_arcs");
+                    if (band.isEmpty()) {
+                        metrics.increment("empty_feasible_entry_bands");
+                    }
+                }
+            }
+            Map<Integer, ScoreFeatures> scoreFeatures = new HashMap<>();
+            try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                    PaceExecutionMetrics.SCORE_SUPPORT_LOOKUP)) {
+                for (int index = cursor; index < cohortEnd; index++) {
+                    int arcId = upperBoundOrder.get(index);
+                    metrics.increment("score_support_edges_examined");
+                    Domain band = feasibleBands.getOrDefault(
+                            arcId, Domain.empty());
+                    if (band.isEmpty()) {
+                        continue;
+                    }
+                    Edge edge = graph.edges().get(arcId);
+                    Domain positive = edge.scoreFunction()
+                            .positiveDomain().intersection(band);
+                    if (positive.isEmpty()) {
+                        continue;
+                    }
+                    scoreRelevant.add(arcId);
+                    scoreFeatures.put(
+                            arcId,
+                            new ScoreFeatures(
+                                    edge.scoreFunction().maxValue(positive),
+                                    measure(positive),
+                                    positive.toString()));
+                }
+            }
+            try (PaceExecutionMetrics.Timer ignored = metrics.phase(
+                    PaceExecutionMetrics.PIVOT_RANKING)) {
+                for (Map.Entry<Integer, ScoreFeatures> entry :
+                        scoreFeatures.entrySet()) {
+                    int arcId = entry.getKey();
+                    Edge edge = graph.edges().get(arcId);
+                    ScoreFeatures score = entry.getValue();
+                    double throughEdgeLowerBound = Domain.canonicalTime(
+                            fromSource.distance(edge.source())
+                                    + lowerBounds.edgeWeight(arcId)
+                                    + toDestination.distance(edge.target()));
+                    canonical.add(new PivotFeatures(
+                            arcId,
+                            edge.source(),
+                            edge.target(),
+                            score.maximumScore(),
+                            score.coverage(),
+                            normalizedDetour(
+                                    throughEdgeLowerBound,
+                                    shortestLowerBound),
+                            partition.cellForVertex(
+                                    edge.source()).cellId(),
+                            score.bandFingerprint()));
+                }
+                canonical.sort(canonicalOrder());
+            }
+            cursor = cohortEnd;
+            if (limit != PaceOptions.UNBOUNDED
+                    && limit > 0
+                    && canonical.size() >= limit) {
+                int retainedScore = canonical.get(
+                        limit - 1).maximumScore();
+                int nextUpperBound = cursor < upperBoundOrder.size()
+                        ? summaries.summary(
+                                upperBoundOrder.get(cursor)).maximumScore()
+                        : -1;
+                if (retainedScore > nextUpperBound) {
+                    break;
+                }
+            }
         }
+        scoreRelevant.sort(Integer::compare);
+        metrics.addCounter(
+                "pivot_exact_candidates", cursor);
+        metrics.addCounter(
+                "pivot_upper_bound_pruned",
+                upperBoundOrder.size() - cursor);
 
         int retained = Math.min(limit, canonical.size());
         List<Pivot> selected = new ArrayList<>(retained);
@@ -297,6 +330,19 @@ public final class PivotSelector {
             return Domain.canonicalTime(excess);
         }
         return Domain.canonicalTime(excess / shortestLowerBound);
+    }
+
+    private static Comparator<PivotFeatures> canonicalOrder() {
+        return Comparator
+                .comparingInt(
+                        PivotFeatures::maximumScore).reversed()
+                .thenComparing(
+                        Comparator.comparingDouble(
+                                PivotFeatures::coverage).reversed())
+                .thenComparing(
+                        PivotFeatures::normalizedDetour)
+                .thenComparing(PivotFeatures::cellId)
+                .thenComparingInt(PivotFeatures::arcId);
     }
 
     private static double measure(Domain domain) {

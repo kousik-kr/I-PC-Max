@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "study_id": "T04",
+  "stage": "ablation",
+  "mode": "execute",
+  "datasets": ["NY"],
+  "split": "evaluation",
+  "pair_indices": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+  "pairs_per_dataset": 20,
+  "centers": [510, 1110],
+  "trials": 3,
+  "algorithms": [
+    {"id": "pace-b", "variant": "full", "parameters": {"resolved_pace_b": false}},
+    {"id": "pace-b", "variant": "no-safe-corridor", "parameters": {"ablation": "no-safe-corridor", "resolved_pace_b": false}},
+    {"id": "pace-b", "variant": "no-score-upper-bound", "parameters": {"ablation": "no-score-upper-bound", "resolved_pace_b": false}},
+    {"id": "pace-b", "variant": "no-memo", "parameters": {"ablation": "no-memo", "resolved_pace_b": false}}
+  ],
+  "axes": [
+    {"window_minutes": 120, "budget_overhead": 0.10, "score_density": 0.05},
+    {"window_minutes": 120, "budget_overhead": 0.10, "score_density": 0.10},
+    {"window_minutes": 120, "budget_overhead": 0.10, "score_density": 0.20},
+    {"window_minutes": 120, "budget_overhead": 0.10, "score_density": 0.40},
+    {"window_minutes": 120, "budget_overhead": 0.10, "graph_seed": 42},
+    {"window_minutes": 120, "budget_overhead": 0.10, "graph_seed": 43},
+    {"window_minutes": 120, "budget_overhead": 0.10, "graph_seed": 44}
+  ],
+  "purpose": "component contribution at a bounded small budget"
+}

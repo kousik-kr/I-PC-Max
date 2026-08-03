@@ -16,7 +16,7 @@ import edu.ipcmax.experiments.framework.QueryManifestEntry;
 import edu.ipcmax.experiments.framework.QueryManifestIO;
 
 /**
- * Java entry point for deterministic query-set generation across NY, FLA, CAL, and USA.
+ * Java entry point for deterministic query-set generation across NY, FLA, CAL, OL, and NY-EXACT.
  */
 public final class QuerySetGenerator {
     private final DatasetQueryGenerator datasetGenerator;
@@ -60,7 +60,7 @@ public final class QuerySetGenerator {
         String configHash = sha256(options.configurationPath());
         TreeMap<String, DatasetQueryGenerator.DatasetQuerySets> datasets = new TreeMap<>();
 
-        // Dataset graphs are deliberately processed one at a time: concurrent USA graph loads
+        // Dataset graphs are deliberately processed one at a time: concurrent large graph loads
         // multiply peak memory without changing deterministic output ordering.
         for (String datasetId : options.selectedDatasets()) {
             DatasetQueryGenerator.DatasetQuerySets generated = datasetGenerator.generate(

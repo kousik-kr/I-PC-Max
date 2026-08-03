@@ -85,6 +85,12 @@
       "properties": {
         "query_work_accounting_contract": {
           "enum": ["PACE-MQ-TOTAL-WORK-v2", "PACE-MQ-TOTAL-WORK-v3", null]
+        },
+        "single_fastest_lower_bound_witness_enabled": {
+          "type": "boolean"
+        },
+        "temporal_replay_contract": {
+          "enum": ["DECLARED_DEPARTURE_GRID_LINEARIZED-v1", "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1", null]
         }
       }
     },

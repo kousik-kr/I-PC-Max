@@ -9,6 +9,6 @@ datasets:
   CAL:
     path: data/input/CAL
     enabled: true
-  USA:
-    path: data/input/USA
+  OL:
+    path: data/input/OL
     enabled: true

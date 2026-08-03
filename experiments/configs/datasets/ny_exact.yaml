@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "dataset_id": "NY-EXACT",
+  "path": "data/input/NY-Exact",
+  "enabled": true,
+  "expected_nodes": null,
+  "expected_edges": null,
+  "required_support_end": 10080,
+  "required_conversion_contract": "declared_centisecond_normalization-v1",
+  "expected_score_density": null,
+  "required_score_density_percent": [],
+  "required_graph_seeds": [],
+  "source_dataset": "NY",
+  "induced_subgraph": {
+    "minimum_nodes": 10000,
+    "maximum_nodes": 50000,
+    "selection": "deterministic_connected_bfs_from_smallest_node",
+    "preserve_temporal_and_score_pipeline": true
+  }
+}

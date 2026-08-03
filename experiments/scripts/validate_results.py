@@ -54,7 +54,13 @@ def _expected_cells(design: dict[str, Any]) -> collections.Counter[tuple[Any, ..
                     pair_count = int(algorithm.get(
                         "pairs_per_dataset", study.get("pairs_per_dataset", 0)
                     ))
-                    for pair in range(1, pair_count + 1):
+                    pair_indices = study.get("pair_indices")
+                    pairs = (
+                        [int(pair) for pair in pair_indices]
+                        if pair_indices is not None
+                        else range(1, pair_count + 1)
+                    )
+                    for pair in pairs:
                         for center in study.get("centers", [0]):
                             for trial in range(int(study.get("trials", 1))):
                                 result[(
@@ -98,7 +104,10 @@ def validate_planned_cells(
 
 
 def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
-    plan_files = sorted((run_root / "plan" / "matrices").glob("e*.jsonl"))
+    plan_files = [
+        path for path in sorted((run_root / "plan" / "matrices").glob("*.jsonl"))
+        if path.name != "canonical_job_ledger.jsonl"
+    ]
     raw_files = sorted((run_root / "raw").rglob("*.jsonl")) if (run_root / "raw").is_dir() else []
     planned = _jsonl(plan_files)
     records = _jsonl(raw_files)

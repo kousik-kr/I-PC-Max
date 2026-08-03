@@ -219,6 +219,201 @@ class ScalablePaceCandidateEngineTest {
     }
 
     @Test
+    void queryLowerBoundLabelsRetainStableForwardAndBackwardWitnesses() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1).node(2).node(3).node(4)
+                .edge(1, 2, 1)
+                .edge(2, 4, 1)
+                .edge(1, 3, 1)
+                .edge(3, 4, 1)
+                .build();
+        QueryLowerBounds lowerBounds = new QueryLowerBounds(
+                graph, Domain.closed(0, 20));
+
+        QueryLowerBounds.Distances forward =
+                lowerBounds.truncatedDistancesFrom(1, 10);
+        QueryLowerBounds.Distances backward =
+                lowerBounds.truncatedDistancesTo(4, 10);
+
+        assertTrue(forward.outgoing());
+        assertFalse(backward.outgoing());
+        assertEquals(1, forward.start());
+        assertEquals(4, backward.start());
+        assertEquals(2, forward.edgeCount(4));
+        assertEquals(2, backward.edgeCount(1));
+        assertEquals(List.of(0, 1), forward.witnessArcIds(4));
+        assertEquals(List.of(0, 1), backward.witnessArcIds(1));
+    }
+
+    @Test
+    void fastOnlyKcOneReplaysOnlyTheStoredLowerBoundWitness() {
+        Domain support = Domain.closed(0, 40);
+        PiecewiseConstFn zero = PiecewiseConstFn.constant(support, 0);
+        PiecewiseLinearFn slowAtQueryTime = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 1),
+                new PiecewiseLinearFn.Breakpoint(5, 10),
+                new PiecewiseLinearFn.Breakpoint(40, 10)));
+        PiecewiseLinearFn constantTwo = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 2),
+                new PiecewiseLinearFn.Breakpoint(40, 2)));
+        TDGraph graph = new TDGraph(
+                List.of(
+                        new Node(1, 0, 0),
+                        new Node(2, 1, 0),
+                        new Node(3, 1, 1),
+                        new Node(4, 2, 0)),
+                List.of(
+                        new Edge(0, 1, 2, 1, 1, slowAtQueryTime, zero),
+                        new Edge(1, 2, 4, 1, 1, slowAtQueryTime, zero),
+                        new Edge(2, 1, 3, 1, 1, constantTwo, zero),
+                        new Edge(3, 3, 4, 1, 1, constantTwo, zero)));
+        EdgeTemporalSummaryStore summaries =
+                EdgeTemporalSummaryStore.build(graph);
+        QueryLowerBounds lowerBounds =
+                new QueryLowerBounds(graph, summaries);
+        QueryLowerBounds.Distances forward =
+                lowerBounds.truncatedDistancesFrom(1, 5);
+        QueryLowerBounds.Distances backward =
+                lowerBounds.truncatedDistancesTo(4, 5);
+        QueryCorridor corridor = QueryCorridor.build(
+                graph,
+                lowerBounds,
+                GraphPartitionMetadata.partition(graph),
+                1,
+                4,
+                5,
+                forward,
+                backward);
+        PivotIndex pivots = new PivotIndex(
+                List.of(), List.of(), "empty");
+        PaceFeatures defaults = PaceFeatures.defaults();
+        PaceFeatures fastestOnly = new PaceFeatures(
+                defaults.safeDominanceEnabled(),
+                defaults.perCellRetentionEnabled(),
+                defaults.representativeRetentionEnabled(),
+                defaults.anchorLowerBoundFilterEnabled(),
+                defaults.compressionEnabled(),
+                defaults.adjacentMergeEnabled(),
+                defaults.safeCorridorEnabled(),
+                defaults.pivotDiversificationEnabled(),
+                false,
+                defaults.connectorCacheEnabled(),
+                defaults.profileCacheEnabled(),
+                defaults.scoreUpperBoundEnabled());
+        PaceOptions options = new PaceOptions(
+                PaceExecutionPolicy.PACE_B,
+                PaceEngineMode.SCALABLE,
+                0,
+                0,
+                1,
+                1,
+                100,
+                100,
+                1_000,
+                1,
+                true,
+                fastestOnly,
+                100);
+        BoundedConnectorGenerator generator =
+                new BoundedConnectorGenerator(
+                        graph,
+                        corridor,
+                        pivots,
+                        lowerBounds,
+                        summaries,
+                        support,
+                        options,
+                        new PaceWorkLedger(options));
+        QueryScopedConnectorLabelStore labels =
+                new QueryScopedConnectorLabelStore(
+                        generator,
+                        forward,
+                        backward,
+                        PaceExecutionMetrics.none());
+        BitSet visited = new BitSet();
+        visited.set(1);
+
+        ConnectorResult result = labels.suffixLabels(
+                1,
+                4,
+                Domain.closed(5, 6),
+                visited,
+                new BitSet(),
+                5,
+                "fastest-witness");
+
+        assertTrue(result.connectors().isEmpty(),
+                "the temporally invalid fastest witness must not trigger "
+                        + "alternative-path enumeration");
+        assertEquals(1, result.invalidConnectors());
+        assertEquals(2, result.expansions());
+        assertFalse(result.connectorCapReached());
+        assertEquals(
+                PaceExactnessScope.NOT_CERTIFIED,
+                new PACE(graph, options).generate(
+                        new QuerySpec(1, 4, 5, 6, 5, 1))
+                        .exactnessScope());
+    }
+
+    @Test
+    void aggressiveGridReplayMatchesCanonicalReplayAtDeclaredGridPoints() {
+        Domain support = Domain.closed(0, 20);
+        PiecewiseLinearFn firstTravel = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 1),
+                new PiecewiseLinearFn.Breakpoint(4, 2),
+                new PiecewiseLinearFn.Breakpoint(20, 2)));
+        PiecewiseLinearFn secondTravel = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 2),
+                new PiecewiseLinearFn.Breakpoint(20, 2)));
+        PiecewiseConstFn firstScore = new PiecewiseConstFn(List.of(
+                new PiecewiseConstFn.Interval(0, 2, 1),
+                new PiecewiseConstFn.Interval(2, 20, 3)));
+        PiecewiseConstFn secondScore =
+                PiecewiseConstFn.constant(support, 2);
+        TDGraph graph = new TDGraph(
+                List.of(
+                        new Node(1, 0, 0),
+                        new Node(2, 1, 0),
+                        new Node(3, 2, 0)),
+                List.of(
+                        new Edge(0, 1, 2, 1, 1, firstTravel, firstScore),
+                        new Edge(1, 2, 3, 1, 1, secondTravel, secondScore)));
+        Domain departures = Domain.closed(0, 4);
+        CandidateProfile exact = CanonicalPathProfileBuilder.replay(
+                graph,
+                support,
+                Set.of(),
+                List.of(0, 1),
+                1,
+                3,
+                departures,
+                10,
+                -1,
+                false).orElseThrow();
+        CandidateProfile sampled = GridPathProfileBuilder.replay(
+                graph,
+                support,
+                Set.of(),
+                List.of(0, 1),
+                1,
+                3,
+                departures,
+                10,
+                -1,
+                1).orElseThrow();
+
+        for (int minute = 0; minute <= 4; minute++) {
+            assertEquals(
+                    exact.arrivalProfile().valueAt(minute),
+                    sampled.arrivalProfile().valueAt(minute));
+            assertEquals(
+                    exact.scoreProfile().valueAt(minute),
+                    sampled.scoreProfile().valueAt(minute));
+        }
+        assertTrue(sampled.compressed());
+    }
+
+    @Test
     void queryScopedSuffixLabelsUseForwardTemporalSemantics() {
         Domain horizon = Domain.closed(0, 20);
         PiecewiseConstFn zero =

@@ -573,7 +573,10 @@ public final class ForwardLayeredFrontierGenerator {
                         pointer,
                         rootDomain,
                         replayStore.query.destination(),
-                        "complete");
+                        "complete",
+                        connector,
+                        replayStore.query.destination(),
+                        PathPointer.empty());
                 if (replayStore.admitReplay(request)) {
                     requests.add(request);
                 }
@@ -665,7 +668,10 @@ public final class ForwardLayeredFrontierGenerator {
                         pointer,
                         expansion.rootDomain(),
                         pivot.target(),
-                        "pivot-" + pivot.arcId());
+                        "pivot-" + pivot.arcId(),
+                        connector,
+                        pivot.source(),
+                        PathPointer.arc(pivot.arcId()));
                 if (replayStore.admitReplay(request)) {
                     requests.add(request);
                 }
@@ -816,6 +822,11 @@ public final class ForwardLayeredFrontierGenerator {
     private void requireCorridorCoverage(
             QueryCorridor corridor,
             Domain queryHorizon) {
+        if (queryHorizon.difference(
+                summaries.commonFunctionSupport()).isEmpty()) {
+            metrics.increment("horizon_validated_by_common_support");
+            return;
+        }
         for (int arcId : corridor.directedArcIds()) {
             Edge edge = graph.edges().get(arcId);
             if (!queryHorizon.difference(
@@ -853,7 +864,9 @@ public final class ForwardLayeredFrontierGenerator {
             return PaceExactnessScope.NOT_CERTIFIED;
         }
         if (options.policy() == PaceExecutionPolicy.PACE_B) {
-            return PaceExactnessScope.RETAINED_FRONTIER;
+            return options.singleFastestLowerBoundWitnessEnabled()
+                    ? PaceExactnessScope.NOT_CERTIFIED
+                    : PaceExactnessScope.RETAINED_FRONTIER;
         }
         boolean exhaustiveConditions =
                 !caps.any()
@@ -1152,9 +1165,14 @@ public final class ForwardLayeredFrontierGenerator {
                     item + ":replay")) {
                 return false;
             }
-            int admittedEdges = cacheEnabled
-                    ? request.suffix().edgeCount()
-                    : request.pointer().edgeCount();
+            int admittedEdges = options
+                    .singleFastestLowerBoundWitnessEnabled()
+                    ? request.pointer().edgeCount()
+                    : reusableConnectorProfile(request)
+                    ? request.reusableTail().edgeCount()
+                    : cacheEnabled
+                            ? request.suffix().edgeCount()
+                            : request.pointer().edgeCount();
             return ledger.reserveUnits(
                     PaceWorkKind.TEMPORAL_COMPOSITION,
                     admittedEdges,
@@ -1261,6 +1279,52 @@ public final class ForwardLayeredFrontierGenerator {
                     "memory_during_replay_used_heap_bytes");
             try (PaceExecutionMetrics.Timer ignored = metrics.phase(
                     PaceExecutionMetrics.PATH_REPLAY)) {
+                if (options.singleFastestLowerBoundWitnessEnabled()) {
+                    return GridPathProfileBuilder.replay(
+                            graph,
+                            queryHorizon,
+                            selectedPivotArcIdSet,
+                            request.pointer().stablePathId(),
+                            query.source(),
+                            request.endpoint(),
+                            request.domain(),
+                            query.maxTravelTime(),
+                            -1,
+                            query.granularityMinutes());
+                }
+                if (reusableConnectorProfile(request)) {
+                    Domain reusableDomain = request.domain().intersection(
+                            request.reusableConnector().domain());
+                    if (reusableDomain.isEmpty()) {
+                        return Optional.empty();
+                    }
+                    CandidateProfile reusable = request.reusableConnector()
+                            .domain().equals(reusableDomain)
+                                    ? request.reusableConnector()
+                                    : request.reusableConnector()
+                                            .restrict(reusableDomain);
+                    metrics.increment(
+                            "canonical_connector_profile_reuses");
+                    metrics.addCounter(
+                            "canonical_connector_profile_reused_edges",
+                            reusable.edgeCount());
+                    if (request.reusableTail().edgeCount() == 0) {
+                        return Optional.of(reusable);
+                    }
+                    return CanonicalPathProfileBuilder.extend(
+                            graph,
+                            queryHorizon,
+                            selectedPivotArcIdSet,
+                            reusable,
+                            query.source(),
+                            request.reusableConnectorEndpoint(),
+                            request.reusableTail().stablePathId(),
+                            request.endpoint(),
+                            reusableDomain,
+                            query.maxTravelTime(),
+                            -1,
+                            false);
+                }
                 if (!cacheEnabled) {
                     return CanonicalPathProfileBuilder.replay(
                             graph,
@@ -1310,6 +1374,23 @@ public final class ForwardLayeredFrontierGenerator {
                         -1,
                         false);
             }
+        }
+
+        private boolean reusableConnectorProfile(
+                ReplayRequest request) {
+            if (request.reusableConnector() == null
+                    || request.reusableTail() == null
+                    || request.prefix().edgeCount() != 0) {
+                return false;
+            }
+            List<Integer> expected = new ArrayList<>(
+                    request.reusableConnector().edgeCount()
+                            + request.reusableTail().edgeCount());
+            expected.addAll(
+                    request.reusableConnector().stablePathId());
+            expected.addAll(
+                    request.reusableTail().stablePathId());
+            return expected.equals(request.pointer().stablePathId());
         }
 
         private ReplayPrefixKey prefixKey(
@@ -1381,7 +1462,10 @@ public final class ForwardLayeredFrontierGenerator {
             PathPointer pointer,
             Domain domain,
             int endpoint,
-            String context) {
+            String context,
+            CandidateProfile reusableConnector,
+            int reusableConnectorEndpoint,
+            PathPointer reusableTail) {
     }
 
     private record ReplayKey(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Expand E00-E13 into deterministic, reviewable job manifests."""
+"""Expand the configured two-track studies into deterministic job manifests."""
 from __future__ import annotations
 
 import argparse
@@ -63,6 +63,36 @@ def expand_study(study: dict[str, Any], design: dict[str, Any]) -> list[dict[str
             allowed = algorithm.get("datasets")
             if allowed and dataset not in allowed:
                 continue
+            exact_guard = design.get("exact_algorithm_guard")
+            if algorithm.get("id") == "pace-x" and exact_guard:
+                allowed_studies = set(exact_guard.get("allowed_studies", []))
+                if allowed_studies and study["study_id"] not in allowed_studies:
+                    raise ValueError(
+                        f"PACE-X is not allowed in study {study['study_id']}"
+                    )
+                allowed_datasets = set(exact_guard.get("datasets", []))
+                allowed_splits = set(exact_guard.get("splits", []))
+                maximum_rho = exact_guard.get("max_budget_overhead_by_study", {}).get(
+                    study["study_id"], exact_guard.get("max_budget_overhead")
+                )
+                if allowed_datasets and dataset not in allowed_datasets:
+                    raise ValueError(
+                        f"PACE-X is not allowed for dataset {dataset} in "
+                        "this scalability plan"
+                    )
+                if allowed_splits and study.get("split", "fixture") not in allowed_splits:
+                    raise ValueError(
+                        f"PACE-X is not allowed for split "
+                        f"{study.get('split', 'fixture')} in this scalability plan"
+                    )
+                if maximum_rho is not None:
+                    for guarded_axis in algorithm.get("axes", study.get("axes", [{}])):
+                        rho = float(guarded_axis.get("budget_overhead", 0.30))
+                        if rho > float(maximum_rho):
+                            raise ValueError(
+                                "PACE-X small-budget guard violated: "
+                                f"rho={rho} > {maximum_rho}"
+                            )
             for axis in algorithm.get("axes", study.get("axes", [{}])):
                 requested_threads = int(axis.get("threads", algorithm.get("parameters", {}).get("threads", 1)))
                 if (
@@ -79,7 +109,13 @@ def expand_study(study: dict[str, Any], design: dict[str, Any]) -> list[dict[str
                     "pairs_per_dataset",
                     study.get("pairs_per_dataset", 0),
                 ))
-                for pair in range(1, pair_count + 1):
+                pair_indices = study.get("pair_indices")
+                pairs = (
+                    [int(pair) for pair in pair_indices]
+                    if pair_indices is not None
+                    else range(1, pair_count + 1)
+                )
+                for pair in pairs:
                     for center in study.get("centers", [0]):
                         query_id = _query_id(dataset, split, pair, int(center), axis)
                         if dataset == "demo" and pair <= len(fixture_ids):
@@ -223,6 +259,15 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
         "pace_b_jobs": pace_b_jobs,
         "algorithms_started": False,
     }
+    max_disk_bytes = planning.get("max_disk_bytes")
+    if max_disk_bytes is not None:
+        report["max_disk_bytes"] = int(max_disk_bytes)
+        report["disk_budget_passed"] = report["estimated_storage_bytes"] <= int(max_disk_bytes)
+        if not report["disk_budget_passed"]:
+            raise ValueError(
+                "planned raw/fixed storage exceeds configured disk budget: "
+                f"{report['estimated_storage_bytes']} > {max_disk_bytes}"
+            )
     atomic_write_json(output_directory / "matrix_counts.json", report)
     return report
 

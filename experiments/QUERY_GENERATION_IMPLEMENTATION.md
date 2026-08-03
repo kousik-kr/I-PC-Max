@@ -27,8 +27,8 @@ The inspected manifests report:
 
 All three declare travel-time breakpoints from minute 0 through minute 1440, morning rush
 `[420,600]`, evening rush `[1020,1200]`, three-decimal non-integer travel times, score values
-from 1 through 15 on a 20% selected-edge fraction, and zero score on unlisted edges. USA is
-assumed to have this file structure as directed; its counts and other values were not inferred.
+from 1 through 15 on a 20% selected-edge fraction, and zero score on unlisted edges. OL is an
+explicit input dataset; NY-EXACT is derived from the canonical NY payload.
 
 ## 1. Graph-loading API
 
@@ -51,7 +51,7 @@ graph, the lightweight manifest summary, and the source directory.
 sorted by stable consecutive `arcId`. There is no public node collection or node-ID iterator;
 `PaceBench` currently reconstructs incident node IDs from the edge list.
 
-Selection for later phases: load every NY/FLA/CAL/USA dataset through one
+Selection for later phases: load every NY/FLA/CAL/OL/NY-EXACT dataset through one
 `GeneratedGraphLoader` instance per generation run and use the returned `TDGraph`. Do not
 parse road files in Python and do not create another loader. Dataset IDs currently come from
 the directory name in `PaceBench`, not from `manifest.json`.
@@ -304,13 +304,12 @@ reproducible:
 * Anchor qualification is ambiguous: any positive-score anchor in the query horizon, an
   anchor lying on a selected path, or a PACE-policy-relevant anchor produce different sets.
 * `dataset_id` must be agreed. `PaceBench` requires exact equality with the dataset directory
-  name, so the new directories naturally yield `NY`, `FLA`, `CAL`, and `USA`; existing sample
+  name, so the new directories naturally yield `NY`, `FLA`, `CAL`, `OL`, and `NY-EXACT`; existing sample
   manifests use `out_ny_td` and `demo`.
 * Unsigned `query_seed` serialization above signed-long range needs a canonical number/string
   rule if the full unsigned 64-bit CLI range is intended.
-* USA metadata values were not supplied beyond the same-structure assumption. Any logic based
-  on counts, seed, or rush-window values should read its manifest through the extended existing
-  loader rather than assume the NY/FLA/CAL values.
+* OL metadata is intentionally read from its generated manifest rather than inferred from NY or
+  FLA/CAL. Any missing OL payload or checksum is a preflight blocker.
 
 ## Files inspected
 

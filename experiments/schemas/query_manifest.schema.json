@@ -89,7 +89,7 @@
       "properties": {
         "schema_version": {"const": 3},
         "query_id": {"type": "string", "minLength": 1},
-        "dataset_id": {"enum": ["NY", "FLA", "CAL", "USA"]},
+        "dataset_id": {"enum": ["NY", "FLA", "CAL", "OL", "NY-EXACT", "demo"]},
         "source": {"type": "integer", "minimum": 1},
         "destination": {"type": "integer", "minimum": 1},
         "interval_start": {"type": "integer", "minimum": 0},

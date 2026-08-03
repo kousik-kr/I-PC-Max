@@ -27,7 +27,7 @@ public record QueryGenerationOptions(
     public static final int MIN_THREADS = 1;
     public static final int MAX_THREADS = 24;
     public static final long DEFAULT_SEED = 20260711L;
-    public static final Set<String> SUPPORTED_DATASETS = Set.of("NY", "FLA", "CAL", "USA");
+    public static final Set<String> SUPPORTED_DATASETS = Set.of("NY", "FLA", "CAL", "OL", "NY-EXACT");
     public static final Path DEFAULT_DATA_ROOT = Path.of("data/input");
     public static final Path DEFAULT_OUTPUT_ROOT = Path.of("results/manifests");
     public static final Path DEFAULT_CONFIGURATION = Path.of("experiments/configs/query_generation.yaml");

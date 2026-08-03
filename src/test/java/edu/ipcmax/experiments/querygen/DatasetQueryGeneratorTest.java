@@ -138,15 +138,15 @@ class DatasetQueryGeneratorTest {
     }
 
     @Test
-    void handlesUsaWithTheSameStructureAsEveryOtherDatasetId() {
-        Fixture usaFixture = fixture("USA", 9, Set.of());
-        DatasetQueryGenerator.DatasetQuerySets usa = generate(usaFixture, "USA");
+    void handlesOlWithTheSameStructureAsEveryOtherDatasetId() {
+        Fixture olFixture = fixture("OL", 9, Set.of());
+        DatasetQueryGenerator.DatasetQuerySets ol = generate(olFixture, "OL");
 
-        assertEquals(calSets.membershipCount(), usa.membershipCount());
-        assertEquals(structuralSignatures(calSets, "CAL"), structuralSignatures(usa, "USA"));
-        assertTrue(allQueryIds(usa).stream().allMatch(id -> id.startsWith("USA-")));
-        assertTrue(allEntries(usa).allMatch(entry -> "USA".equals(entry.datasetId())
-                && entry.datasetPath().replace('\\', '/').endsWith("data/input/USA")));
+        assertEquals(calSets.membershipCount(), ol.membershipCount());
+        assertEquals(structuralSignatures(calSets, "CAL"), structuralSignatures(ol, "OL"));
+        assertTrue(allQueryIds(ol).stream().allMatch(id -> id.startsWith("OL-")));
+        assertTrue(allEntries(ol).allMatch(entry -> "OL".equals(entry.datasetId())
+                && entry.datasetPath().replace('\\', '/').endsWith("data/input/OL")));
     }
 
     private static DatasetQueryGenerator.DatasetQuerySets generate(Fixture fixture, String datasetId) {

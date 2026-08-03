@@ -19,8 +19,8 @@ RUN_ID ?= pace_q1_plan
 PAPER_SMOKE_RUN_ID ?= pace_q1_smoke_final_v4
 BACKEND ?= local
 MAX_CONCURRENT ?= 1
-PAPER_SERVER_RUN_ID ?= pace_q1_server_24c_250g
-PAPER_SERVER_MAX_CONCURRENT ?= 24
+PAPER_SERVER_RUN_ID ?= pace_q1_two_track_server_24c_250g
+PAPER_SERVER_MAX_CONCURRENT ?= 1
 
 .PHONY: configure build test test-unit test-integration test-experiments benchmark-smoke \
 	validate-results summarize-results clean-experiments run-candidate run-ablation run-matrix

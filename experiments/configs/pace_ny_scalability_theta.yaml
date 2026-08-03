@@ -1,24 +1,11 @@
 {
-  "schema_version": 2,
-  "experiment_id": "pace_q1_two_track",
-  "profile": "two_track",
-  "description": "Two-track PACE evaluation: PACE-X exact oracle and bounded PACE-B scalability",
-  "datasets": ["NY", "FLA", "CAL", "OL", "NY-EXACT"],
-  "dataset_configs": {
-    "NY": "experiments/configs/datasets/ny.yaml",
-    "FLA": "experiments/configs/datasets/fla.yaml",
-    "CAL": "experiments/configs/datasets/cal.yaml",
-    "OL": "experiments/configs/datasets/ol.yaml",
-    "NY-EXACT": "experiments/configs/datasets/ny_exact.yaml"
-  },
-  "studies": [
-    "experiments/configs/studies/t01_exactness_oracle.yaml",
-    "experiments/configs/studies/t02_full_network_exact_probe.yaml",
-    "experiments/configs/studies/t03_scalability_main.yaml",
-    "experiments/configs/studies/t04_ablation_small_budget.yaml",
-    "experiments/configs/studies/t05_theta_sensitivity.yaml",
-    "experiments/configs/studies/t06_precomputation.yaml"
-  ],
+  "schema_version": 1,
+  "profile": "scalability_pilot",
+  "experiment_id": "pace_ny_scalability_theta",
+  "description": "Opt-in NY low-budget theta sweep; exact PACE-X is restricted to rho=0.10.",
+  "datasets": ["NY"],
+  "dataset_configs": {"NY": "experiments/configs/datasets/ny.yaml"},
+  "studies": ["experiments/configs/studies/e14_ny_scalability_theta.yaml"],
   "seeds": {
     "graph_main": 42,
     "query_evaluation": 20260722,
@@ -43,21 +30,19 @@
     "allow_time_wrapping": false
   },
   "protocol": {
-    "warmup_passes": 1,
-    "measured_trials": 3,
+    "warmup_passes": 0,
+    "measured_trials": 1,
     "process_isolation": true,
     "algorithm_comparison_threads": 1,
-    "retry_infrastructure_failures": 1,
+    "retry_infrastructure_failures": 0,
     "retry_algorithm_failures": 0,
-    "metric_definition_version": "pace-q1-two-track-v1"
+    "metric_definition_version": "pace-q1-metrics-v2"
   },
   "pace_b_defaults": {
     "theta": 2,
-    "pivot_limit_l": 4,
-    "connector_limit_kc": 4,
-    "frontier_limit_kf": 2,
     "score_density": 0.20,
-    "threads": 1,
+    "threads": 24,
+    "pilot_resolved_fields": ["pivot_limit_l", "connector_limit_kc", "frontier_limit_kf"],
     "connector_expansion_cap_mc": 250000,
     "breakpoint_cap_mb": 100000,
     "query_work_cap_mq": 5000000,
@@ -66,34 +51,23 @@
   },
   "resolved_pace_b_required": false,
   "exact_algorithm_guard": {
-    "allowed_studies": ["T01", "T02"],
-    "datasets": ["NY-EXACT", "NY", "FLA", "CAL", "OL"],
+    "datasets": ["NY"],
     "splits": ["evaluation"],
-    "max_budget_overhead_by_study": {"T01": 0.10, "T02": 0.10}
+    "max_budget_overhead": 0.10
   },
   "resources": {
-    "timeout_seconds": 1800,
+    "timeout_seconds": 900,
     "memory_limit_mb": 256000,
     "max_concurrent": 1,
     "max_threads_per_query": 24,
-    "parallel_thread_candidates": [1, 2, 4, 8, 16, 24],
-    "require_server_profile_for_full_run": true
+    "parallel_thread_candidates": [24],
+    "require_server_profile_for_full_run": false
   },
   "planning": {
     "estimated_raw_bytes_per_job": 131072,
     "estimated_fixed_release_bytes": 104857600,
     "max_disk_bytes": 107374182400,
-    "runtime_upper_bound_definition": "sum of stratum-specific projected runtimes at one-query process concurrency"
-  },
-  "implementation_gates": {
-    "exactness_corpus_has_1000_seeded_graphs": true,
-    "pace_x_uncompressed_variant_available": true,
-    "pace_parallelism_observed_and_checksum_stable": true,
-    "incremental_frontier_differential_zero_mismatches": true,
-    "mq_total_work_v3_accounting": true,
-    "relative_score_gap_metric_available_for_pilot": true,
-    "safe_corridor_property_verified": true,
-    "score_upper_bound_admissible": true
+    "runtime_upper_bound_definition": "measured NY low-budget theta pilot"
   },
   "query_generation": {
     "java_main_class": "edu.ipcmax.experiments.querygen.QuerySetGenerator",

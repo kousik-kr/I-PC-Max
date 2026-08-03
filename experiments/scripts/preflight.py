@@ -98,10 +98,16 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
         "disk_bytes": sum(path.stat().st_size for path in files),
     })
     errors: list[str] = []
-    if record["nodes"] != config.get("expected_nodes"):
-        errors.append(f"node count {record['nodes']} != expected {config.get('expected_nodes')}")
-    if record["edges"] != config.get("expected_edges"):
-        errors.append(f"edge count {record['edges']} != expected {config.get('expected_edges')}")
+    expected_nodes = config.get("expected_nodes")
+    expected_edges = config.get("expected_edges")
+    if expected_nodes is None and not isinstance(record["nodes"], int):
+        errors.append("manifest does not declare a valid node count")
+    if expected_edges is None and not isinstance(record["edges"], int):
+        errors.append("manifest does not declare a valid directed arc count")
+    if expected_nodes is not None and record["nodes"] != expected_nodes:
+        errors.append(f"node count {record['nodes']} != expected {expected_nodes}")
+    if expected_edges is not None and record["edges"] != expected_edges:
+        errors.append(f"edge count {record['edges']} != expected {expected_edges}")
     required_support = config.get("required_support_end")
     if support_end is None:
         errors.append("manifest does not declare a machine-readable temporal support end")
@@ -142,15 +148,15 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
         variant_record["conversion_contract"] = (
             variant_manifest.get("conversion_contract", {}).get("contract_id")
         )
-        if variant_record["nodes"] != config.get("expected_nodes"):
+        if expected_nodes is not None and variant_record["nodes"] != expected_nodes:
             errors.append(
                 f"score-density {percent}% variant node count "
-                f"{variant_record['nodes']} != expected {config.get('expected_nodes')}"
+                f"{variant_record['nodes']} != expected {expected_nodes}"
             )
-        if variant_record["edges"] != config.get("expected_edges"):
+        if expected_edges is not None and variant_record["edges"] != expected_edges:
             errors.append(
                 f"score-density {percent}% variant edge count "
-                f"{variant_record['edges']} != expected {config.get('expected_edges')}"
+                f"{variant_record['edges']} != expected {expected_edges}"
             )
         if variant_record["support_end"] is None or (
             required_support is not None
@@ -214,15 +220,15 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
         variant_record["conversion_contract"] = (
             variant_manifest.get("conversion_contract", {}).get("contract_id")
         )
-        if variant_record["nodes"] != config.get("expected_nodes"):
+        if expected_nodes is not None and variant_record["nodes"] != expected_nodes:
             errors.append(
                 f"graph-seed {seed} variant node count "
-                f"{variant_record['nodes']} != expected {config.get('expected_nodes')}"
+                f"{variant_record['nodes']} != expected {expected_nodes}"
             )
-        if variant_record["edges"] != config.get("expected_edges"):
+        if expected_edges is not None and variant_record["edges"] != expected_edges:
             errors.append(
                 f"graph-seed {seed} variant edge count "
-                f"{variant_record['edges']} != expected {config.get('expected_edges')}"
+                f"{variant_record['edges']} != expected {expected_edges}"
             )
         if variant_record["support_end"] is None or (
             required_support is not None
@@ -467,7 +473,7 @@ def run_preflight(
         "mode": "plan-only" if planning else "deep",
         "config_hash": design["config_hash"],
         "experiment_id": design["experiment_id"],
-        "ol_excluded": "OL" not in design["datasets"],
+        "ol_included": "OL" in design["datasets"],
         "environment": environment,
         "resources": resources,
         "jar_present": jar.is_file(),

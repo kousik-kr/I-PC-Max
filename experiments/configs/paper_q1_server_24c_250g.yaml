@@ -1,29 +1,23 @@
 {
-  "schema_version": 1,
-  "experiment_id": "pace_q1_server_24c_250g",
-  "description": "PACE Q1 paper design for one 24-thread query process with a 250-GiB heap",
-  "datasets": ["NY", "FLA", "CAL", "USA"],
+  "schema_version": 2,
+  "experiment_id": "pace_q1_two_track_server_24c_250g",
+  "profile": "two_track",
+  "description": "Two-track PACE evaluation for one 24-thread query process with a 250-GiB heap",
+  "datasets": ["NY", "FLA", "CAL", "OL", "NY-EXACT"],
   "dataset_configs": {
     "NY": "experiments/configs/datasets/ny.yaml",
     "FLA": "experiments/configs/datasets/fla.yaml",
     "CAL": "experiments/configs/datasets/cal.yaml",
-    "USA": "experiments/configs/datasets/usa.yaml"
+    "OL": "experiments/configs/datasets/ol.yaml",
+    "NY-EXACT": "experiments/configs/datasets/ny_exact.yaml"
   },
   "studies": [
-    "experiments/configs/studies/e00_preflight.yaml",
-    "experiments/configs/studies/e01_correctness.yaml",
-    "experiments/configs/studies/e02_bounded_pilot.yaml",
-    "experiments/configs/studies/e03_main.yaml",
-    "experiments/configs/studies/e04_compactness.yaml",
-    "experiments/configs/studies/e05_window.yaml",
-    "experiments/configs/studies/e06_budget.yaml",
-    "experiments/configs/studies/e07_theta.yaml",
-    "experiments/configs/studies/e08_score_density.yaml",
-    "experiments/configs/studies/e09_lk_tradeoff.yaml",
-    "experiments/configs/studies/e10_ablation.yaml",
-    "experiments/configs/studies/e11_parallel.yaml",
-    "experiments/configs/studies/e12_seed_robustness.yaml",
-    "experiments/configs/studies/e13_release.yaml"
+    "experiments/configs/studies/t01_exactness_oracle.yaml",
+    "experiments/configs/studies/t02_full_network_exact_probe.yaml",
+    "experiments/configs/studies/t03_scalability_main.yaml",
+    "experiments/configs/studies/t04_ablation_small_budget.yaml",
+    "experiments/configs/studies/t05_theta_sensitivity.yaml",
+    "experiments/configs/studies/t06_precomputation.yaml"
   ],
   "seeds": {
     "graph_main": 42,
@@ -51,25 +45,36 @@
   "protocol": {
     "warmup_passes": 1,
     "measured_trials": 3,
-    "process_isolation": true,
+    "process_isolation": false,
+    "shared_preprocessing": true,
     "algorithm_comparison_threads": 1,
     "retry_infrastructure_failures": 1,
     "retry_algorithm_failures": 0,
-    "metric_definition_version": "pace-q1-metrics-v2"
+    "metric_definition_version": "pace-q1-two-track-v1"
   },
   "pace_b_defaults": {
     "theta": 2,
+    "pivot_limit_l": 4,
+    "connector_limit_kc": 4,
+    "frontier_limit_kf": 2,
     "score_density": 0.20,
     "threads": 1,
     "pilot_resolved_fields": ["pivot_limit_l", "connector_limit_kc", "frontier_limit_kf"],
-    "connector_expansion_cap_mc": 5000000,
-    "breakpoint_cap_mb": 1000000,
-    "query_work_cap_mq": 250000000,
+    "connector_expansion_cap_mc": 250000,
+    "breakpoint_cap_mb": 100000,
+    "query_work_cap_mq": 5000000,
     "query_work_accounting_contract": "PACE-MQ-TOTAL-WORK-v3",
     "resolved_configuration": "resolved_pace_b.yaml"
   },
+  "resolved_pace_b_required": false,
+  "exact_algorithm_guard": {
+    "allowed_studies": ["T01", "T02"],
+    "datasets": ["NY-EXACT", "NY", "FLA", "CAL", "OL"],
+    "splits": ["evaluation"],
+    "max_budget_overhead_by_study": {"T01": 0.10, "T02": 0.10}
+  },
   "resources": {
-    "timeout_seconds": 1800,
+    "timeout_seconds": 10,
     "memory_limit_mb": 256000,
     "max_concurrent": 1,
     "max_threads_per_query": 24,
@@ -79,7 +84,8 @@
   "planning": {
     "estimated_raw_bytes_per_job": 131072,
     "estimated_fixed_release_bytes": 104857600,
-    "runtime_upper_bound_definition": "sum of stratum-specific projected runtimes at measured safe process concurrency"
+    "max_disk_bytes": 107374182400,
+    "runtime_upper_bound_definition": "sum of stratum-specific projected runtimes at one-query process concurrency"
   },
   "implementation_gates": {
     "exactness_corpus_has_1000_seeded_graphs": true,

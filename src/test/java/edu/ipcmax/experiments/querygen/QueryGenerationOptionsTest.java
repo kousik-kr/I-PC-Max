@@ -16,7 +16,7 @@ class QueryGenerationOptionsTest {
         QueryGenerationOptions options = QueryGenerationOptions.parse();
 
         assertTrue(options.allDatasets());
-        assertEquals(Set.of("NY", "FLA", "CAL", "USA"), options.selectedDatasets());
+        assertEquals(Set.of("CAL", "FLA", "NY", "NY-EXACT", "OL"), options.selectedDatasets());
         assertEquals(Path.of("data/input"), options.dataRoot());
         assertEquals(Path.of("results/manifests"), options.outputRoot());
         assertEquals(Path.of("experiments/configs/query_generation.yaml"), options.configurationPath());

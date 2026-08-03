@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "study_id": "T03",
+  "stage": "main",
+  "mode": "execute",
+  "datasets": ["NY", "FLA", "CAL"],
+  "split": "evaluation",
+  "pairs_per_dataset": 100,
+  "centers": [510, 1110],
+  "trials": 3,
+  "algorithms": [
+    {
+      "id": "pace-b",
+      "variant": "aggressive-fastest-l1",
+      "parameters": {
+        "resolved_pace_b": false,
+        "threads": 24,
+        "ablation": "fast-only-connector",
+        "pivot_limit_l": 1,
+        "connector_limit_kc": 1,
+        "frontier_limit_kf": 1
+      }
+    },
+    {"id": "rpq", "parameters": {"rpq_step_minutes": 1}},
+    {"id": "interval-best"}
+  ],
+  "axes": [
+    {"window_minutes": 120, "budget_overhead": 0.10}, {"window_minutes": 120, "budget_overhead": 0.20}, {"window_minutes": 120, "budget_overhead": 0.30}, {"window_minutes": 120, "budget_overhead": 0.40}, {"window_minutes": 120, "budget_overhead": 0.50},
+    {"window_minutes": 180, "budget_overhead": 0.10}, {"window_minutes": 180, "budget_overhead": 0.20}, {"window_minutes": 180, "budget_overhead": 0.30}, {"window_minutes": 180, "budget_overhead": 0.40}, {"window_minutes": 180, "budget_overhead": 0.50},
+    {"window_minutes": 240, "budget_overhead": 0.10}, {"window_minutes": 240, "budget_overhead": 0.20}, {"window_minutes": 240, "budget_overhead": 0.30}, {"window_minutes": 240, "budget_overhead": 0.40}, {"window_minutes": 240, "budget_overhead": 0.50},
+    {"window_minutes": 300, "budget_overhead": 0.10}, {"window_minutes": 300, "budget_overhead": 0.20}, {"window_minutes": 300, "budget_overhead": 0.30}, {"window_minutes": 300, "budget_overhead": 0.40}, {"window_minutes": 300, "budget_overhead": 0.50},
+    {"window_minutes": 360, "budget_overhead": 0.10}, {"window_minutes": 360, "budget_overhead": 0.20}, {"window_minutes": 360, "budget_overhead": 0.30}, {"window_minutes": 360, "budget_overhead": 0.40}, {"window_minutes": 360, "budget_overhead": 0.50}
+  ],
+  "reference_algorithm": null,
+  "purpose": "main scalable evidence: feasibility, score quality, runtime, memory, robustness"
+}

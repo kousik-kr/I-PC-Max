@@ -44,6 +44,7 @@ final class QueryScopedConnectorLabelStore {
                 toDestination, "toDestination");
         this.metrics = java.util.Objects.requireNonNull(
                 metrics, "metrics");
+        connectors.attachQueryLabels(fromSource, toDestination);
         this.cacheEnabled = connectors.memoizationEnabled();
         metrics.observeCounter(
                 "forward_lower_bound_labels",

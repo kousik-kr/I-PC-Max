@@ -33,6 +33,7 @@ final class BenchOptions {
     boolean verifyOutput;
     boolean failFast;
     boolean resume;
+    boolean sharedPreprocessing;
     int theta = 2;
     int anchorLimit = 32;
     int k = 16;
@@ -99,6 +100,8 @@ final class BenchOptions {
                 case "--verify-output" -> options.verifyOutput = true;
                 case "--fail-fast" -> options.failFast = true;
                 case "--resume" -> options.resume = true;
+                case "--shared-preprocessing" ->
+                        options.sharedPreprocessing = true;
                 case "--theta" -> options.theta = integer(tokens, ++index, option);
                 case "--anchor-limit", "--pivot-limit-l" ->
                         options.anchorLimit = integer(tokens, ++index, option);
@@ -284,6 +287,7 @@ final class BenchOptions {
         result.put(
                 "preprocessing_timeout_seconds",
                 preprocessingTimeoutSeconds);
+        result.put("shared_preprocessing", sharedPreprocessing);
         result.put("memory_limit_mb", memoryLimitMb);
         result.put("max_enumerated_paths", maxEnumeratedPaths);
         result.put("max_labels", maxLabels);

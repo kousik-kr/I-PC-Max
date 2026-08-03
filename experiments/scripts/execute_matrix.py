@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import collections
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 from typing import Any
 
 if __package__ in {None, ""}:
@@ -15,6 +17,7 @@ if __package__ in {None, ""}:
 
 from experiments.scripts.common.atomic_io import atomic_write_text, write_jsonl
 from experiments.scripts.common.config import load_design, repo_path
+from experiments.scripts.common.hashing import sha256_json
 from experiments.scripts.common.status import CompletionStatus
 from experiments.scripts.common.toolchain import environment, executable
 from experiments.scripts.executors.local import run_jobs
@@ -51,6 +54,43 @@ def _query_row(job: dict[str, Any]) -> dict[str, Any]:
     return matches[0]
 
 
+def _enforce_exact_algorithm_guard(
+    job: dict[str, Any], query: dict[str, Any], design: dict[str, Any]
+) -> None:
+    """Reject an exact run outside an explicitly bounded scalability scope."""
+    guard = design.get("exact_algorithm_guard")
+    if job.get("algorithm_id") != "pace-x" or not guard:
+        return
+    allowed_studies = set(guard.get("allowed_studies", []))
+    if allowed_studies and job.get("study_id") not in allowed_studies:
+        raise ValueError(
+            f"PACE-X is restricted to studies {sorted(allowed_studies)}; "
+            f"got {job.get('study_id')}"
+        )
+    datasets = set(guard.get("datasets", []))
+    if datasets and job.get("dataset_id") not in datasets:
+        raise ValueError(
+            f"PACE-X is restricted to datasets {sorted(datasets)}; "
+            f"got {job.get('dataset_id')}"
+        )
+    splits = set(guard.get("splits", []))
+    split = query.get("metadata", {}).get("split")
+    if splits and split not in splits:
+        raise ValueError(
+            f"PACE-X is restricted to splits {sorted(splits)}; got {split}"
+        )
+    maximum_rho = guard.get("max_budget_overhead_by_study", {}).get(
+        job.get("study_id"), guard.get("max_budget_overhead")
+    )
+    if maximum_rho is not None:
+        rho = query.get("budget_slack")
+        if not isinstance(rho, (int, float)) or float(rho) > float(maximum_rho):
+            raise ValueError(
+                "PACE-X small-budget guard violated at execution: "
+                f"rho={rho!r} > {maximum_rho}"
+            )
+
+
 def _resolved_pace_b(
     run_root: Path,
     design: dict[str, Any],
@@ -85,6 +125,13 @@ def _command(
     job: dict[str, Any], design: dict[str, Any], run_root: Path, query_file: Path, java_output: Path
 ) -> list[str]:
     resources = design["resources"]
+    # Query timeouts must start after the isolated worker has loaded and
+    # validated the dataset.  PaceBench otherwise falls back to the query
+    # timeout for preprocessing, which makes short scalability timeouts expire
+    # before the algorithm starts on real road networks.
+    preprocessing_timeout = int(
+        resources.get("preprocessing_timeout_seconds", 1800)
+    )
     memory = resources.get("memory_limit_mb")
     if memory is None:
         raise ValueError("memory_limit_mb must be resolved before execution")
@@ -93,6 +140,9 @@ def _command(
         defaults = design["pace_b_defaults"]
         parameters.update({
             "theta": defaults["theta"],
+            "pivot_limit_l": defaults.get("pivot_limit_l", 4),
+            "connector_limit_kc": defaults.get("connector_limit_kc", 4),
+            "frontier_limit_kf": defaults.get("frontier_limit_kf", 2),
             "connector_expansion_cap_mc":
                 defaults["connector_expansion_cap_mc"],
             "breakpoint_cap_mb": defaults["breakpoint_cap_mb"],
@@ -106,15 +156,34 @@ def _command(
         algorithm_parameters.pop("resolved_pace_b", False)
     )
     parameters.update(algorithm_parameters)
+    require_resolved = design.get(
+        "resolved_pace_b_required", job["study_id"] != "E02"
+    )
     if (
         job["algorithm_id"] == "pace-b"
-        and (explicitly_resolved or job["study_id"] != "E02")
+        and (explicitly_resolved or require_resolved)
     ):
         parameters.update(_resolved_pace_b(run_root, design))
     parameters.update(job.get("axis") or {})
     dataset_path = "demo"
     if job["dataset_id"] != "demo":
-        dataset_path = str(repo_path(f"data/input/{job['dataset_id']}"))
+        # Use the checked-in dataset definition for the base payload.  Dataset
+        # IDs are logical names and are not required to be filesystem-safe
+        # spellings (NY-EXACT is materialized as data/input/NY-Exact).
+        definition = design.get("dataset_definitions", {}).get(job["dataset_id"])
+        if not isinstance(definition, dict) or not definition.get("path"):
+            raise ValueError(
+                f"dataset definition is missing for {job['dataset_id']}"
+            )
+        dataset_path_value = repo_path(definition["path"])
+        # PaceBench derives the loaded logical ID from the directory basename.
+        # Keep the on-disk NY-Exact payload compatible with the canonical
+        # manifest/query ID NY-EXACT through the checked-in uppercase alias.
+        if job["dataset_id"] == "NY-EXACT":
+            canonical_alias = repo_path("data/input/NY-EXACT")
+            if canonical_alias.exists():
+                dataset_path_value = canonical_alias
+        dataset_path = str(dataset_path_value)
         if "score_density" in parameters:
             pattern = design["graph_variants"]["score_density_pattern"]
             dataset_path = str(repo_path(pattern.format(dataset=job["dataset_id"], percent=int(round(100 * parameters["score_density"])))))
@@ -122,7 +191,9 @@ def _command(
             pattern = design["graph_variants"]["graph_seed_pattern"]
             dataset_path = str(repo_path(pattern.format(dataset=job["dataset_id"], seed=int(parameters["graph_seed"]))))
     command = [
-        executable("java"), "-jar", str(repo_path(design["paths"]["jar"])),
+        executable("java"),
+        f"-Xmx{max(1, int(memory) // 1024)}g",
+        "-jar", str(repo_path(design["paths"]["jar"])),
         "--algorithm", job["algorithm_id"],
         "--dataset", dataset_path,
         "--query-file", str(query_file),
@@ -131,6 +202,7 @@ def _command(
         "--repetitions", "1", "--warmup-runs", "0",
         "--threads", str(parameters.pop("threads", 1)),
         "--timeout-seconds", str(resources["timeout_seconds"]),
+        "--preprocessing-timeout-seconds", str(preprocessing_timeout),
         "--memory-limit-mb", str(memory),
         "--seed", str(design.get("seeds", {}).get("schedule", 20260725)),
         "--deterministic", "--collect-phase-timings", "--collect-memory", "--collect-internal-counters",
@@ -192,9 +264,15 @@ def execute_one(job: dict[str, Any], design: dict[str, Any], run_id: str, backen
     status = CompletionStatus.INTERNAL_ERROR.value
     try:
         row = _query_row(job)
+        _enforce_exact_algorithm_guard(job, row, design)
         write_jsonl(query_file, [row])
         command = _command(job, design, run_root, query_file, java_output)
-        timeout = int(design["resources"]["timeout_seconds"]) + 90
+        resources = design["resources"]
+        timeout = (
+            int(resources.get("preprocessing_timeout_seconds", 1800))
+            + int(resources["timeout_seconds"])
+            + 90
+        )
         completed = subprocess.run(
             command, cwd=repo_path("."), env=environment(), check=False, capture_output=True, text=True, timeout=timeout
         )
@@ -241,6 +319,316 @@ def execute_one(job: dict[str, Any], design: dict[str, Any], run_id: str, backen
     }
     write_jsonl(raw_path, [record])
     return {"job_id": job["job_id"], "skipped": False, "completion_status": status}
+
+
+def _replace_option(command: list[str], option: str, value: str) -> None:
+    try:
+        index = command.index(option)
+    except ValueError as failure:
+        raise ValueError(f"generated command is missing {option}") from failure
+    if index + 1 >= len(command):
+        raise ValueError(f"generated command has no value for {option}")
+    command[index + 1] = value
+
+
+def _batch_key(job: dict[str, Any]) -> str:
+    # Window and budget select a manifest row but do not change the Java
+    # algorithm configuration.  Keeping them out of the key lets one loaded
+    # dataset serve the complete T03 query stream.  Dataset variants remain in
+    # the key because they change the loaded payload.
+    query_only_axes = {"window_minutes", "budget_overhead"}
+    execution_axis = {
+        key: value
+        for key, value in (job.get("axis") or {}).items()
+        if key not in query_only_axes
+    }
+    return sha256_json({
+        "study_id": job["study_id"],
+        "dataset_id": job["dataset_id"],
+        "algorithm_id": job["algorithm_id"],
+        "variant_id": job["variant_id"],
+        "algorithm_parameters": job.get("algorithm_parameters") or {},
+        "execution_axis": execution_axis,
+        "manifest": job["manifest"],
+        "reference_algorithm": job.get("reference_algorithm"),
+    })
+
+
+def _manifest_rows_for_group(
+    jobs: list[dict[str, Any]], design: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[tuple[str, int], dict[str, Any]], int]:
+    manifest = repo_path(jobs[0]["manifest"])
+    rows = read_jsonl(manifest)
+    by_query_id = {row.get("query_id"): row for row in rows}
+    if len(by_query_id) != len(rows):
+        raise ValueError(f"manifest contains duplicate query IDs: {manifest}")
+    job_lookup: dict[tuple[str, int], dict[str, Any]] = {}
+    query_ids: list[str] = []
+    seen_query_ids: set[str] = set()
+    trials_by_query: dict[str, set[int]] = collections.defaultdict(set)
+    for job in jobs:
+        query_id = str(job["query_id"])
+        if query_id not in by_query_id:
+            raise ValueError(f"query {query_id} is missing from {manifest}")
+        query = by_query_id[query_id]
+        _enforce_exact_algorithm_guard(job, query, design)
+        trial = int(job["trial_id"])
+        key = (query_id, trial)
+        if key in job_lookup:
+            raise ValueError(
+                f"duplicate batched query/trial cell: {query_id} trial {trial}"
+            )
+        job_lookup[key] = job
+        trials_by_query[query_id].add(trial)
+        if query_id not in seen_query_ids:
+            seen_query_ids.add(query_id)
+            query_ids.append(query_id)
+    expected_trials: set[int] | None = None
+    for query_id, trials in trials_by_query.items():
+        if expected_trials is None:
+            expected_trials = set(trials)
+        elif trials != expected_trials:
+            raise ValueError(
+                f"batched trials differ for query {query_id}: "
+                f"{sorted(trials)} != {sorted(expected_trials)}"
+            )
+    if not expected_trials:
+        raise ValueError("batched group has no trials")
+    repetitions = len(expected_trials)
+    if expected_trials != set(range(repetitions)):
+        raise ValueError(
+            "batched trial IDs must be contiguous from zero: "
+            + str(sorted(expected_trials))
+        )
+    return [by_query_id[query_id] for query_id in query_ids], job_lookup, repetitions
+
+
+def _java_timestamp(value: Any) -> str:
+    if isinstance(value, str) and value:
+        return value
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _record_path(path: Path) -> str:
+    try:
+        return path.relative_to(repo_path(".")).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
+
+
+def _materialize_batch_records(
+    java_output: Path,
+    job_lookup: dict[tuple[str, int], dict[str, Any]],
+    run_root: Path,
+    run_id: str,
+    backend: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    design: dict[str, Any],
+    offset: int,
+) -> tuple[list[dict[str, Any]], int]:
+    if not java_output.is_file():
+        return [], offset
+    if java_output.stat().st_size < offset:
+        raise ValueError(f"batched Java output was truncated: {java_output}")
+    materialized: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    with java_output.open("rb") as stream:
+        stream.seek(offset)
+        while True:
+            line_start = stream.tell()
+            encoded = stream.readline()
+            if not encoded:
+                break
+            if not encoded.endswith(b"\n"):
+                offset = line_start
+                break
+            java_record = json.loads(encoded.decode("utf-8"))
+            offset = stream.tell()
+            query_id = str((java_record.get("query") or {}).get("query_id", ""))
+            repetition = int((java_record.get("run") or {}).get("repetition", -1))
+            key = (query_id, repetition)
+            if key in seen:
+                raise ValueError(
+                    f"batched Java output duplicates {query_id} repetition {repetition}"
+                )
+            seen.add(key)
+            job = job_lookup.get(key)
+            if job is None:
+                raise ValueError(
+                    f"batched Java output has no planned job for "
+                    f"{query_id} repetition {repetition}"
+                )
+            raw_path = (
+                run_root / "raw" / job["study_id"]
+                / f"{job['job_id']}.jsonl"
+            )
+            if raw_path.is_file():
+                existing = read_jsonl(raw_path)
+                if (
+                    len(existing) != 1
+                    or existing[0].get("input_hash") != job["input_hash"]
+                ):
+                    raise ValueError(
+                        f"existing raw record has a different identity: {raw_path}"
+                    )
+                continue
+            java_status = (java_record.get("status") or {}).get(
+                "status_code", "ERROR"
+            )
+            status = JAVA_STATUS.get(
+                str(java_status), CompletionStatus.INTERNAL_ERROR.value
+            )
+            timestamp = _java_timestamp(
+                (java_record.get("run") or {}).get("timestamp_utc")
+            )
+            record = {
+                "schema_version": 1,
+                "metric_definition_version":
+                    design["protocol"]["metric_definition_version"],
+                "run_id": run_id,
+                "study_id": job["study_id"],
+                "job_id": job["job_id"],
+                "trial_id": job["trial_id"],
+                "input_hash": job["input_hash"],
+                "backend": backend,
+                "timestamp_start_utc": timestamp,
+                "timestamp_end_utc": timestamp,
+                "completion_status": status,
+                "exit_code": int(
+                    (java_record.get("status") or {}).get("exit_code", 1)
+                ),
+                "stdout_path": _record_path(stdout_path),
+                "stderr_path": _record_path(stderr_path),
+                "java_record": java_record,
+                "error": None,
+            }
+            write_jsonl(raw_path, [record])
+            materialized.append({
+                "job_id": job["job_id"],
+                "skipped": False,
+                "completion_status": status,
+            })
+    return materialized, offset
+
+
+def execute_batched(
+    jobs: list[dict[str, Any]],
+    design: dict[str, Any],
+    run_id: str,
+    backend: str,
+) -> list[dict[str, Any]]:
+    """Execute serial queries while reusing one loaded dataset per group."""
+    if backend != "local":
+        raise ValueError("shared preprocessing currently requires the local backend")
+    run_root = repo_path(design["paths"]["results_root"]) / run_id
+    groups: dict[str, list[dict[str, Any]]] = collections.OrderedDict()
+    for job in jobs:
+        groups.setdefault(_batch_key(job), []).append(job)
+    all_results: list[dict[str, Any]] = []
+    for group_hash, group_jobs in groups.items():
+        group_id = group_hash[:24]
+        work = run_root / "work" / f"batch-{group_id}"
+        work.mkdir(parents=True, exist_ok=True)
+        query_file = work / "queries.jsonl"
+        java_output = work / "java-results.jsonl"
+        stdout_path = run_root / "logs" / f"batch-{group_id}.stdout.log"
+        stderr_path = run_root / "logs" / f"batch-{group_id}.stderr.log"
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        query_rows, job_lookup, repetitions = _manifest_rows_for_group(
+            group_jobs, design
+        )
+        write_jsonl(query_file, query_rows)
+        output_offset = 0
+        materialized, output_offset = _materialize_batch_records(
+            java_output, job_lookup, run_root, run_id, backend,
+            stdout_path, stderr_path, design, output_offset,
+        )
+        all_results.extend(materialized)
+        while any(
+            not (
+                run_root / "raw" / job["study_id"]
+                / f"{job['job_id']}.jsonl"
+            ).is_file()
+            for job in group_jobs
+        ):
+            representative = group_jobs[0]
+            command = _command(
+                representative, design, run_root,
+                query_file, java_output,
+            )
+            _replace_option(command, "--repetitions", str(repetitions))
+            _replace_option(
+                command,
+                "--experiment-name",
+                f"{representative['study_id']}:batch:{group_id}",
+            )
+            command.extend([
+                "--shared-preprocessing", "--fail-fast", "--resume",
+            ])
+            before = sum(
+                1
+                for job in group_jobs
+                if (
+                    run_root / "raw" / job["study_id"]
+                    / f"{job['job_id']}.jsonl"
+                ).is_file()
+            )
+            with stdout_path.open("a", encoding="utf-8") as stdout_stream, \
+                    stderr_path.open("a", encoding="utf-8") as stderr_stream:
+                process = subprocess.Popen(
+                    command,
+                    cwd=repo_path("."),
+                    env=environment(),
+                    stdout=stdout_stream,
+                    stderr=stderr_stream,
+                    text=True,
+                )
+                while process.poll() is None:
+                    materialized, output_offset = _materialize_batch_records(
+                        java_output, job_lookup, run_root, run_id,
+                        backend, stdout_path, stderr_path, design,
+                        output_offset,
+                    )
+                    all_results.extend(materialized)
+                    time.sleep(1)
+                return_code = process.wait()
+            materialized, output_offset = _materialize_batch_records(
+                java_output, job_lookup, run_root, run_id, backend,
+                stdout_path, stderr_path, design, output_offset,
+            )
+            all_results.extend(materialized)
+            after = sum(
+                1
+                for job in group_jobs
+                if (
+                    run_root / "raw" / job["study_id"]
+                    / f"{job['job_id']}.jsonl"
+                ).is_file()
+            )
+            if return_code not in {0, 1}:
+                raise RuntimeError(
+                    f"batch {group_id} exited {return_code}; see {stderr_path}"
+                )
+            if after == before:
+                raise RuntimeError(
+                    f"batch {group_id} made no progress; see {stderr_path}"
+                )
+    results: list[dict[str, Any]] = []
+    for job in jobs:
+        raw_path = (
+            run_root / "raw" / job["study_id"]
+            / f"{job['job_id']}.jsonl"
+        )
+        rows = read_jsonl(raw_path)
+        if len(rows) != 1:
+            raise ValueError(f"expected one raw record: {raw_path}")
+        results.append({
+            "job_id": job["job_id"],
+            "skipped": False,
+            "completion_status": rows[0]["completion_status"],
+        })
+    return results
 
 
 def main() -> int:

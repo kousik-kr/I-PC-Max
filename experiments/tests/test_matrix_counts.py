@@ -16,17 +16,18 @@ class MatrixCountTest(unittest.TestCase):
             report = build_all(design, output)
             planned = [
                 json.loads(line)
-                for path in sorted(output.glob("e*.jsonl"))
+                for path in sorted(output.glob("t*.jsonl"))
                 for line in path.read_text(encoding="utf-8").splitlines()
                 if line
             ]
             independent = validate_planned_cells(planned, design)
-        threads = 6
         expected = {
-            "E00": 0, "E01": 6, "E02": 1440, "E03": 7440, "E04": 0,
-            "E05": 6000, "E06": 6000, "E07": 4800, "E08": 2400,
-            "E09": 2400, "E10": 12000, "E11": 4 * 100 * 2 * threads * 3,
-            "E12": 3600, "E13": 0,
+            "T01": 80,
+            "T02": 320,
+            "T03": 135000,
+            "T04": 3360,
+            "T05": 360,
+            "T06": 0,
         }
         self.assertEqual(expected, report["study_counts"])
         self.assertEqual(sum(expected.values()), report["total_jobs"])
@@ -52,6 +53,25 @@ class MatrixCountTest(unittest.TestCase):
                 (Path(left) / "e01.jsonl").read_bytes(),
                 (Path(right) / "e01.jsonl").read_bytes(),
             )
+
+    def test_scalability_plan_has_exact_small_budget_guard(self):
+        design = load_design(
+            Path("experiments/configs/pace_ny_scalability_theta.yaml")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            report = build_all(design, Path(directory))
+            planned = [
+                json.loads(line)
+                for line in (Path(directory) / "e14.jsonl").read_text().splitlines()
+                if line
+            ]
+        self.assertEqual(28, report["total_jobs"])
+        self.assertTrue(report["disk_budget_passed"])
+        exact = [job for job in planned if job["algorithm_id"] == "pace-x"]
+        self.assertEqual(4, len(exact))
+        self.assertTrue(all(job["axis"]["budget_overhead"] <= 0.10 for job in exact))
+        bounded = [job for job in planned if job["algorithm_id"] == "pace-b"]
+        self.assertEqual({1, 2, 3}, {job["axis"]["theta"] for job in bounded})
 
 
 if __name__ == "__main__":

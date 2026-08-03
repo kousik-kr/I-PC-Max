@@ -33,10 +33,10 @@ class PaperQueryGenerationPipelineTest(unittest.TestCase):
         )
 
     def test_ny_and_cal_require_the_declared_graph_variants(self):
-        self.assertEqual(["NY", "FLA", "CAL", "USA"],
+        self.assertEqual(["NY", "FLA", "CAL", "OL", "NY-EXACT"],
                          self.design["datasets"])
         self.assertEqual([], self.requirements["variants"]["FLA"])
-        self.assertEqual([], self.requirements["variants"]["USA"])
+        self.assertEqual([], self.requirements["variants"]["OL"])
         suffixes = {
             variant["suffix"]
             for variant in self.requirements["variants"]["NY"]
@@ -53,10 +53,7 @@ class PaperQueryGenerationPipelineTest(unittest.TestCase):
             },
             suffixes,
         )
-        self.assertEqual(
-            {"-GS42", "-GS43", "-GS44"},
-            {variant["suffix"] for variant in self.requirements["variants"]["CAL"]},
-        )
+        self.assertEqual([], self.requirements["variants"]["CAL"])
 
     def test_independent_instance_arithmetic_matches_base_pairs(self):
         ny = expected_instance_counts(
@@ -71,11 +68,11 @@ class PaperQueryGenerationPipelineTest(unittest.TestCase):
 
         self.assertEqual(40, ny["pilot"])
         self.assertEqual(20, ny["warmup"])
-        self.assertEqual(1800, ny["evaluation_base"])
-        self.assertEqual(1100, ny["evaluation_variants"])
-        self.assertEqual(2960, ny["combined"])
-        self.assertEqual(1860, fla["combined"])
-        self.assertEqual(2160, cal["combined"])
+        self.assertEqual(5000, ny["evaluation_base"])
+        self.assertEqual(280, ny["evaluation_variants"])
+        self.assertEqual(5340, ny["combined"])
+        self.assertEqual(5060, fla["combined"])
+        self.assertEqual(5060, cal["combined"])
 
     def test_plan_only_derives_without_sampling_or_writing(self):
         report = plan(
@@ -91,23 +88,14 @@ class PaperQueryGenerationPipelineTest(unittest.TestCase):
             report["datasets"][0]["base_pairs"],
         )
 
-    def test_missing_cal_seed_assets_are_reported_before_graph_loading(self):
+    def test_supplied_ol_and_ny_exact_assets_pass_preflight(self):
         report = inspect_generation_assets(
             self.design,
             self.requirements,
             list(self.design["datasets"]),
         )
-        expected_missing = [
-            seed
-            for seed in (43, 44)
-            if not Path(f"data/input/CAL/variants/seed-{seed}/manifest.json").is_file()
-        ]
-        self.assertEqual(not expected_missing, report["passed"])
-        for seed in expected_missing:
-            self.assertTrue(any(
-                message.startswith("CAL:") and f"seed-{seed}" in message
-                for message in report["errors"]
-            ))
+        self.assertTrue(report["passed"])
+        self.assertEqual([], report["errors"])
 
 
 if __name__ == "__main__":

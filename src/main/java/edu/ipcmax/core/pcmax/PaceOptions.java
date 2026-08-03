@@ -232,4 +232,14 @@ public record PaceOptions(
         return policy == PaceExecutionPolicy.PACE_X
                 ? UNBOUNDED : frontierLimitKf;
     }
+
+    /**
+     * True for the explicitly aggressive one-witness scalability policy.
+     * Exact PACE-X and portfolio PACE-B never enter this sampled path.
+     */
+    public boolean singleFastestLowerBoundWitnessEnabled() {
+        return policy == PaceExecutionPolicy.PACE_B
+                && !features.connectorPortfolioEnabled()
+                && effectiveConnectorLimit() == 1;
+    }
 }

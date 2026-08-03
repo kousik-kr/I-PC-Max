@@ -205,6 +205,7 @@ public final class PaceBench {
         }
 
         if (!options.internalWorker
+                && !options.sharedPreprocessing
                 && (options.timeoutSeconds > 0
                     || options.memoryLimitMb > 0)) {
             return executeIsolated(options, configHash);
@@ -1070,6 +1071,13 @@ public final class PaceBench {
                 : pace.features().pivotDiversificationEnabled());
         result.put("connector_portfolio_enabled", pace == null ? false
                 : pace.features().connectorPortfolioEnabled());
+        result.put("single_fastest_lower_bound_witness_enabled",
+                pace != null
+                        && pace.singleFastestLowerBoundWitnessEnabled());
+        result.put("temporal_replay_contract", pace == null ? null
+                : pace.singleFastestLowerBoundWitnessEnabled()
+                        ? "DECLARED_DEPARTURE_GRID_LINEARIZED-v1"
+                        : "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1");
         result.put("connector_cache_enabled", pace == null ? false
                 : pace.features().connectorCacheEnabled());
         result.put("profile_cache_enabled", pace == null ? false
@@ -1119,6 +1127,8 @@ public final class PaceBench {
                 "safe_corridor_enabled",
                 "pivot_diversification_enabled",
                 "connector_portfolio_enabled",
+                "single_fastest_lower_bound_witness_enabled",
+                "temporal_replay_contract",
                 "connector_cache_enabled",
                 "profile_cache_enabled",
                 "score_upper_bound_enabled")) {

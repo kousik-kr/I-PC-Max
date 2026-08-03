@@ -2,7 +2,9 @@
 
 ## Scope
 
-The publication experiment scope is NY, FLA, CAL, and USA. OL is intentionally removed from the executable design and must not appear in dataset counts or claims.
+The executable publication scope is a two-track design: NY-EXACT plus low-budget NY/FLA/CAL
+PACE-X probes for exactness, and NY/FLA/CAL PACE-B for scalability. OL replaces USA in the
+preparation dataset set and lives under `data/input/OL`; USA is not in the executable design.
 
 ## Reused Java Core
 
@@ -17,7 +19,10 @@ The publication experiment scope is NY, FLA, CAL, and USA. OL is intentionally r
 
 ## Added Control Layer
 
-`experiments/scripts/run_all.py` owns the stage DAG. It freezes an immutable identity, performs preflight, builds deterministic E00-E13 matrices, executes one process per query/trial, validates complete coverage, aggregates trials per query, creates T1-T8 and F1-F8 artifacts, and packages a release only after hard gates pass.
+`experiments/scripts/run_all.py` owns the stage DAG. It freezes an immutable identity, performs
+preflight, builds deterministic T01--T06 matrices, executes one process per query/trial, validates
+complete coverage, aggregates trials per query, creates report artifacts, and packages a release
+only after hard gates pass.
 
 The local backend limits concurrent processes. The Slurm backend produces a deterministic array script using the same matrix manifest. `clean_run.py` deletes only one explicitly named directory below `experiments/results`.
 

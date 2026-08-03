@@ -2,6 +2,7 @@ package edu.ipcmax.experiments;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +26,9 @@ class BenchOptionsTest {
                 parse("--algorithm", "pace-b",
                         "--preprocessing-timeout-seconds", "1800")
                         .preprocessingTimeoutSeconds);
+        assertTrue(parse(
+                "--algorithm", "pace-b",
+                "--shared-preprocessing").sharedPreprocessing);
     }
 
     private static BenchOptions parse(String... prefix) {

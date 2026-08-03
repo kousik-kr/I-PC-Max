@@ -20,9 +20,10 @@ from experiments.scripts.common.config import load_design, repo_path
 
 
 STAGES = (
-    "preflight", "build", "data", "queries", "plan", "smoke", "correctness", "pilot",
-    "main", "sensitivity", "ablation", "parallel", "robustness", "collect", "validate",
-    "summarize", "plot", "table", "package",
+    "preflight", "build", "data", "queries", "plan", "smoke", "exactness", "main",
+    "sensitivity", "ablation", "precomputation", "correctness", "pilot", "parallel",
+    "robustness", "scalability", "collect", "validate", "summarize",
+    "plot", "table", "package",
 )
 
 
@@ -88,10 +89,10 @@ def _summarize_run(config: Path, run_id: str, tail_lines: int) -> dict[str, Any]
     controller_pid = state.get("controller_pid")
     process_running = _pid_alive(int(pid)) if isinstance(pid, int) else False
     controller_running = _pid_alive(int(controller_pid)) if isinstance(controller_pid, int) else False
-    if exit_record:
-        lifecycle = "EXITED"
-    elif process_running or controller_running:
+    if process_running or controller_running:
         lifecycle = "RUNNING"
+    elif exit_record:
+        lifecycle = "EXITED"
     elif state:
         lifecycle = "UNKNOWN"
     else:
@@ -109,6 +110,8 @@ def _summarize_run(config: Path, run_id: str, tail_lines: int) -> dict[str, Any]
     matrix_dir = root / "plan" / "matrices"
     if matrix_dir.is_dir():
         for matrix in sorted(matrix_dir.glob("*.jsonl")):
+            if matrix.name == "canonical_job_ledger.jsonl":
+                continue
             matrix_counts[matrix.stem] = _line_count(matrix)
     planned_jobs = sum(matrix_counts.values())
 
@@ -163,6 +166,7 @@ def _worker(args: argparse.Namespace) -> int:
     stdout_path = launcher / "run_all.stdout.log"
     stderr_path = launcher / "run_all.stderr.log"
     exit_path = launcher / "exit.json"
+    exit_path.unlink(missing_ok=True)
     command = [
         sys.executable, "experiments/scripts/run_all.py",
         "--config", str(args.config),
@@ -231,9 +235,10 @@ def _launch(args: argparse.Namespace) -> int:
     launcher.mkdir(parents=True, exist_ok=True)
     state = _read_json(launcher / "state.json") or {}
     existing_pid = state.get("worker_pid")
-    if isinstance(existing_pid, int) and _pid_alive(existing_pid) and not args.allow_existing:
+    if isinstance(existing_pid, int) and _pid_alive(existing_pid):
         print(f"background run is already active: run_id={args.run_id} pid={existing_pid}", file=sys.stderr)
-        return 2
+        return 0 if args.allow_existing else 2
+    (launcher / "exit.json").unlink(missing_ok=True)
     command = [
         sys.executable, str(Path(__file__).resolve()), "worker",
         "--config", str(args.config),
@@ -318,6 +323,25 @@ def _stop(args: argparse.Namespace) -> int:
         print(f"no live process found for run_id={args.run_id}")
         return 0
     signal_value = signal.SIGKILL if args.kill else signal.SIGTERM
+    process_groups: set[int] = set()
+    for target in targets:
+        try:
+            process_groups.add(os.getpgid(target))
+        except ProcessLookupError:
+            continue
+    own_group = os.getpgrp()
+    safe_groups = {
+        group for group in process_groups
+        if group > 0 and group != own_group
+    }
+    if safe_groups:
+        for group in safe_groups:
+            os.killpg(group, signal_value)
+        print(
+            f"sent {signal_value.name} to {len(safe_groups)} process group(s) "
+            f"for run_id={args.run_id}"
+        )
+        return 0
     for target in targets:
         os.kill(target, signal_value)
     print(f"sent {signal_value.name} to {len(targets)} process(es) for run_id={args.run_id}")

@@ -26,8 +26,8 @@ make paper-plan-queries
 
 ## Required graph assets
 
-Each base dataset belongs at `data/input/<dataset>/`, where `<dataset>` is `NY`, `FLA`, `CAL`, or
-`USA`. Every directory must contain:
+Each base dataset belongs at `data/input/<dataset>/`, where `<dataset>` is `NY`, `FLA`, `CAL`,
+`OL`, or `NY-Exact`. Every directory must contain:
 
 ```text
 edges_static.csv.gz
@@ -75,7 +75,7 @@ experiments/manifests/queries/<dataset>/evaluation.jsonl
 experiments/manifests/queries/<dataset>/evaluation.manifest.json
 ```
 
-The combined `paper_q1.jsonl` file is consumed by E02-E12. Sidecars record all
+The combined `paper_q1.jsonl` file is consumed by T01-T05. Sidecars record all
 seeds, generation parameters, conversion contract, structural and temporal
 input checksums, output/manifest checksum, independent counts, and the
 generating command. They intentionally contain no wall-clock timestamp, so

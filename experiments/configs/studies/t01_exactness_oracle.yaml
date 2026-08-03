@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "study_id": "T01",
+  "stage": "exactness",
+  "mode": "execute",
+  "datasets": ["NY-EXACT"],
+  "split": "evaluation",
+  "pair_indices": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+  "pairs_per_dataset": 20,
+  "centers": [510, 1110],
+  "trials": 1,
+  "algorithms": [
+    {"id": "pace-x", "variant": "exact-oracle", "parameters": {"theta": 2}, "axes": [{"window_minutes": 120, "budget_overhead": 0.10}]},
+    {"id": "pace-b", "variant": "bounded-reference", "parameters": {"resolved_pace_b": false}, "axes": [{"window_minutes": 120, "budget_overhead": 0.10}]}
+  ],
+  "reference_algorithm": "pace-x",
+  "purpose": "very-low-budget PACE-X certification oracle on NY-Exact; PACE-B quality/runtime comparison"
+}

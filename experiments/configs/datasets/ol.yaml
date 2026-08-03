@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "dataset_id": "OL",
+  "path": "data/input/OL",
+  "enabled": true,
+  "expected_nodes": null,
+  "expected_edges": null,
+  "required_support_end": 10080,
+  "required_conversion_contract": "declared_centisecond_normalization-v1",
+  "required_score_density_percent": [],
+  "required_graph_seeds": [],
+  "source_dataset": "Oldenburg DIMACS (OL)",
+  "asset_status": "external_input_required",
+  "scope": "low-budget exact probes only; no OL density/seed sweep"
+}
