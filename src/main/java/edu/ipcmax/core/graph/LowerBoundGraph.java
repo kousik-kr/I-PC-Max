@@ -6,6 +6,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 import edu.ipcmax.core.validate.Path;
 
@@ -20,9 +22,27 @@ public final class LowerBoundGraph {
      * Creates lower-bound weights from a time-dependent graph.
      */
     public LowerBoundGraph(TDGraph graph) {
+        this(graph, () -> false);
+    }
+
+    /** Cancellation-aware construction for query-timed algorithms. */
+    public LowerBoundGraph(
+            TDGraph graph,
+            BooleanSupplier cancelled) {
+        if (graph == null || cancelled == null) {
+            throw new IllegalArgumentException(
+                    "graph and cancellation predicate are required");
+        }
         this.graph = graph;
         this.weightsByArcId = new double[graph.edgeCount()];
+        int visited = 0;
         for (Edge edge : graph.edges()) {
+            if ((visited++ & 1023) == 0
+                    && (cancelled.getAsBoolean()
+                        || Thread.currentThread().isInterrupted())) {
+                throw new CancellationException(
+                        "lower-bound graph construction reached its query deadline");
+            }
             weightsByArcId[edge.arcId()] = edge.travelTimeFunction().minTravelTime();
         }
     }
@@ -38,23 +58,48 @@ public final class LowerBoundGraph {
      * Dijkstra distances from a source over outgoing edges.
      */
     public Distances distancesFromSource(int source) {
-        return dijkstra(source, true);
+        return dijkstra(source, true, () -> false);
+    }
+
+    /** Cancellation-aware forward Dijkstra for query-timed algorithms. */
+    public Distances distancesFromSource(
+            int source,
+            BooleanSupplier cancelled) {
+        return dijkstra(source, true, cancelled);
     }
 
     /**
      * Reverse Dijkstra distances to a target over incoming edges.
      */
     public Distances distancesToTarget(int target) {
-        return dijkstra(target, false);
+        return dijkstra(target, false, () -> false);
     }
 
-    private Distances dijkstra(int start, boolean forward) {
+    /** Cancellation-aware reverse Dijkstra for query-timed algorithms. */
+    public Distances distancesToTarget(
+            int target,
+            BooleanSupplier cancelled) {
+        return dijkstra(target, false, cancelled);
+    }
+
+    private Distances dijkstra(
+            int start,
+            boolean forward,
+            BooleanSupplier cancelled) {
+        if (cancelled == null) {
+            throw new IllegalArgumentException("cancellation predicate is required");
+        }
         Map<Integer, NodeState> states = new HashMap<>();
         PriorityQueue<Label> queue = new PriorityQueue<>();
         states.put(start, new NodeState(0.0, 0, -1));
         queue.add(new Label(start, 0.0, 0));
 
         while (!queue.isEmpty()) {
+            if (cancelled.getAsBoolean()
+                    || Thread.currentThread().isInterrupted()) {
+                throw new CancellationException(
+                        "lower-bound search reached its query deadline");
+            }
             Label label = queue.poll();
             NodeState best = states.get(label.node);
             if (label.distance > best.distance

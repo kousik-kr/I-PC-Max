@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 from pathlib import Path
@@ -26,6 +27,54 @@ def read_records(directory: Path) -> list[dict[str, Any]]:
     return records
 
 
+def read_reused_records(run_root: Path) -> list[dict[str, Any]]:
+    """Project immutable historical rows into the normalized effective set."""
+    index_path = (
+        run_root / "plan" / "reconciliation" / "effective_result_index.jsonl"
+    )
+    if not index_path.is_file():
+        return []
+    references = [
+        json.loads(line)
+        for line in index_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    projected: list[dict[str, Any]] = []
+    for reference in references:
+        source_path = Path(str(reference["source_record_path"]))
+        if not source_path.is_absolute():
+            source_path = repo_path(source_path)
+        # Reconciliation records point to one immutable raw file.  Restrict to
+        # that file rather than accepting a same-named run ID elsewhere.
+        direct_rows = [
+            json.loads(line)
+            for line in source_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        matching = [
+            row
+            for row in direct_rows
+            if (row.get("java_record") or {}).get("run", {}).get("run_id")
+            == reference.get("source_record_id")
+        ]
+        if len(matching) != 1:
+            raise ValueError(
+                "reused result reference does not resolve to one source row: "
+                + source_path.as_posix()
+            )
+        record = copy.deepcopy(matching[0])
+        record.update({
+            "run_id": run_root.name,
+            "study_id": "T03",
+            "job_id": reference["target_job_id"],
+            "input_hash": reference["target_input_hash"],
+            "result_origin": "REUSED_HISTORICAL",
+            "reuse_provenance": reference,
+        })
+        projected.append(record)
+    return projected
+
+
 def flatten(record: dict[str, Any]) -> dict[str, Any]:
     java = record.get("java_record") or {}
     configuration = java.get("configuration", {})
@@ -35,15 +84,36 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
     output = java.get("output", {})
     peak_rss = memory.get("peak_rss")
     start_rss = memory.get("start_rss")
+    algorithm_id = configuration.get("algorithm")
+    algorithm_label = {
+        "pace-b": "PACE-B",
+        "iscope": "iSCOPE",
+        "allfp": "allFP",
+        "interval-best": "interval-best (legacy)",
+        "rpq": "RPQ (historical)",
+        "pace-x": "PACE-X",
+    }.get(algorithm_id, algorithm_id)
     return {
         "run_id": record["run_id"],
         "study_id": record["study_id"],
         "job_id": record["job_id"],
         "trial_id": record["trial_id"],
         "completion_status": record["completion_status"],
+        "result_origin": record.get("result_origin", "NEW_FIVE_SECOND_RUN"),
+        "algorithm_status": status.get("status_code"),
+        "execution_policy": status.get("execution_policy"),
+        "partial_output_policy": status.get("partial_output_policy"),
         "dataset_id": java.get("dataset", {}).get("dataset_id"),
         "query_id": java.get("query", {}).get("query_id"),
-        "algorithm_id": configuration.get("algorithm"),
+        "algorithm_id": algorithm_id,
+        "algorithm_label": algorithm_label,
+        "reporting_track": (
+            "T03-B_PREFERENCE_FREE_REFERENCE"
+            if algorithm_id == "allfp"
+            else "T03-A_PREFERENCE_AWARE"
+            if algorithm_id in {"pace-b", "iscope"}
+            else "HISTORICAL_OR_EXACTNESS"
+        ),
         "variant_id": configuration.get("ablation"),
         "pace_engine": configuration.get("pace_engine"),
         "pivot_limit_l": configuration.get("pivot_limit_l"),
@@ -58,6 +128,24 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
         "cap_triggered": ",".join(status.get("cap_triggered") or []),
         "wall_time_ns": java.get("timing_ns", {}).get("query_total"),
         "cpu_time_ns": java.get("timing_ns", {}).get("cpu_total"),
+        "lower_bound_time_ns": java.get("timing_ns", {}).get(
+            "lower_bound_preprocessing"
+        ),
+        "functional_composition_time_ns": java.get("timing_ns", {}).get(
+            "functional_composition"
+        ),
+        "functional_search_control_time_ns": java.get("timing_ns", {}).get(
+            "functional_search_control"
+        ),
+        "envelope_time_ns": java.get("timing_ns", {}).get(
+            "envelope_extraction"
+        ),
+        "posthoc_scoring_time_ns": java.get("timing_ns", {}).get(
+            "posthoc_scoring"
+        ),
+        "allfp_budget_projection_time_ns": java.get(
+            "timing_ns", {}
+        ).get("allfp_budget_projection"),
         "peak_rss_bytes": memory.get("peak_rss"),
         "start_rss_bytes": start_rss,
         "end_rss_bytes": memory.get("end_rss"),
@@ -83,13 +171,33 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
         "memo_waits": counters.get("memo_waits"),
         "observed_workers": counters.get("observed_workers"),
         "profile_cells_total": output.get("final_profile_intervals"),
+        "distinct_selected_paths": output.get("distinct_selected_paths"),
+        "path_changes": output.get("path_changes"),
         "feasible_coverage": output.get("feasible_coverage_fraction"),
         "average_selected_score": output.get("average_selected_score"),
+        "average_selected_travel_time": output.get(
+            "average_selected_travel_time"
+        ),
         "best_selected_score": output.get("best_selected_score"),
         "path_agreement": java.get("quality", {}).get("path_agreement_fraction"),
         "score_agreement": java.get("quality", {}).get("score_agreement_fraction"),
         "score_regret": java.get("quality", {}).get("integrated_score_regret"),
         "output_checksum": java.get("output", {}).get("profile_checksum"),
+        "output_feasible": counters.get("output_feasible"),
+        "output_loopless": counters.get("output_loopless"),
+        "output_validation_contract": counters.get(
+            "output_validation_contract"
+        ),
+        "posthoc_budget_feasible_coverage_fraction": counters.get(
+            "posthoc_budget_feasible_coverage_fraction"
+        ),
+        "allfp_search_executed": counters.get("allfp_search_executed"),
+        "allfp_budget_variant_reuse_hit": counters.get(
+            "allfp_budget_variant_reuse_hit"
+        ),
+        "allfp_search_source_query_id": counters.get(
+            "allfp_search_source_query_id"
+        ),
         "input_hash": record["input_hash"],
     }
 
@@ -97,6 +205,16 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
 def collect(run_root: Path) -> dict[str, Any]:
     raw = run_root / "raw"
     records = read_records(raw) if raw.is_dir() else []
+    reused = read_reused_records(run_root)
+    raw_ids = {record.get("job_id") for record in records}
+    overlap = raw_ids & {record.get("job_id") for record in reused}
+    if overlap:
+        raise ValueError(
+            "jobs have both new raw output and historical reuse references: "
+            + ", ".join(sorted(str(value) for value in overlap)[:10])
+        )
+    records.extend(reused)
+    records.sort(key=lambda record: str(record.get("job_id")))
     normalized = run_root / "normalized"
     normalized.mkdir(parents=True, exist_ok=True)
     write_jsonl(normalized / "run_records.jsonl", records)
@@ -111,6 +229,8 @@ def collect(run_root: Path) -> dict[str, Any]:
     report = {
         "schema_version": 1,
         "records": len(records),
+        "new_raw_records": len(records) - len(reused),
+        "reused_historical_records": len(reused),
         "raw_files": len(raw_files),
         "raw_checksum": sha256_files(raw_files, raw) if raw_files else None,
         "parquet_written": False,

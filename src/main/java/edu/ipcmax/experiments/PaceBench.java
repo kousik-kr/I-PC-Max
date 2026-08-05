@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -53,10 +54,12 @@ import edu.ipcmax.experiments.framework.LimitExceededException;
 import edu.ipcmax.experiments.framework.ProfileSupport;
 import edu.ipcmax.experiments.framework.QueryManifestEntry;
 import edu.ipcmax.experiments.framework.QueryManifestIO;
+import edu.ipcmax.experiments.algorithms.AllFpAlgorithm;
 import edu.ipcmax.experiments.querygen.ManifestChecksum;
 
 /** Unified reproducible command-line experiment driver. */
 public final class PaceBench {
+    private static final int QUERY_WORKER_NOT_TERMINATED = 1_000_000_000;
     private static final ObjectMapper JSON = QueryManifestIO.mapper();
     private static final List<String> TIMINGS = List.of(
             "preprocessing_total", "lower_bound_preprocessing", "anchor_index_preprocessing",
@@ -64,12 +67,17 @@ public final class PaceBench {
             "connector_generation", "recursive_generation", "memo_lookup", "memo_compute",
             "temporal_stitching", "breakpoint_construction", "duplicate_removal", "safe_dominance",
             "bounded_retention", "fragment_merging", "feasibility_validation",
-            "envelope_extraction", "profile_serialization", "reference_comparison",
+            "envelope_extraction", "envelope_canonicalization",
+            "profile_serialization", "reference_comparison",
             "corridor_construction", "feasible_entry_band_computation",
             "score_support_lookup", "pivot_ranking_diversification",
             "forward_backward_labeling", "top_l_anchor_selection",
             "pivot_order_exploration", "candidate_assembly",
             "profile_merge",
+            "functional_composition", "functional_search_control",
+            "posthoc_scoring", "profiling",
+            "allfp_budget_projection",
+            "algorithm_total",
             "final_connector_reduction",
             "canonical_path_replay_stitching", "breakpoint_processing",
             "equality_root_computation", "fragment_restriction_merge",
@@ -228,15 +236,17 @@ public final class PaceBench {
         Set<String> completedIds = options.resume ? existingRunIds(options.outputJsonl) : Set.of();
         Map<String, String> externalReferences = options.referenceJsonl == null
                 ? Map.of() : referenceChecksums(options.referenceJsonl);
+        Map<AllFpReuseKey, AllFpReusableExecution> allFpReuse =
+                new HashMap<>();
         ExperimentAlgorithm algorithm = AlgorithmRegistry.create(options.algorithm);
         ExperimentAlgorithm reference = options.referenceAlgorithm == null
                 ? null : AlgorithmRegistry.create(options.referenceAlgorithm);
         long algorithmPreparationStarted = System.nanoTime();
         algorithm.prepare(loaded.graph, options.algorithmConfig());
         if (reference != null) {
-            reference.prepare(
-                    loaded.graph,
-                    referenceConfig(options, reference.id()));
+            AlgorithmConfig preparedReference = referenceConfig(
+                    options, reference.id());
+            reference.prepare(loaded.graph, preparedReference);
         }
         preprocessingNanos +=
                 System.nanoTime() - algorithmPreparationStarted;
@@ -261,23 +271,38 @@ public final class PaceBench {
                 failures += runOne(options, algorithm, reference, loaded.graph, entry, configHash,
                         preprocessingNanos, datasetRecord, systemRecord, options.internalWarmup,
                         options.internalRepetition, completedIds, externalReferences,
-                        beforeGraphLoadHeap, afterGraphLoadHeap);
+                        beforeGraphLoadHeap, afterGraphLoadHeap,
+                        allFpReuse);
                 break;
             }
             for (int warmup = 0; warmup < options.warmupRuns; warmup++) {
-                failures += runOne(options, algorithm, reference, loaded.graph, entry, configHash,
+                int outcome = runOne(options, algorithm, reference, loaded.graph, entry, configHash,
                         preprocessingNanos, datasetRecord, systemRecord, true, warmup,
                         completedIds, externalReferences,
-                        beforeGraphLoadHeap, afterGraphLoadHeap);
+                        beforeGraphLoadHeap, afterGraphLoadHeap,
+                        allFpReuse);
+                if (outcome == QUERY_WORKER_NOT_TERMINATED) {
+                    return 1;
+                }
+                failures += outcome;
                 if (failures > 0 && options.failFast) {
                     return 1;
                 }
             }
-            for (int repetition = 0; repetition < options.repetitions; repetition++) {
-                failures += runOne(options, algorithm, reference, loaded.graph, entry, configHash,
+            List<Integer> measuredRepetitions = options.repetitionIndices.isEmpty()
+                    ? java.util.stream.IntStream.range(0, options.repetitions)
+                            .boxed().toList()
+                    : options.repetitionIndices;
+            for (int repetition : measuredRepetitions) {
+                int outcome = runOne(options, algorithm, reference, loaded.graph, entry, configHash,
                         preprocessingNanos, datasetRecord, systemRecord, false, repetition,
                         completedIds, externalReferences,
-                        beforeGraphLoadHeap, afterGraphLoadHeap);
+                        beforeGraphLoadHeap, afterGraphLoadHeap,
+                        allFpReuse);
+                if (outcome == QUERY_WORKER_NOT_TERMINATED) {
+                    return 1;
+                }
+                failures += outcome;
                 if (failures > 0 && options.failFast) {
                     return 1;
                 }
@@ -307,7 +332,11 @@ public final class PaceBench {
                     return 1;
                 }
             }
-            for (int repetition = 0; repetition < options.repetitions; repetition++) {
+            List<Integer> measuredRepetitions = options.repetitionIndices.isEmpty()
+                    ? java.util.stream.IntStream.range(0, options.repetitions)
+                            .boxed().toList()
+                    : options.repetitionIndices;
+            for (int repetition : measuredRepetitions) {
                 failures += runIsolated(options, query, configHash, false, repetition, completed);
                 if (failures > 0 && options.failFast) {
                     return 1;
@@ -453,7 +482,7 @@ public final class PaceBench {
             String forcedReason) {
         Set<String> valued = Set.of(
                 "--query-file", "--output-jsonl", "--output-csv", "--repetitions", "--warmup-runs",
-                "--query-manifest-output");
+                "--query-manifest-output", "--repetition-indices");
         Set<String> switches = Set.of("--resume");
         List<String> arguments = new ArrayList<>();
         for (int index = 0; index < options.commandLine.length; index++) {
@@ -609,21 +638,54 @@ public final class PaceBench {
             Set<String> completedIds,
             Map<String, String> externalReferences,
             long beforeGraphLoadHeap,
-            long afterGraphLoadHeap) throws IOException {
+            long afterGraphLoadHeap,
+            Map<AllFpReuseKey, AllFpReusableExecution> allFpReuse)
+            throws IOException {
         String runId = ProfileSupport.sha256(String.join("|", options.experimentName, configHash,
                 entry.queryId(), Boolean.toString(warmup), Integer.toString(repetition)));
         if (completedIds.contains(runId)) {
             System.err.println("resume_skip=" + runId);
             return 0;
         }
-        Execution outcome = options.internalForcedStatus == null
-                ? executeWithLimits(algorithm, graph, entry, options.algorithmConfig(),
-                        options.timeoutSeconds, options.memoryLimitMb,
-                        options.internalProgressFile)
-                : forcedExecution(
-                        options.internalForcedStatus,
-                        options.internalForcedReason,
-                        options.internalProgressFile);
+        AllFpReuseKey allFpKey = allFpReuseKey(
+                options, algorithm, entry, warmup, repetition);
+        AllFpReusableExecution reusable = allFpKey == null
+                ? null : allFpReuse.get(allFpKey);
+        Execution outcome;
+        if (reusable != null) {
+            long projectionStarted = System.nanoTime();
+            AlgorithmResult projected = AllFpAlgorithm.withPostHocBudget(
+                    reusable.execution().result(),
+                    entry.budget(),
+                    reusable.sourceQueryId(),
+                    reusable.sourceBudget());
+            outcome = copyExecution(reusable.execution(), projected);
+            outcome.instrumentation().setTiming(
+                    "allfp_budget_projection",
+                    System.nanoTime() - projectionStarted);
+        } else {
+            outcome = options.internalForcedStatus == null
+                    ? executeWithLimits(
+                            algorithm,
+                            graph,
+                            entry,
+                            options.algorithmConfig(),
+                            options.timeoutSeconds,
+                            options.memoryLimitMb,
+                            options.internalProgressFile)
+                    : forcedExecution(
+                            options.internalForcedStatus,
+                            options.internalForcedReason,
+                            options.internalProgressFile);
+            if (allFpKey != null && reusableAllFpOutcome(outcome)) {
+                allFpReuse.put(
+                        allFpKey,
+                        new AllFpReusableExecution(
+                                copyExecution(outcome, outcome.result()),
+                                entry.queryId(),
+                                entry.budget()));
+            }
+        }
         outcome.instrumentation.addCounter(
                 "memory_before_graph_load_used_heap_bytes",
                 beforeGraphLoadHeap);
@@ -632,6 +694,7 @@ public final class PaceBench {
                 afterGraphLoadHeap);
         EnvelopeProfile referenceProfile = null;
         long referenceNanos = 0;
+        boolean queryWorkersTerminated = outcome.queryWorkerTerminated;
         if (options.internalForcedStatus == null
                 && reference != null && !reference.id().equals(algorithm.id())) {
             long started = System.nanoTime();
@@ -639,7 +702,9 @@ public final class PaceBench {
                     reference, graph, entry, referenceConfig(options, reference.id()),
                     options.timeoutSeconds, options.memoryLimitMb, null);
             referenceNanos = System.nanoTime() - started;
+            queryWorkersTerminated &= referenceOutcome.queryWorkerTerminated;
             if (referenceOutcome.result.status() == ExperimentStatus.COMPLETED
+                    || referenceOutcome.result.status() == ExperimentStatus.CERTIFIED_COMPLETE
                     || referenceOutcome.result.status() == ExperimentStatus.NO_FEASIBLE_PATH) {
                 referenceProfile = referenceOutcome.result.profile();
             }
@@ -692,6 +757,12 @@ public final class PaceBench {
         }
         System.err.println("run_id=" + runId + " query_id=" + entry.queryId()
                 + " status=" + result.status());
+        if (!queryWorkersTerminated) {
+            System.err.println(
+                    "pace_bench: query worker ignored cancellation; "
+                            + "dataset-reuse execution is unsafe");
+            return QUERY_WORKER_NOT_TERMINATED;
+        }
         return isFailure(result.status()) ? 1 : 0;
     }
 
@@ -724,7 +795,7 @@ public final class PaceBench {
         instrumentation.setTiming("query_total", elapsed);
         return new Execution(
                 result, instrumentation, elapsed,
-                0, 0, 0, -1, -1, -1);
+                0, 0, 0, -1, -1, -1, true);
     }
 
     private static AlgorithmConfig referenceConfig(BenchOptions options, String id) {
@@ -773,6 +844,12 @@ public final class PaceBench {
         AlgorithmResult result = null;
         long memoryLimitBytes = memoryLimitMb * 1024L * 1024L;
         long timeoutNanos = TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        long watchdogNanos = timeoutNanos;
+        if (timeoutSeconds > 0
+                && (algorithm.id().equals("iscope")
+                    || algorithm.id().equals("allfp"))) {
+            watchdogNanos = timeoutNanos + TimeUnit.SECONDS.toNanos(2);
+        }
         while (result == null) {
             long elapsed = System.nanoTime() - started;
             long observedMemory = usedMemory();
@@ -787,7 +864,7 @@ public final class PaceBench {
                         "observed JVM heap exceeded configured per-query memory threshold");
                 break;
             }
-            if (timeoutSeconds > 0 && elapsed >= timeoutNanos) {
+            if (timeoutSeconds > 0 && elapsed >= watchdogNanos) {
                 future.cancel(true);
                 result = failure(ExperimentStatus.TIMEOUT,
                         new TimeoutException("query exceeded " + timeoutSeconds + " seconds"));
@@ -795,7 +872,7 @@ public final class PaceBench {
             }
             long waitNanos = TimeUnit.MILLISECONDS.toNanos(10);
             if (timeoutSeconds > 0) {
-                waitNanos = Math.max(1, Math.min(waitNanos, timeoutNanos - elapsed));
+                waitNanos = Math.max(1, Math.min(waitNanos, watchdogNanos - elapsed));
             }
             try {
                 result = future.get(waitNanos, TimeUnit.NANOSECONDS);
@@ -810,9 +887,11 @@ public final class PaceBench {
             }
         }
         executor.shutdownNow();
+        boolean queryWorkerTerminated;
         try {
-            if (!executor.awaitTermination(
-                    30, TimeUnit.SECONDS)) {
+            queryWorkerTerminated = executor.awaitTermination(
+                    30, TimeUnit.SECONDS);
+            if (!queryWorkerTerminated) {
                 /*
                  * This method runs inside the one-query isolated child whenever
                  * a timeout or memory limit is configured. Preserve and
@@ -851,7 +930,8 @@ public final class PaceBench {
                 Math.max(peakMemory, endMemory),
                 startRss,
                 endRss,
-                peakRss);
+                peakRss,
+                queryWorkerTerminated);
     }
 
     private static AlgorithmResult classify(Throwable failure) {
@@ -926,7 +1006,10 @@ public final class PaceBench {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("status_code", result.status().name());
         status.put("completed", result.status() == ExperimentStatus.COMPLETED
-                || result.status() == ExperimentStatus.NO_FEASIBLE_PATH);
+                || result.status() == ExperimentStatus.CERTIFIED_COMPLETE
+                || result.status() == ExperimentStatus.NO_FEASIBLE_PATH
+                || result.status() == ExperimentStatus.TIME_CAPPED_NOT_CERTIFIED
+                || result.status() == ExperimentStatus.PATH_CAPPED_NOT_CERTIFIED);
         status.put("execution_policy", executionPolicy(options.algorithm));
         status.put("exactness_scope", result.exactnessScope().name());
         status.put(
@@ -938,22 +1021,18 @@ public final class PaceBench {
                         "cap_triggered", List.of()));
         status.put(
                 "partial_output_policy",
-                options.algorithm.equals("pace-x")
-                        ? "FAIL_CLOSED"
-                        : options.algorithm.equals("pace-b")
-                            ? "DETERMINISTIC_RETAINED_FRONTIER"
-                            : null);
+                switch (options.algorithm) {
+                    case "pace-x" -> "FAIL_CLOSED";
+                    case "pace-b" -> "DETERMINISTIC_RETAINED_FRONTIER";
+                    case "iscope" -> "ANYTIME_VALIDATED_ENVELOPE";
+                    case "allfp" -> "FASTEST_FUNCTIONAL_ENVELOPE";
+                    default -> null;
+                });
         status.put(
                 "certificate_conditions",
                 result.exactnessScope()
                         == ExactnessScope.GLOBAL_CERTIFIED
-                        ? List.of(
-                                "PACE_X",
-                                "UNBOUNDED_CONNECTORS",
-                                "UNBOUNDED_FRONTIERS",
-                                "ALL_SCORE_PIVOTS",
-                                "THETA_COVERS_SELECTED_PIVOTS",
-                                "NO_CAP_REACHED")
+                        ? certificateConditions(options.algorithm)
                         : List.of());
         status.put("reference_available", referenceAvailable);
         status.put("output_verified", verified);
@@ -980,7 +1059,10 @@ public final class PaceBench {
         Map<String, Object> counters = nullMap(COUNTERS);
         counters.putAll(outcome.instrumentation.counters());
         counters.put("envelope_cells", result.profile() == null ? null : result.profile().segments().size());
-        result.scalars().forEach(counters::putIfAbsent);
+        // Algorithm-result scalars are the authoritative logical-query view.
+        // This matters for allFP budget projections, whose measured search
+        // counters are copied but whose reuse markers intentionally differ.
+        result.scalars().forEach(counters::put);
         top.put("counters", counters);
         top.put("output", ProfileSupport.output(result));
         top.put("quality", quality);
@@ -1010,6 +1092,8 @@ public final class PaceBench {
             case "pl-exact" -> "PROFILE_LABELING";
             case "rpq" -> "SAMPLED_LEFT_CLOSED_RIGHT_OPEN";
             case "ksp-profile" -> "EXACT_OVER_RETAINED_K_PATHS";
+            case "iscope" -> "ANYTIME_STREAMING_INTERVAL_PROFILE";
+            case "allfp" -> "CONTINUOUS_FUNCTIONAL_ALL_FASTEST_PATHS";
             default -> "REDUCED_OUTPUT_EVALUATION_PROFILE";
         });
         result.put("preprocessing_accounting", "EXCLUDED");
@@ -1047,11 +1131,13 @@ public final class PaceBench {
         result.put("timeout_seconds", options.timeoutSeconds);
         result.put("memory_limit_bytes", options.memoryLimitMb == 0 ? null : options.memoryLimitMb * 1024L * 1024L);
         result.put("max_enumerated_paths", switch (options.algorithm) {
-            case "exh-profile", "ksp-profile", "interval-best" -> options.maxEnumeratedPaths;
+            case "exh-profile", "ksp-profile", "interval-best", "iscope" -> options.maxEnumeratedPaths;
             default -> null;
         });
-        result.put("max_labels", options.algorithm.equals("pl-exact") ? options.maxLabels : null);
-        result.put("max_expansions", options.algorithm.equals("pl-exact") ? options.maxExpansions : null);
+        result.put("max_labels", options.algorithm.equals("pl-exact")
+                || options.algorithm.equals("allfp") ? options.maxLabels : null);
+        result.put("max_expansions", options.algorithm.equals("pl-exact")
+                || options.algorithm.equals("allfp") ? options.maxExpansions : null);
         result.put("max_frontier_fragments", options.algorithm.startsWith("pace")
                 ? options.maxFrontierFragments : null);
         result.put("anchor_decomposition_enabled", pace == null ? false : pace.theta() > 0);
@@ -1074,7 +1160,10 @@ public final class PaceBench {
         result.put("single_fastest_lower_bound_witness_enabled",
                 pace != null
                         && pace.singleFastestLowerBoundWitnessEnabled());
-        result.put("temporal_replay_contract", pace == null ? null
+        result.put("temporal_replay_contract",
+                options.algorithm.equals("iscope") || options.algorithm.equals("allfp")
+                        ? "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1"
+                        : pace == null ? null
                 : pace.singleFastestLowerBoundWitnessEnabled()
                         ? "DECLARED_DEPARTURE_GRID_LINEARIZED-v1"
                         : "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1");
@@ -1084,7 +1173,11 @@ public final class PaceBench {
                 : pace.features().profileCacheEnabled());
         result.put("score_upper_bound_enabled", pace == null ? false
                 : pace.features().scoreUpperBoundEnabled());
-        result.put("parallel_enabled", pace != null && pace.threadCount() > 1);
+        result.put("parallel_enabled",
+                pace != null
+                        ? pace.threadCount() > 1
+                        : options.algorithm.equals("allfp")
+                                && options.threads > 1);
         result.put("exhaustive_connectors", options.algorithm.equals("pace-x"));
         // Anchor retention is not a certificate that theta covers every feasible anchor sequence.
         result.put("exhaustive_anchors", null);
@@ -1142,7 +1235,32 @@ public final class PaceBench {
         return switch (algorithm) {
             case "pace-x" -> "PACE_X";
             case "pace-b" -> "PACE_B";
+            case "iscope" -> "ISCOPE_ANYTIME";
+            case "allfp" -> "ALLFP_FUNCTIONAL";
             default -> null;
+        };
+    }
+
+    private static List<String> certificateConditions(String algorithm) {
+        return switch (algorithm) {
+            case "pace-x" -> List.of(
+                    "PACE_X",
+                    "UNBOUNDED_CONNECTORS",
+                    "UNBOUNDED_FRONTIERS",
+                    "ALL_SCORE_PIVOTS",
+                    "THETA_COVERS_SELECTED_PIVOTS",
+                    "NO_CAP_REACHED");
+            case "iscope" -> List.of(
+                    "EXHAUSTIVE_LOOPLESS_PATH_ENUMERATION",
+                    "EXACT_FULL_WINDOW_PATH_PROFILES",
+                    "SCORE_MAXIMIZING_FEASIBLE_ENVELOPE",
+                    "NO_CAP_REACHED");
+            case "allfp" -> List.of(
+                    "CONTINUOUS_FUNCTIONAL_A_STAR",
+                    "ADMISSIBLE_REVERSE_MIN_EDGE_LOWER_BOUND",
+                    "LOWER_BORDER_OR_QUEUE_EXHAUSTION_PROOF",
+                    "NO_CAP_REACHED");
+            default -> List.of();
         };
     }
 
@@ -1534,7 +1652,64 @@ public final class PaceBench {
     }
 
     private static boolean isFailure(ExperimentStatus status) {
-        return status != ExperimentStatus.COMPLETED && status != ExperimentStatus.NO_FEASIBLE_PATH;
+        return status != ExperimentStatus.COMPLETED
+                && status != ExperimentStatus.CERTIFIED_COMPLETE
+                && status != ExperimentStatus.NO_FEASIBLE_PATH
+                && status != ExperimentStatus.TIME_CAPPED_NOT_CERTIFIED
+                && status != ExperimentStatus.PATH_CAPPED_NOT_CERTIFIED;
+    }
+
+    private static AllFpReuseKey allFpReuseKey(
+            BenchOptions options,
+            ExperimentAlgorithm algorithm,
+            QueryManifestEntry entry,
+            boolean warmup,
+            int repetition) {
+        if (!options.sharedPreprocessing
+                || options.internalForcedStatus != null
+                || !algorithm.id().equals("allfp")) {
+            return null;
+        }
+        return new AllFpReuseKey(
+                entry.datasetId(),
+                entry.source(),
+                entry.destination(),
+                entry.intervalStart(),
+                entry.intervalEnd(),
+                warmup,
+                repetition);
+    }
+
+    private static boolean reusableAllFpOutcome(Execution outcome) {
+        return outcome != null
+                && outcome.queryWorkerTerminated()
+                && outcome.result() != null
+                && outcome.result().profile() != null
+                && outcome.result().status() != ExperimentStatus.ERROR
+                && outcome.result().status() != ExperimentStatus.TIMEOUT
+                && outcome.result().status() != ExperimentStatus.OUT_OF_MEMORY;
+    }
+
+    private static Execution copyExecution(
+            Execution source,
+            AlgorithmResult projected) {
+        ExperimentInstrumentation instrumentation =
+                new ExperimentInstrumentation();
+        source.instrumentation().timings()
+                .forEach(instrumentation::setTiming);
+        source.instrumentation().counters()
+                .forEach(instrumentation::addCounter);
+        return new Execution(
+                projected,
+                instrumentation,
+                source.runtime(),
+                source.startMemory(),
+                source.endMemory(),
+                source.peakMemory(),
+                source.startRss(),
+                source.endRss(),
+                source.peakRss(),
+                source.queryWorkerTerminated());
     }
 
     private static long usedMemory() {
@@ -1598,6 +1773,22 @@ public final class PaceBench {
             String temporalAttributeChecksum) {
     }
 
+    private record AllFpReuseKey(
+            String datasetId,
+            int source,
+            int destination,
+            int intervalStart,
+            int intervalEnd,
+            boolean warmup,
+            int repetition) {
+    }
+
+    private record AllFpReusableExecution(
+            Execution execution,
+            String sourceQueryId,
+            double sourceBudget) {
+    }
+
     private record Execution(
             AlgorithmResult result,
             ExperimentInstrumentation instrumentation,
@@ -1607,6 +1798,7 @@ public final class PaceBench {
             long peakMemory,
             long startRss,
             long endRss,
-            long peakRss) {
+            long peakRss,
+            boolean queryWorkerTerminated) {
     }
 }

@@ -27,6 +27,46 @@ SPECS = (
     ("F10", "Robustness across graph and temporal seeds", {"E12"}, ("median_wall_time_ns", "median_score_regret", "completion_rate"), True),
 )
 
+T03_FIVE_SECOND_SPECS = (
+    (
+        "T03A-F1",
+        "T03-A preference-aware runtime, PAR-2, and memory (PACE-B/iSCOPE)",
+        {"T03"},
+        ("median_wall_time_ns", "par2_wall_time_ns", "median_peak_rss_bytes"),
+        True,
+    ),
+    (
+        "T03A-F2",
+        "T03-A valid-profile, timeout, and cap rates",
+        {"T03"},
+        ("valid_profile_rate", "timeout_rate", "time_cap_rate", "path_cap_rate"),
+        False,
+    ),
+    (
+        "T03B-F1",
+        "T03-B allFP preference-free profile reference: travel, score, and runtime",
+        {"T03"},
+        (
+            "median_average_selected_travel_time",
+            "median_average_selected_score",
+            "median_wall_time_ns",
+        ),
+        True,
+    ),
+    (
+        "T03B-F2",
+        "T03 continuous profile coverage, cells, paths, and changes",
+        {"T03"},
+        (
+            "median_feasible_coverage",
+            "median_profile_cells_total",
+            "median_distinct_selected_paths",
+            "median_path_changes",
+        ),
+        True,
+    ),
+)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -40,7 +80,12 @@ def main() -> int:
         raise SystemExit("plots are blocked because result validation did not pass")
     summary = root / "summaries" / "aggregate_records.jsonl"
     outputs = []
-    for figure_id, title, studies, metrics, log_scale in SPECS:
+    specs = (
+        T03_FIVE_SECOND_SPECS
+        if design.get("profile") == "scalability_5s"
+        else SPECS
+    )
+    for figure_id, title, studies, metrics, log_scale in specs:
         sample_only = bool(design.get("smoke"))
         outputs.append(make_figure(
             summary, root / "figures",

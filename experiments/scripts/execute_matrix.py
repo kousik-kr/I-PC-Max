@@ -16,7 +16,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from experiments.scripts.common.atomic_io import atomic_write_text, write_jsonl
-from experiments.scripts.common.config import load_design, repo_path
+from experiments.scripts.common.config import (
+    algorithm_timeout_seconds,
+    load_design,
+    repo_path,
+)
 from experiments.scripts.common.hashing import sha256_json
 from experiments.scripts.common.status import CompletionStatus
 from experiments.scripts.common.toolchain import environment, executable
@@ -26,7 +30,10 @@ from experiments.scripts.executors.slurm import submit, write_array_script
 
 JAVA_STATUS = {
     "COMPLETED": CompletionStatus.SUCCESS.value,
+    "CERTIFIED_COMPLETE": CompletionStatus.SUCCESS.value,
     "NO_FEASIBLE_PATH": CompletionStatus.SUCCESS.value,
+    "TIME_CAPPED_NOT_CERTIFIED": CompletionStatus.TIME_CAPPED_NOT_CERTIFIED.value,
+    "PATH_CAPPED_NOT_CERTIFIED": CompletionStatus.PATH_CAPPED_NOT_CERTIFIED.value,
     "TIMEOUT": CompletionStatus.TIMEOUT.value,
     "OUT_OF_MEMORY": CompletionStatus.OUT_OF_MEMORY.value,
     "LIMIT_EXCEEDED": CompletionStatus.RESOURCE_LIMIT_EXCEEDED.value,
@@ -37,8 +44,72 @@ JAVA_STATUS = {
 }
 
 
+TIMEOUT_ONLY_POLICY = "TIMEOUT_ONLY_EXCLUDE_FROM_COMPARISON"
+
+
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _job_timeout_seconds(job: dict[str, Any], design: dict[str, Any]) -> int:
+    return algorithm_timeout_seconds(design, str(job["algorithm_id"]))
+
+
+def _timeout_only_policy(job: dict[str, Any], design: dict[str, Any]) -> bool:
+    policies = design.get("resources", {}).get("timeout_result_policy")
+    return (
+        isinstance(policies, dict)
+        and policies.get(job.get("algorithm_id")) == TIMEOUT_ONLY_POLICY
+    )
+
+
+def _java_deadline_timeout(java_record: dict[str, Any]) -> bool:
+    status = java_record.get("status") or {}
+    status_code = str(status.get("status_code", ""))
+    if status_code == "TIMEOUT":
+        return True
+    if status_code != "TIME_CAPPED_NOT_CERTIFIED":
+        return False
+    return "QUERY_DEADLINE" in set(status.get("cap_triggered") or [])
+
+
+def _timeout_only_error() -> dict[str, str]:
+    return {
+        "type": "TIMED_OUT",
+        "message": "TIMED OUT",
+        "stack_trace_or_context": None,
+        "failing_phase": "query",
+    }
+
+
+def _sanitize_timeout_only_record(
+    job: dict[str, Any],
+    design: dict[str, Any],
+    java_record: dict[str, Any] | None,
+    status: str,
+    error: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
+    if not _timeout_only_policy(job, design):
+        return status, java_record, error
+    if status == CompletionStatus.TIMEOUT.value:
+        return CompletionStatus.TIMEOUT.value, None, _timeout_only_error()
+    if java_record is not None and _java_deadline_timeout(java_record):
+        return CompletionStatus.TIMEOUT.value, None, _timeout_only_error()
+    return status, java_record, error
+
+
+def _record_exit_code(
+    java_record: dict[str, Any] | None,
+    status: str,
+    default: int,
+) -> int:
+    if isinstance(java_record, dict):
+        value = (java_record.get("status") or {}).get("exit_code")
+        if isinstance(value, int):
+            return value
+    if status == CompletionStatus.TIMEOUT.value:
+        return 124
+    return default
 
 
 def _query_row(job: dict[str, Any]) -> dict[str, Any]:
@@ -201,7 +272,7 @@ def _command(
         "--experiment-name", f"{job['study_id']}:{job['job_id']}",
         "--repetitions", "1", "--warmup-runs", "0",
         "--threads", str(parameters.pop("threads", 1)),
-        "--timeout-seconds", str(resources["timeout_seconds"]),
+        "--timeout-seconds", str(_job_timeout_seconds(job, design)),
         "--preprocessing-timeout-seconds", str(preprocessing_timeout),
         "--memory-limit-mb", str(memory),
         "--seed", str(design.get("seeds", {}).get("schedule", 20260725)),
@@ -270,7 +341,7 @@ def execute_one(job: dict[str, Any], design: dict[str, Any], run_id: str, backen
         resources = design["resources"]
         timeout = (
             int(resources.get("preprocessing_timeout_seconds", 1800))
-            + int(resources["timeout_seconds"])
+            + _job_timeout_seconds(job, design)
             + 90
         )
         completed = subprocess.run(
@@ -299,6 +370,9 @@ def execute_one(job: dict[str, Any], design: dict[str, Any], run_id: str, backen
         error = {"type": type(failure).__name__, "message": str(failure)}
         atomic_write_text(stdout_path, "")
         atomic_write_text(stderr_path, str(failure) + "\n")
+    status, java_record, error = _sanitize_timeout_only_record(
+        job, design, java_record, status, error
+    )
     record = {
         "schema_version": 1,
         "metric_definition_version": design["protocol"]["metric_definition_version"],
@@ -311,7 +385,7 @@ def execute_one(job: dict[str, Any], design: dict[str, Any], run_id: str, backen
         "timestamp_start_utc": started,
         "timestamp_end_utc": datetime.now(timezone.utc).isoformat(),
         "completion_status": status,
-        "exit_code": return_code,
+        "exit_code": _record_exit_code(java_record, status, return_code),
         "stdout_path": stdout_path.relative_to(repo_path(".")).as_posix(),
         "stderr_path": stderr_path.relative_to(repo_path(".")).as_posix(),
         "java_record": java_record,
@@ -356,7 +430,11 @@ def _batch_key(job: dict[str, Any]) -> str:
 
 def _manifest_rows_for_group(
     jobs: list[dict[str, Any]], design: dict[str, Any]
-) -> tuple[list[dict[str, Any]], dict[tuple[str, int], dict[str, Any]], int]:
+) -> tuple[
+    list[dict[str, Any]],
+    dict[tuple[str, int], dict[str, Any]],
+    tuple[int, ...],
+]:
     manifest = repo_path(jobs[0]["manifest"])
     rows = read_jsonl(manifest)
     by_query_id = {row.get("query_id"): row for row in rows}
@@ -394,13 +472,33 @@ def _manifest_rows_for_group(
             )
     if not expected_trials:
         raise ValueError("batched group has no trials")
-    repetitions = len(expected_trials)
-    if expected_trials != set(range(repetitions)):
-        raise ValueError(
-            "batched trial IDs must be contiguous from zero: "
-            + str(sorted(expected_trials))
+    trial_ids = tuple(sorted(expected_trials))
+    return [by_query_id[query_id] for query_id in query_ids], job_lookup, trial_ids
+
+
+def _uniform_trial_groups(
+    jobs: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Partition one batch key by each query's remaining trial signature."""
+    by_query: dict[str, list[dict[str, Any]]] = collections.OrderedDict()
+    for job in jobs:
+        by_query.setdefault(str(job["query_id"]), []).append(job)
+    by_signature: dict[tuple[int, ...], list[dict[str, Any]]] = (
+        collections.OrderedDict()
+    )
+    for query_jobs in by_query.values():
+        signature = tuple(sorted(int(job["trial_id"]) for job in query_jobs))
+        by_signature.setdefault(signature, []).extend(query_jobs)
+    return [
+        (
+            sha256_json({
+                "base_batch_key": _batch_key(group[0]),
+                "remaining_trial_ids": signature,
+            }),
+            group,
         )
-    return [by_query_id[query_id] for query_id in query_ids], job_lookup, repetitions
+        for signature, group in by_signature.items()
+    ]
 
 
 def _java_timestamp(value: Any) -> str:
@@ -479,6 +577,9 @@ def _materialize_batch_records(
             status = JAVA_STATUS.get(
                 str(java_status), CompletionStatus.INTERNAL_ERROR.value
             )
+            status, stored_java_record, error = _sanitize_timeout_only_record(
+                job, design, java_record, status, None
+            )
             timestamp = _java_timestamp(
                 (java_record.get("run") or {}).get("timestamp_utc")
             )
@@ -495,13 +596,14 @@ def _materialize_batch_records(
                 "timestamp_start_utc": timestamp,
                 "timestamp_end_utc": timestamp,
                 "completion_status": status,
-                "exit_code": int(
-                    (java_record.get("status") or {}).get("exit_code", 1)
+                "exit_code": _record_exit_code(
+                    stored_java_record, status,
+                    int((java_record.get("status") or {}).get("exit_code", 1)),
                 ),
                 "stdout_path": _record_path(stdout_path),
                 "stderr_path": _record_path(stderr_path),
-                "java_record": java_record,
-                "error": None,
+                "java_record": stored_java_record,
+                "error": error,
             }
             write_jsonl(raw_path, [record])
             materialized.append({
@@ -522,9 +624,13 @@ def execute_batched(
     if backend != "local":
         raise ValueError("shared preprocessing currently requires the local backend")
     run_root = repo_path(design["paths"]["results_root"]) / run_id
-    groups: dict[str, list[dict[str, Any]]] = collections.OrderedDict()
+    base_groups: dict[str, list[dict[str, Any]]] = collections.OrderedDict()
     for job in jobs:
-        groups.setdefault(_batch_key(job), []).append(job)
+        base_groups.setdefault(_batch_key(job), []).append(job)
+    groups: dict[str, list[dict[str, Any]]] = collections.OrderedDict()
+    for base_jobs in base_groups.values():
+        for group_hash, group_jobs in _uniform_trial_groups(base_jobs):
+            groups[group_hash] = group_jobs
     all_results: list[dict[str, Any]] = []
     for group_hash, group_jobs in groups.items():
         group_id = group_hash[:24]
@@ -535,7 +641,7 @@ def execute_batched(
         stdout_path = run_root / "logs" / f"batch-{group_id}.stdout.log"
         stderr_path = run_root / "logs" / f"batch-{group_id}.stderr.log"
         stdout_path.parent.mkdir(parents=True, exist_ok=True)
-        query_rows, job_lookup, repetitions = _manifest_rows_for_group(
+        query_rows, job_lookup, trial_ids = _manifest_rows_for_group(
             group_jobs, design
         )
         write_jsonl(query_file, query_rows)
@@ -557,14 +663,18 @@ def execute_batched(
                 representative, design, run_root,
                 query_file, java_output,
             )
-            _replace_option(command, "--repetitions", str(repetitions))
+            _replace_option(command, "--repetitions", str(max(trial_ids) + 1))
+            command.extend([
+                "--repetition-indices",
+                ",".join(str(value) for value in trial_ids),
+            ])
             _replace_option(
                 command,
                 "--experiment-name",
                 f"{representative['study_id']}:batch:{group_id}",
             )
             command.extend([
-                "--shared-preprocessing", "--fail-fast", "--resume",
+                "--shared-preprocessing", "--resume",
             ])
             before = sum(
                 1
@@ -631,6 +741,58 @@ def execute_batched(
     return results
 
 
+def dry_run_commands(
+    jobs: list[dict[str, Any]],
+    design: dict[str, Any],
+    run_id: str,
+) -> list[list[str]]:
+    """Build normalized commands without creating work, logs, or raw records."""
+    run_root = repo_path(design["paths"]["results_root"]) / run_id
+    if not design.get("protocol", {}).get("shared_preprocessing"):
+        return [
+            _command(
+                job,
+                design,
+                run_root,
+                run_root / "work/dry-run" / f"{job['job_id']}.queries.jsonl",
+                run_root / "work/dry-run" / f"{job['job_id']}.results.jsonl",
+            )
+            for job in jobs
+        ]
+    base_groups: dict[str, list[dict[str, Any]]] = collections.OrderedDict()
+    for job in jobs:
+        base_groups.setdefault(_batch_key(job), []).append(job)
+    groups: dict[str, list[dict[str, Any]]] = collections.OrderedDict()
+    for base_jobs in base_groups.values():
+        for group_hash, group_jobs in _uniform_trial_groups(base_jobs):
+            groups[group_hash] = group_jobs
+    commands: list[list[str]] = []
+    for group_hash, group_jobs in groups.items():
+        group_id = group_hash[:24]
+        representative = group_jobs[0]
+        work = run_root / "work" / f"batch-{group_id}"
+        command = _command(
+            representative,
+            design,
+            run_root,
+            work / "queries.jsonl",
+            work / "java-results.jsonl",
+        )
+        trial_ids = sorted({int(job["trial_id"]) for job in group_jobs})
+        _replace_option(command, "--repetitions", str(max(trial_ids) + 1))
+        command.extend([
+            "--repetition-indices", ",".join(str(value) for value in trial_ids),
+        ])
+        _replace_option(
+            command,
+            "--experiment-name",
+            f"{representative['study_id']}:batch:{group_id}",
+        )
+        command.extend(["--shared-preprocessing", "--resume"])
+        commands.append(command)
+    return commands
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -640,6 +802,11 @@ def main() -> int:
     parser.add_argument("--max-concurrent", type=int, default=1)
     parser.add_argument("--job-index", type=int)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print normalized commands without writing or launching jobs",
+    )
     parser.add_argument("--submit", action="store_true")
     args = parser.parse_args()
     try:
@@ -648,6 +815,15 @@ def main() -> int:
         jobs = read_jsonl(matrix)
         if args.job_index is not None:
             jobs = [jobs[args.job_index]]
+        if args.dry_run:
+            commands = dry_run_commands(jobs, design, args.run_id)
+            print(json.dumps({
+                "dry_run": True,
+                "would_execute": False,
+                "jobs": len(jobs),
+                "commands": commands,
+            }, indent=2))
+            return 0
         if args.backend == "slurm":
             memory = design["resources"].get("memory_limit_mb")
             if memory is None:
@@ -659,11 +835,18 @@ def main() -> int:
             )
             print(submit(script) if args.submit else script)
             return 0
-        results = run_jobs(
-            jobs,
-            lambda job: execute_one(job, design, args.run_id, "local"),
-            args.max_concurrent,
-        )
+        if design.get("protocol", {}).get("shared_preprocessing"):
+            if args.max_concurrent != 1:
+                raise ValueError(
+                    "shared preprocessing requires --max-concurrent 1"
+                )
+            results = execute_batched(jobs, design, args.run_id, "local")
+        else:
+            results = run_jobs(
+                jobs,
+                lambda job: execute_one(job, design, args.run_id, "local"),
+                args.max_concurrent,
+            )
         print(json.dumps({"jobs": len(results), "results": results}, indent=2))
         infrastructure = {CompletionStatus.INVALID_INPUT.value, CompletionStatus.INTERNAL_ERROR.value, CompletionStatus.INFRASTRUCTURE_BLOCKED.value}
         return 1 if any(item["completion_status"] in infrastructure for item in results) else 0

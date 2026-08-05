@@ -15,6 +15,19 @@ PACE exposes two execution policies:
 `IPCMax` remains as a deprecated compatibility facade and delegates to the same PACE
 implementation.
 
+The experiment CLI also exposes two five-second T03 methods:
+
+- `iscope` streams loopless complete paths into exact full-window profiling and
+  maintains an anytime score-maximizing feasible envelope. It is distinct from the
+  legacy single-result `interval-best` baseline.
+- `allfp` implements continuous functional Time-Interval All Fastest Paths. It
+  reuses one measured search across rho-only budget variants; stable
+  outgoing-edge composition can use the configured per-query thread limit. Its
+  search and envelope ignore preference score and the PC-Max budget; score is
+  attached only for post-hoc analysis.
+
+The old `rpq` and `interval-best` IDs remain readable for historical manifests.
+
 ## Model
 
 Edge arrival functions are continuous, nondecreasing, and piecewise linear. Edge scores

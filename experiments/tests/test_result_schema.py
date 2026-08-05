@@ -9,7 +9,8 @@ class ResultStatusTest(unittest.TestCase):
             {
                 "SUCCESS", "TIMEOUT", "OUT_OF_MEMORY", "FUNCTION_HORIZON_EXCEEDED",
                 "RESOURCE_LIMIT_EXCEEDED", "INVALID_INPUT", "INTERNAL_ERROR",
-                "INFRASTRUCTURE_BLOCKED",
+                "INFRASTRUCTURE_BLOCKED", "TIME_CAPPED_NOT_CERTIFIED",
+                "PATH_CAPPED_NOT_CERTIFIED",
             },
             set(TERMINAL_STATUSES),
         )

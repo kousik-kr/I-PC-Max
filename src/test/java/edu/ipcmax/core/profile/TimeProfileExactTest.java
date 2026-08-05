@@ -2,10 +2,12 @@ package edu.ipcmax.core.profile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.concurrent.CancellationException;
 
 import org.junit.jupiter.api.Test;
 
@@ -37,6 +39,43 @@ class TimeProfileExactTest {
         for (double time = 0; time <= 5; time += 0.125) {
             assertEquals(outer.valueAt(inner.valueAt(time)), composed.valueAt(time), 1e-9);
         }
+    }
+
+    @Test
+    void cancellableCompositionAvoidsAnEmptyUnsupportedProfile() {
+        TimeProfile inner = new TimeProfile(
+                Domain.closed(0, 5), time -> time + 10, "inner");
+        TimeProfile unsupportedOuter = new TimeProfile(
+                Domain.closed(0, 5), time -> time + 1, "outer");
+
+        assertNull(inner.composeOrNull(
+                unsupportedOuter, "empty", () -> false));
+        assertThrows(CancellationException.class,
+                () -> inner.composeOrNull(
+                        unsupportedOuter, "cancelled", () -> true));
+    }
+
+    @Test
+    void noLaterThanIsExactOnTheRequestedSubdomain() {
+        TimeProfile early = TimeProfile.piecewise(
+                Domain.closed(0, 10),
+                List.of(
+                        new TimeProfile.Breakpoint(0, 1),
+                        new TimeProfile.Breakpoint(5, 6),
+                        new TimeProfile.Breakpoint(10, 11)),
+                "early");
+        TimeProfile late = TimeProfile.piecewise(
+                Domain.closed(0, 10),
+                List.of(
+                        new TimeProfile.Breakpoint(0, 2),
+                        new TimeProfile.Breakpoint(5, 7),
+                        new TimeProfile.Breakpoint(10, 12)),
+                "late");
+
+        assertTrue(early.noLaterThan(late, Domain.closed(2, 8)));
+        assertFalse(late.noLaterThan(early, Domain.closed(2, 8)));
+        assertFalse(early.noLaterThan(
+                late, Domain.closed(2, 12)));
     }
 
     @Test

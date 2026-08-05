@@ -71,6 +71,85 @@ extractor, manifest reader, result writer, and matrix scheduler. PACE-X and PACE
 forward-layered scalable engine by default; the former recursive engine is available only through
 `--pace-engine legacy` for fixture diagnostics. Ablations are feature switches on PACE-B.
 
+## Revised T03 five-second continuation
+
+The revised main scalability matrix is defined by
+`configs/paper_q1_server_24c_250g_5s.yaml` and
+`configs/studies/t03_scalability_main_5s.yaml`. It contains only NY, FLA, and CAL and compares
+`pace-b`, `iscope` (iSCOPE), and `allfp` (allFP): 45,000 logical jobs per method and 135,000 total. allFP is independent of rho, so its 45,000 matched reporting rows comprise 9,000 measured fastest-profile searches plus 36,000 post-hoc budget projections; query execution remains serial and each measured allFP search may use at most 24 internal workers.
+PACE-X remains in the separate exactness/certification track. Historical `rpq` and
+`interval-best` rows remain immutable and identifiable, but those methods are not scheduled by
+the revised T03 matrix.
+
+New five-second continuation runs use the isolated
+`target/pace-bench-5s-optimized.jar`; the historical v6 JAR and the live
+`target/pace-bench.jar` are not replaced.
+Planning and reconciliation read historical raw ledgers without
+modifying them. Reconciliation reuses an old PACE-B row only when its full semantic identity,
+runtime, completion status, checksum, exact-profile contract, feasibility evidence, and
+looplessness evidence pass the fail-closed audit.
+Shared-preprocessing batches retain the loaded graph after terminal timeout/cap
+rows; those rows do not trigger fail-fast dataset reloads. A failed process still
+leaves its materialized records append-safe and can be resumed.
+iSCOPE uses canonical budget-constrained replay without a query-local anchor index;
+anchors are irrelevant to its streamed loopless-path enumeration and score envelope.
+
+```sh
+# Plan and reconcile only; no algorithm is launched.
+python3 experiments/scripts/run_all.py \
+  --config experiments/configs/paper_q1_server_24c_250g_5s.yaml \
+  --run-id pace_q1_t03_5s_optimized_20260805_v8 \
+  --backend local --study T03 --max-concurrent 1 --plan-only --resume \
+  --reuse-preflight experiments/results/pace_q1_scalability_shared_aggressive_10s_20260802d/provenance/preflight.json
+
+python3 experiments/scripts/reconcile_pace_b_5s.py \
+  --config experiments/configs/paper_q1_server_24c_250g_5s.yaml \
+  --matrix experiments/results/pace_q1_t03_5s_optimized_20260805_v8/plan/matrices/t03.jsonl \
+  --source-run experiments/results/pace_q1_scalability_fb_witness_grid_10s_20260803c \
+  --output experiments/results/pace_q1_t03_5s_optimized_20260805_v8/plan/reconciliation \
+  --validate-only
+
+# Byte-validate the deterministic 90-job stratified pilot.
+python3 experiments/scripts/prepare_t03_5s_pilot.py \
+  --execution-manifest experiments/results/pace_q1_t03_5s_optimized_20260805_v8/plan/reconciliation/execution_manifest.jsonl \
+  --output experiments/results/pace_q1_t03_5s_optimized_20260805_v8/plan/pilot \
+  --validate-only
+
+# Print normalized JVM commands without writing or launching jobs.
+python3 experiments/scripts/execute_matrix.py \
+  --config experiments/configs/paper_q1_server_24c_250g_5s.yaml \
+  --run-id pace_q1_t03_5s_optimized_20260805_v8 \
+  --matrix experiments/results/pace_q1_t03_5s_optimized_20260805_v8/plan/pilot/pilot_manifest.jsonl \
+  --backend local --max-concurrent 1 --dry-run
+
+# Report method-specific effective progress without changing the run.
+python3 experiments/scripts/t03_5s_progress.py \
+  --run-root experiments/results/pace_q1_t03_5s_optimized_20260805_v8
+
+# After pilot execution, audit the 90 matched terminal records.
+python3 experiments/scripts/audit_t03_5s_pilot.py \
+  --pilot-manifest experiments/results/pace_q1_t03_5s_optimized_20260805_v8/plan/pilot/pilot_manifest.jsonl \
+  --raw-root experiments/results/pace_q1_t03_5s_optimized_20260805_v8/raw/T03 \
+  --output experiments/results/pace_q1_t03_5s_optimized_20260805_v8/plan/pilot/pilot_audit.json
+
+# Independent, duplicate-aware progress by algorithm.
+python3 experiments/scripts/t03_5s_progress.py \
+  --run-root experiments/results/pace_q1_t03_5s_optimized_20260805_v8 \
+  --output experiments/results/pace_q1_t03_5s_optimized_20260805_v8/provenance/progress.json
+
+# After explicit authorization and a passing pilot, resume the full matrix.
+python3 experiments/scripts/run_all.py \
+  --config experiments/configs/paper_q1_server_24c_250g_5s.yaml \
+  --run-id pace_q1_t03_5s_optimized_20260805_v8 \
+  --backend local --stages main --study T03 --max-concurrent 1 --resume \
+  --reuse-preflight experiments/results/pace_q1_scalability_shared_aggressive_10s_20260802d/provenance/preflight.json
+```
+
+The implementation and operational rationale, including the distinct T03-A preference comparison
+and T03-B fastest-profile reference analysis, are documented in
+`../docs/PACE_T03_FIVE_SECOND_CONTINUATION.md` and
+`../docs/ALLFP_ICDE2006_DESIGN_NOTE.md`.
+
 ## Requirements and build
 
 Use JDK 21+, Maven 3.9+, Python 3.10+, and a POSIX shell (Git Bash or WSL on Windows). PyYAML and
@@ -95,9 +174,11 @@ seven-method smoke matrix. `make validate-results RESULT_INPUT=results/raw/smoke
 
 ## Algorithms and ablations
 
-Stable algorithm identifiers are `pace-x`, `pace-b`, `exh-profile`, `pl-exact`, `rpq`,
-`ksp-profile`, and `interval-best`. Paper labels RPQ-1/5/15 use `--rpq-step-minutes 1/5/15`;
-KSP-Profile-k uses `--baseline-k k`.
+Stable algorithm identifiers are `pace-x`, `pace-b`, `iscope`, `allfp`, `exh-profile`,
+`pl-exact`, `rpq`, `ksp-profile`, and `interval-best`. iSCOPE is an anytime preference-aware
+multi-path interval profile; allFP is a preference-free continuous fastest-path-profile reference.
+Neither is an alias for `interval-best`. Paper labels RPQ-1/5/15 use
+`--rpq-step-minutes 1/5/15`; KSP-Profile-k uses `--baseline-k k`.
 
 The final E10 PACE-B variants are `none`, `no-safe-corridor`,
 `no-pivot-diversification`, `fast-only-connector`, `no-connector-cache`,
@@ -174,7 +255,8 @@ for the configured memory ceiling, preserves the worker's formal record, and syn
 TIMEOUT/OUT_OF_MEMORY/ERROR record if the worker is terminated before it can serialize one. A
 single failed query therefore cannot leave computation running inside later matrix jobs.
 
-Online query time excludes shared dataset loading/lower-bound setup and includes algorithm-specific
+Online query time excludes shared dataset loading and immutable query-independent lower-bound
+weights, but includes destination-specific lower-bound search and all algorithm-specific
 per-query work. Shared preprocessing is reported separately as `preprocessing_total`. Quality
 comparison is interval based; a missing candidate path receives score zero under the nonnegative
 score model and feasibility disagreement is reported separately.
@@ -182,9 +264,10 @@ score model and feasibility disagreement is reported separately.
 ## Configurations and output layout
 
 `configs/` provides smoke, exactness, main comparison, L/K/theta sensitivity, scalability, main and
-appendix ablations, and parallelism matrices. `run_matrix.py --dry-run` prints normalized commands;
-`--resume` skips completed run IDs; `--only-failed` uses the scheduler log; every process receives a
-dedicated log. Raw data goes under `results/raw`, profiles under `results/profiles`, summaries under
+appendix ablations, and parallelism matrices. `execute_matrix.py --dry-run` prints normalized
+commands without launching or writing work; `--resume` skips canonical records already present and
+every process receives a dedicated log. Raw data goes under `results/raw`, profiles under
+`results/profiles`, summaries under
 `results/summaries`, logs under `results/logs`, and generated manifests under `results/manifests`.
 Large result directories are ignored by Git.
 

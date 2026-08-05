@@ -14,6 +14,14 @@ from experiments.scripts.common.hashing import sha256_file
 
 
 COLORS = ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9")
+PAPER_LABELS = {
+    "pace-b": "PACE-B",
+    "pace-x": "PACE-X",
+    "iscope": "iSCOPE",
+    "allfp": "allFP",
+    "interval-best": "interval-best (legacy)",
+    "rpq": "RPQ (historical)",
+}
 
 
 def _png(width: int, height: int, bars: list[tuple[int, int, int, int, tuple[int, int, int]]]) -> bytes:
@@ -106,7 +114,11 @@ def make_figure(
         maxima[name] = max(transformed, default=1.0) or 1.0
     for row in selected:
         axis = row.get("axis_json", "{}")
-        base = f"{row.get('dataset_id')}/{row.get('variant_id') or row.get('algorithm_id')}"
+        algorithm = row.get("algorithm_id")
+        base = f"{row.get('dataset_id')}/{PAPER_LABELS.get(algorithm, algorithm)}"
+        variant = row.get("variant_id")
+        if row.get("study_id") != "T03" and variant and variant != algorithm:
+            base += f"/{variant}"
         if axis != "{}":
             base += f"/{axis}"
         for name in metrics:

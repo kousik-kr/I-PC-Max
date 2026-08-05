@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 from pathlib import Path
+import statistics
 import sys
 from typing import Any
 
@@ -58,6 +59,40 @@ def _aggregate_rows(aggregates: list[dict[str, Any]], studies: set[str], fields:
     return [{field: row.get(field) for field in fields} for row in aggregates if row["study_id"] in studies]
 
 
+def _matched_summary(
+    rows: list[dict[str, Any]], metrics: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        key = (
+            str(row.get("dataset_id")),
+            str(row.get("method")),
+            str(row.get("reference")),
+            str(row.get("axis_json")),
+        )
+        grouped.setdefault(key, []).append(row)
+    output: list[dict[str, Any]] = []
+    for key, values in sorted(grouped.items()):
+        result: dict[str, Any] = {
+            "dataset_id": key[0],
+            "method": key[1],
+            "reference": key[2],
+            "axis_json": key[3],
+            "paired_query_units": len(values),
+        }
+        for metric in metrics:
+            samples = [
+                float(row[metric])
+                for row in values
+                if isinstance(row.get(metric), (int, float))
+            ]
+            result[f"median_{metric}"] = (
+                statistics.median(samples) if samples else None
+            )
+        output.append(result)
+    return output
+
+
 def _smoke_sample(
     rows: list[dict[str, Any]],
     aggregates: list[dict[str, Any]],
@@ -94,7 +129,9 @@ def main() -> int:
     preflight = json.loads((root / "provenance" / "preflight.json").read_text(encoding="utf-8"))
     counts = json.loads((root / "plan" / "matrices" / "matrix_counts.json").read_text(encoding="utf-8"))
     planned = []
-    for path in sorted((root / "plan" / "matrices").glob("e*.jsonl")):
+    for path in sorted((root / "plan" / "matrices").glob("[et]*.jsonl")):
+        if path.name == "canonical_job_ledger.jsonl":
+            continue
         planned.extend(
             json.loads(line)
             for line in path.read_text(encoding="utf-8").splitlines()
@@ -250,10 +287,89 @@ def main() -> int:
         common + ["graph_seed", "median_wall_time_ns"],
         {"E12"}, smoke,
     )
+    if design.get("profile") == "scalability_5s":
+        TITLES["T7"] = (
+            "T03-A preference-aware scalability: PACE-B versus iSCOPE"
+        )
+        TITLES["T8"] = (
+            "T03-B preference-free allFP reference and matched-query outcomes"
+        )
+        t7 = [
+            {
+                field: row.get(field)
+                for field in (
+                    "dataset_id", "algorithm_id", "axis_json", "planned",
+                    "valid_profile_rate", "certified_completion_rate",
+                    "time_cap_rate", "path_cap_rate", "timeout_rate",
+                    "median_wall_time_ns", "par2_wall_time_ns",
+                    "median_peak_rss_bytes", "median_feasible_coverage",
+                    "median_average_selected_score",
+                )
+            }
+            for row in aggregates
+            if row.get("study_id") == "T03"
+            and row.get("algorithm_id") in {"pace-b", "iscope"}
+        ]
+        t8 = [
+            {
+                field: row.get(field)
+                for field in (
+                    "dataset_id", "algorithm_id", "axis_json",
+                    "median_average_selected_travel_time",
+                    "median_average_selected_score", "median_wall_time_ns",
+                    "median_feasible_coverage", "median_profile_cells_total",
+                    "median_distinct_selected_paths", "median_path_changes",
+                    "exactness_status_counts",
+                )
+            }
+            for row in aggregates
+            if row.get("study_id") == "T03"
+        ]
     for table_id, rows in zip(
         TITLES, (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12)
     ):
         _write(output, table_id, rows)
+    if design.get("profile") == "scalability_5s":
+        t03a_rows = [
+            json.loads(line)
+            for line in (root / "summaries" / "t03_preference_aware.jsonl")
+                .read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        t03b_rows = [
+            json.loads(line)
+            for line in (
+                root / "summaries" / "t03_preference_free_reference.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        TITLES["T13"] = "T03-A matched-query PACE-B versus iSCOPE"
+        TITLES["T14"] = (
+            "T03-B matched-query score gain and travel-time detour relative "
+            "to preference-free allFP"
+        )
+        _write(
+            output,
+            "T13",
+            _matched_summary(
+                t03a_rows,
+                ("runtime_ratio", "average_score_difference",
+                 "coverage_difference"),
+            ),
+        )
+        _write(
+            output,
+            "T14",
+            _matched_summary(
+                t03b_rows,
+                ("score_gain_over_allfp",
+                 "travel_time_detour_minutes_over_allfp",
+                 "travel_time_detour_fraction_over_allfp",
+                 "runtime_overhead_ratio_over_allfp",
+                 "coverage_difference_over_allfp",
+                 "path_change_difference_over_allfp"),
+            ),
+        )
     macros = [
         f"\\newcommand{{\\PaceRunId}}{{{_escape(args.run_id)}}}",
         f"\\newcommand{{\\PacePlannedJobs}}{{{validation['planned_jobs']}}}",

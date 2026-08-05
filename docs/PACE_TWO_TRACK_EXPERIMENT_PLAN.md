@@ -23,9 +23,12 @@ not silently aliased to USA: missing OL payloads stop preflight.
 * **T02** (`t02_full_network_exact_probe.yaml`): NY/FLA/CAL/OL, 20 evaluation pairs per dataset,
   two centers, rho 0.10 only, PACE-X versus PACE-B. The guard in `common/config.py`,
   `build_matrices.py`, and `execute_matrix.py` rejects PACE-X in every other study.
-* **T03** (`t03_scalability_main.yaml`): NY/FLA/CAL, all 100 evaluation pairs and both centers,
-  PACE-B (24 query-internal threads) plus RPQ and IntervalBest. The declared window/budget Cartesian product is derived from
-  the study axes (120/180/240/300/360 minutes and rho 0.10--0.50); no endpoints are resampled.
+* **T03**: the historical ten-second source matrix
+  (`t03_scalability_main.yaml`) retains PACE-B, RPQ, and IntervalBest provenance.
+  The revised five-second continuation (`t03_scalability_main_5s.yaml`) uses the
+  matched PACE-B, iSCOPE, and allFP matrix on NY/FLA/CAL. It is deliberately loaded
+  by the T03-only `paper_q1_server_24c_250g_5s.yaml`, so the cap cannot affect T01/T02
+  PACE-X. See `docs/PACE_T03_FIVE_SECOND_CONTINUATION.md`.
 * **T04** (`t04_ablation_small_budget.yaml`): NY only, small-budget component ablations, score
   density 5/10/20/40% and graph seeds 42/43/44.
 * **T05** (`t05_theta_sensitivity.yaml`): NY theta 1/2/3 small-budget sensitivity. The fixed

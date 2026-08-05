@@ -29,7 +29,14 @@ from experiments.scripts.executors.local import run_jobs
 from experiments.scripts.executors.slurm import submit, write_array_script
 from experiments.scripts.generate_queries import validate_all
 from experiments.scripts.package_release import package
-from experiments.scripts.preflight import run_preflight
+from experiments.scripts.preflight import (
+    inspect_implementation_gates,
+    run_preflight,
+)
+from experiments.scripts.reconcile_pace_b_5s import (
+    _write as write_pace_b_reconciliation,
+    reconcile as reconcile_pace_b,
+)
 from experiments.scripts.resolve_pace_b import resolve
 from experiments.scripts.summarize_results import summarize
 from experiments.scripts.validate_results import validate, validate_planned_cells
@@ -96,7 +103,27 @@ def _execute_studies(
     studies: tuple[str, ...], max_concurrent: int,
 ) -> dict[str, Any]:
     selected = []
+    reconciliation_manifest = (
+        root / "plan" / "reconciliation" / "execution_manifest.jsonl"
+    )
+    if studies == ("T03",) and design.get("reconciliation", {}).get("required"):
+        if not reconciliation_manifest.is_file():
+            raise ValueError(
+                "five-second T03 requires plan/reconciliation/execution_manifest.jsonl"
+            )
+        selected = read_jsonl(reconciliation_manifest)
+        forbidden = {
+            job.get("algorithm_id")
+            for job in selected
+        } - {"pace-b", "iscope", "allfp"}
+        if forbidden:
+            raise ValueError(
+                "reconciled T03 contains forbidden algorithms: "
+                + ", ".join(sorted(str(value) for value in forbidden))
+            )
     for study in studies:
+        if selected:
+            break
         path = root / "plan" / "matrices" / f"{study.lower()}.jsonl"
         if path.is_file():
             selected.extend(read_jsonl(path))
@@ -137,6 +164,26 @@ def _execute_studies(
     if infrastructure:
         raise RuntimeError(f"{infrastructure} jobs ended in an infrastructure/input failure")
     return {"jobs": len(results), "status_counts": counts}
+
+
+def _prepare_reconciliation(
+    design: dict[str, Any], root: Path
+) -> dict[str, Any] | None:
+    settings = design.get("reconciliation", {})
+    if not settings.get("required"):
+        return None
+    matrix = root / "plan" / "matrices" / "t03.jsonl"
+    source_roots = [
+        repo_path(design["paths"]["results_root"]) / str(run_id)
+        for run_id in settings.get("source_run_ids", [])
+    ]
+    if not source_roots:
+        raise ValueError("five-second reconciliation has no source run IDs")
+    result = reconcile_pace_b(design, matrix, source_roots)
+    write_pace_b_reconciliation(
+        root / "plan" / "reconciliation", *result
+    )
+    return result[3]
 
 
 def _parse_stages(value: str) -> list[str]:
@@ -181,8 +228,51 @@ def _load_reused_preflight(path: Path, design: dict[str, Any]) -> dict[str, Any]
         raise ValueError(
             "reused preflight dataset set does not match the filtered design"
         )
+    _require_unchanged_preflight_payloads(path, design)
+    current_gates = inspect_implementation_gates(design)
+    if not current_gates["passed"]:
+        raise ValueError(
+            "current implementation gates do not pass: "
+            + "; ".join(current_gates["blockers"])
+        )
+    source_resources = report.get("resources")
+    source_gates = report.get("implementation_gates")
+    report["evidence_source_config_hash"] = report.get("config_hash")
+    report["config_hash"] = design["config_hash"]
+    report["evidence_source_resources"] = source_resources
+    report["evidence_source_implementation_gates"] = source_gates
+    report["resources"] = dict(design["resources"])
+    report["implementation_gates"] = current_gates
+    report["reuse_scope"] = (
+        "unchanged dataset/query/checksum evidence; current implementation "
+        "gates re-evaluated from isolated test reports; current execution "
+        "resources reapplied"
+    )
     report["reused_from"] = path.as_posix()
     return report
+
+
+def _require_unchanged_preflight_payloads(
+    evidence_path: Path,
+    design: dict[str, Any],
+) -> None:
+    """Fail closed if a validated graph payload is newer than its evidence."""
+    cutoff = evidence_path.stat().st_mtime_ns
+    required = {
+        "edges_static.csv.gz",
+        "nodes.csv.gz",
+        "manifest.json",
+        "score_functions.jsonl.gz",
+        "travel_time_functions.jsonl.gz",
+    }
+    for dataset in design["datasets"]:
+        root = repo_path(design["dataset_definitions"][dataset]["path"])
+        for payload in root.rglob("*"):
+            if payload.name in required and payload.stat().st_mtime_ns > cutoff:
+                raise ValueError(
+                    "dataset payload changed after reusable preflight evidence: "
+                    f"{payload}"
+                )
 
 
 def _preflight_scope_matches(
@@ -192,7 +282,9 @@ def _preflight_scope_matches(
     if (
         report.get("mode") != "deep"
         or not report.get("checksums_computed")
-        or report.get("resources") != design.get("resources")
+        or not _preflight_resources_compatible(
+            report.get("resources"), design.get("resources")
+        )
     ):
         return False
     integrity_rows = {
@@ -240,18 +332,29 @@ def _preflight_scope_matches(
             or query.get("checksum") != sha256_file(query_path)
         ):
             return False
-    configured_gates = {
-        name for name, enabled in design.get("implementation_gates", {}).items()
-        if enabled is True
+    return inspect_implementation_gates(design)["passed"]
+
+
+def _preflight_resources_compatible(
+    evidence: Any,
+    requested: Any,
+) -> bool:
+    """Dataset/query evidence is independent of query/watchdog durations."""
+    if not isinstance(evidence, dict) or not isinstance(requested, dict):
+        return False
+    ignored = {
+        "timeout_seconds",
+        "preprocessing_timeout_seconds",
+        "algorithm_timeout_seconds",
+        "timeout_result_policy",
     }
-    passed_gates = {
-        row.get("gate")
-        for row in report.get("implementation_gates", {}).get("gates", [])
-        if isinstance(row, dict)
-        and row.get("enabled") is True
-        and not row.get("errors")
+    evidence_stable = {
+        key: value for key, value in evidence.items() if key not in ignored
     }
-    return configured_gates == passed_gates
+    requested_stable = {
+        key: value for key, value in requested.items() if key not in ignored
+    }
+    return evidence_stable == requested_stable
 
 
 def main() -> int:
@@ -314,6 +417,13 @@ def main() -> int:
             raise RuntimeError(
                 "independent matrix-cell validation failed"
             )
+        reconciliation_report = _prepare_reconciliation(design, root)
+        if reconciliation_report is not None:
+            plan["reconciliation"] = reconciliation_report
+            atomic_write_json(
+                root / "plan" / "matrices" / "matrix_counts.json",
+                plan,
+            )
         if args.plan_only:
             output = {
                 "run_id": args.run_id,
@@ -342,6 +452,8 @@ def main() -> int:
                 "plan_validation_passed": plan["matrix_validation"]["passed"],
                 "algorithms_started": False,
             }
+            if reconciliation_report is not None:
+                output["reconciliation"] = reconciliation_report
             atomic_write_json(root / "plan" / "PLAN_REPORT.json", output)
             lines = [
                 "# PACE Q1 Plan Report", "",
@@ -381,7 +493,15 @@ def main() -> int:
                     raise RuntimeError("preflight blockers: " + "; ".join(preflight["blockers"]))
                 result = preflight
             elif stage == "build":
-                _run_command(["mvn", "-q", "-DskipTests", "package"])
+                if design["paths"]["jar"] == "target/pace-bench.jar":
+                    _run_command(["mvn", "-q", "-DskipTests", "package"])
+                else:
+                    _run_command([
+                        sys.executable,
+                        "experiments/scripts/build_isolated_jar.py",
+                        "--output",
+                        design["paths"]["jar"],
+                    ])
                 result = {"jar": design["paths"]["jar"]}
             elif stage == "data":
                 result = {"datasets": len(preflight["datasets"]), "passed": preflight["passed"]}
@@ -413,10 +533,18 @@ def main() -> int:
                 result = summarize(root, design)
             elif stage == "plot":
                 _run_command([sys.executable, "experiments/plots/make_all_plots.py", "--config", str(args.config), "--run-id", args.run_id])
-                result = {"figures": 10}
+                result = {
+                    "figures": 4
+                    if design.get("profile") == "scalability_5s"
+                    else 10
+                }
             elif stage == "table":
                 _run_command([sys.executable, "experiments/tables/make_all_tables.py", "--config", str(args.config), "--run-id", args.run_id])
-                result = {"tables": 12}
+                result = {
+                    "tables": 14
+                    if design.get("profile") == "scalability_5s"
+                    else 12
+                }
             elif stage == "package":
                 result = package(root)
             else:

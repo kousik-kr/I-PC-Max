@@ -261,9 +261,21 @@ def inspect_dataset(dataset_id: str, config_path: Path, checksums: bool) -> dict
 
 
 def _surefire_case_passed(class_name: str, case_name: str) -> tuple[bool, str]:
-    report = repo_path("target/surefire-reports") / f"TEST-{class_name}.xml"
+    report_name = f"TEST-{class_name}.xml"
+    candidates = [
+        repo_path("target/pace-bench-5s-optimized-surefire-reports")
+            / report_name,
+        repo_path("target/surefire-reports") / report_name,
+    ]
+    report = next(
+        (candidate for candidate in candidates if candidate.is_file()),
+        candidates[0],
+    )
     if not report.is_file():
-        return False, f"missing Maven Surefire report: {report}"
+        return False, (
+            "missing Maven Surefire report: "
+            + " or ".join(str(candidate) for candidate in candidates)
+        )
     try:
         root = ET.parse(report).getroot()
     except ET.ParseError as failure:
@@ -372,6 +384,22 @@ def inspect_implementation_gates(design: dict[str, Any]) -> dict[str, Any]:
             lambda: _surefire_case_passed(
                 "edu.ipcmax.core.pcmax.ScalablePaceCandidateEngineTest",
                 "relaxedScoreRateBoundIsHandComputableAndAdmissible",
+            ),
+        ],
+        "allfp_budget_independent_search_reuse": [
+            lambda: _surefire_case_passed(
+                "edu.ipcmax.experiments.PaceBenchFrameworkTest",
+                "allFpReusesOneMeasuredSearchAcrossBudgetVariants",
+            ),
+        ],
+        "allfp_parallel_functional_composition": [
+            lambda: _surefire_case_passed(
+                "edu.ipcmax.experiments.algorithms.AllFpAlgorithmTest",
+                "parallelCompositionIsDeterministicAndScoringIsPostHoc",
+            ),
+            lambda: _surefire_case_passed(
+                "edu.ipcmax.experiments.algorithms.AllFpAlgorithmTest",
+                "matchesIndependentOracleOnSeededTemporalDags",
             ),
         ],
     }

@@ -54,6 +54,34 @@ class MatrixCountTest(unittest.TestCase):
                 (Path(right) / "e01.jsonl").read_bytes(),
             )
 
+    def test_five_second_t03_has_matched_135000_record_design(self):
+        design = load_design(Path(
+            "experiments/configs/paper_q1_server_24c_250g_5s.yaml"
+        ))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            report = build_all(design, output)
+            rows = [
+                json.loads(line)
+                for line in (output / "t03.jsonl").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+                if line
+            ]
+        counts = {
+            algorithm: sum(
+                row["algorithm_id"] == algorithm for row in rows
+            )
+            for algorithm in ("pace-b", "iscope", "allfp")
+        }
+        self.assertEqual(135000, report["total_jobs"])
+        self.assertEqual(
+            {"pace-b": 45000, "iscope": 45000, "allfp": 45000},
+            counts,
+        )
+        self.assertTrue(report["disk_budget_passed"])
+        self.assertNotIn("pace-x", {row["algorithm_id"] for row in rows})
+
     def test_scalability_plan_has_exact_small_budget_guard(self):
         design = load_design(
             Path("experiments/configs/pace_ny_scalability_theta.yaml")

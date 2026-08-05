@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
@@ -30,6 +31,118 @@ final class SimplePathSearch {
                 visited, new ArrayList<>(), paths, rejected);
         paths.sort(PATH_ORDER);
         return new SearchResult(List.copyOf(paths), rejected[0], false);
+    }
+
+    /** Streams complete loopless paths in deterministic DFS order. */
+    static StreamingSearchResult exhaustiveStreaming(
+            TDGraph graph,
+            int source,
+            int destination,
+            double budget,
+            long maxPaths,
+            BooleanSupplier stopRequested,
+            CompletePathVisitor visitor) {
+        if (maxPaths < 1 || stopRequested == null || visitor == null) {
+            throw new IllegalArgumentException(
+                    "positive path cap, stop predicate, and visitor are required");
+        }
+        LowerBoundGraph lower = new LowerBoundGraph(graph);
+        LowerBoundGraph.Distances toTarget = lower.distancesToTarget(
+                destination, stopRequested);
+        return exhaustiveStreaming(
+                graph, lower, toTarget, source, destination, budget,
+                maxPaths, stopRequested, visitor);
+    }
+
+    /** Streams paths while reusing an already timed query-local lower-bound search. */
+    static StreamingSearchResult exhaustiveStreaming(
+            TDGraph graph,
+            LowerBoundGraph lower,
+            LowerBoundGraph.Distances toTarget,
+            int source,
+            int destination,
+            double budget,
+            long maxPaths,
+            BooleanSupplier stopRequested,
+            CompletePathVisitor visitor) {
+        if (graph == null || lower == null || toTarget == null) {
+            throw new IllegalArgumentException("graph and lower-bound labels are required");
+        }
+        Set<Integer> visited = new HashSet<>();
+        visited.add(source);
+        StreamingState state = new StreamingState();
+        boolean exhausted = dfsStreaming(
+                graph, lower, toTarget, source, destination, budget, 0,
+                maxPaths, visited, new ArrayList<>(), stopRequested,
+                visitor, state);
+        return new StreamingSearchResult(
+                state.completePaths,
+                state.dfsExpansions,
+                state.rejectedLowerBound,
+                exhausted,
+                state.deadlineReached,
+                state.pathCapReached);
+    }
+
+    private static boolean dfsStreaming(
+            TDGraph graph,
+            LowerBoundGraph lower,
+            LowerBoundGraph.Distances toTarget,
+            int node,
+            int destination,
+            double budget,
+            double weight,
+            long maxPaths,
+            Set<Integer> visited,
+            List<Integer> arcs,
+            BooleanSupplier stopRequested,
+            CompletePathVisitor visitor,
+            StreamingState state) {
+        if (stopRequested.getAsBoolean()
+                || Thread.currentThread().isInterrupted()) {
+            state.deadlineReached = true;
+            return false;
+        }
+        if (node == destination) {
+            if (state.completePaths >= maxPaths) {
+                state.pathCapReached = true;
+                return false;
+            }
+            state.completePaths++;
+            return visitor.visit(new WeightedPath(List.copyOf(arcs), weight));
+        }
+        for (Edge edge : graph.outgoingEdges(node)) {
+            if (stopRequested.getAsBoolean()
+                    || Thread.currentThread().isInterrupted()) {
+                state.deadlineReached = true;
+                return false;
+            }
+            state.dfsExpansions++;
+            if (visited.contains(edge.target())) {
+                continue;
+            }
+            double next = Domain.canonicalTime(
+                    weight + lower.weight(edge.arcId()));
+            double remaining = toTarget.distance(edge.target());
+            if (!Double.isFinite(remaining)
+                    || Domain.canonicalTime(next + remaining)
+                            > Domain.canonicalTime(budget)) {
+                state.rejectedLowerBound++;
+                continue;
+            }
+            visited.add(edge.target());
+            arcs.add(edge.arcId());
+            boolean keepGoing = dfsStreaming(
+                    graph, lower, toTarget, edge.target(), destination,
+                    budget, next, maxPaths, visited, arcs,
+                    stopRequested, visitor, state);
+            arcs.remove(arcs.size() - 1);
+            visited.remove(edge.target());
+            if (!keepGoing) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void dfs(
@@ -140,6 +253,29 @@ final class SimplePathSearch {
     }
 
     record SearchResult(List<WeightedPath> paths, long rejectedLowerBound, boolean limitReached) {
+    }
+
+    @FunctionalInterface
+    interface CompletePathVisitor {
+        /** Returns false to stop the DFS after this complete path. */
+        boolean visit(WeightedPath path);
+    }
+
+    record StreamingSearchResult(
+            long completePaths,
+            long dfsExpansions,
+            long rejectedLowerBound,
+            boolean exhausted,
+            boolean deadlineReached,
+            boolean pathCapReached) {
+    }
+
+    private static final class StreamingState {
+        private long completePaths;
+        private long dfsExpansions;
+        private long rejectedLowerBound;
+        private boolean deadlineReached;
+        private boolean pathCapReached;
     }
 
     private record State(

@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
 
@@ -20,6 +21,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.experiments.framework.ProfileSupport;
+import edu.ipcmax.experiments.framework.QueryManifestEntry;
 import edu.ipcmax.experiments.framework.QueryManifestIO;
 
 class PaceBenchFrameworkTest {
@@ -93,6 +95,80 @@ class PaceBenchFrameworkTest {
         resumed[arguments.length] = "--resume";
         assertEquals(0, PaceBench.execute(resumed));
         assertEquals(6, Files.readAllLines(output).size());
+    }
+
+    @Test
+    void allFpReusesOneMeasuredSearchAcrossBudgetVariants() throws Exception {
+        Path manifest = temporary.resolve("allfp-budget-variants.jsonl");
+        QueryManifestEntry low = new QueryManifestEntry(
+                1, "allfp-low", "demo", 1, 4,
+                0, 10, 10, 1.0, 0.0, "tight",
+                0, 0.0, 42L, Map.of());
+        QueryManifestEntry high = new QueryManifestEntry(
+                1, "allfp-high", "demo", 1, 4,
+                0, 10, 10, 100.0, 0.0, "tight",
+                0, 0.0, 43L, Map.of());
+        Files.writeString(
+                manifest,
+                QueryManifestIO.mapper().writeValueAsString(low)
+                        + System.lineSeparator()
+                        + QueryManifestIO.mapper().writeValueAsString(high)
+                        + System.lineSeparator());
+        Path output = temporary.resolve("allfp-budget-results.jsonl");
+
+        assertEquals(0, PaceBench.execute(new String[] {
+                "--algorithm", "allfp", "--dataset", "demo",
+                "--query-file", manifest.toString(),
+                "--output-jsonl", output.toString(),
+                "--experiment-name", "allfp-reuse-test",
+                "--repetitions", "2", "--threads", "4",
+                "--timeout-seconds", "5",
+                "--shared-preprocessing", "--deterministic"
+        }));
+
+        List<JsonNode> rows = Files.readAllLines(output).stream()
+                .map(line -> {
+                    try {
+                        return QueryManifestIO.mapper().readTree(line);
+                    } catch (Exception failure) {
+                        throw new AssertionError(failure);
+                    }
+                }).toList();
+        assertEquals(4, rows.size());
+        for (int repetition = 0; repetition < 2; repetition++) {
+            final int trial = repetition;
+            List<JsonNode> trialRows = rows.stream()
+                    .filter(row -> row.path("run").path("repetition")
+                            .asInt() == trial)
+                    .toList();
+            assertEquals(1L, trialRows.stream()
+                    .mapToLong(row -> row.path("counters")
+                            .path("allfp_search_executed").asLong())
+                    .sum());
+            assertEquals(1L, trialRows.stream()
+                    .mapToLong(row -> row.path("counters")
+                            .path("allfp_budget_variant_reuse_hit").asLong())
+                    .sum());
+            JsonNode projected = trialRows.stream()
+                    .filter(row -> row.path("counters")
+                            .path("allfp_budget_variant_reuse_hit")
+                            .asLong() == 1L)
+                    .findFirst().orElseThrow();
+            assertTrue(projected.path("counters")
+                    .path("allfp_runtime_reused_from_source").asBoolean());
+            assertTrue(projected.path("timing_ns")
+                    .path("allfp_budget_projection").isIntegralNumber());
+            assertEquals(1L, trialRows.stream()
+                    .map(row -> row.path("output")
+                            .path("profile_checksum").asText())
+                    .distinct().count());
+            assertEquals(1L, trialRows.stream()
+                    .mapToLong(row -> row.path("timing_ns")
+                            .path("query_total").asLong())
+                    .distinct().count());
+        }
+        assertTrue(rows.stream().allMatch(row -> row.path("configuration")
+                .path("parallel_enabled").asBoolean()));
     }
 
     @Test

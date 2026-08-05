@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Base64;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
 import edu.ipcmax.experiments.framework.Ablation;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
@@ -23,6 +24,7 @@ final class BenchOptions {
     Path outputCsv;
     String experimentName = "pace-experiment";
     int repetitions = 1;
+    List<Integer> repetitionIndices = List.of();
     int warmupRuns;
     int threads = 1;
     int timeoutSeconds;
@@ -88,6 +90,8 @@ final class BenchOptions {
                 case "--output-csv" -> options.outputCsv = Path.of(value(tokens, ++index, option));
                 case "--experiment-name" -> options.experimentName = value(tokens, ++index, option);
                 case "--repetitions" -> options.repetitions = integer(tokens, ++index, option);
+                case "--repetition-indices" -> options.repetitionIndices =
+                        integerList(tokens, ++index, option);
                 case "--warmup-runs" -> options.warmupRuns = integer(tokens, ++index, option);
                 case "--threads" -> options.threads = integer(tokens, ++index, option);
                 case "--timeout-seconds" -> options.timeoutSeconds = integer(tokens, ++index, option);
@@ -191,6 +195,13 @@ final class BenchOptions {
         if (repetitions < 1 || warmupRuns < 0 || threads < 1 || theta < 0) {
             throw new IllegalArgumentException("repetitions/threads must be positive and theta/warmups nonnegative");
         }
+        if (repetitionIndices.stream().anyMatch(
+                    value -> value < 0 || value >= repetitions)
+                || repetitionIndices.stream().distinct().count()
+                        != repetitionIndices.size()) {
+            throw new IllegalArgumentException(
+                    "--repetition-indices must be unique values in [0,repetitions)");
+        }
         if (timeoutSeconds < 0
                 || preprocessingTimeoutSeconds < 0
                 || memoryLimitMb < 0
@@ -221,6 +232,10 @@ final class BenchOptions {
         }
         if (algorithm.equals("rpq") && rpqStepMinutes < 1) {
             throw new IllegalArgumentException("RPQ requires a positive whole-minute --rpq-step-minutes");
+        }
+        if (algorithm.equals("iscope") && timeoutSeconds != 5) {
+            throw new IllegalArgumentException(
+                    algorithm + " requires the declared five-second --timeout-seconds 5 protocol");
         }
         if (algorithm.equals("ksp-profile") && baselineK < 1) {
             throw new IllegalArgumentException("KSP requires --baseline-k >= 1");
@@ -259,7 +274,10 @@ final class BenchOptions {
                 maxExpansions,
                 maxFrontierFragments,
                 deterministic,
-                seed);
+                seed,
+                timeoutSeconds == 0
+                        ? 0L
+                        : TimeUnit.SECONDS.toNanos(timeoutSeconds));
     }
 
     Map<String, Object> normalized() {
@@ -284,6 +302,8 @@ final class BenchOptions {
         result.put("rpq_step_minutes", rpqStepMinutes == 0 ? null : rpqStepMinutes);
         result.put("baseline_k", baselineK == 0 ? null : baselineK);
         result.put("timeout_seconds", timeoutSeconds);
+        result.put("repetition_indices", repetitionIndices.isEmpty()
+                ? null : repetitionIndices);
         result.put(
                 "preprocessing_timeout_seconds",
                 preprocessingTimeoutSeconds);
@@ -347,5 +367,24 @@ final class BenchOptions {
             throw new IllegalArgumentException(option + " must be a positive whole-minute value");
         }
         return (int) parsed;
+    }
+
+    private static List<Integer> integerList(
+            List<String> tokens,
+            int index,
+            String option) {
+        String raw = value(tokens, index, option);
+        if (raw.isBlank()) {
+            throw new IllegalArgumentException(option + " cannot be empty");
+        }
+        try {
+            return Arrays.stream(raw.split(",", -1))
+                    .map(String::trim)
+                    .map(Integer::parseInt)
+                    .toList();
+        } catch (NumberFormatException failure) {
+            throw new IllegalArgumentException(
+                    option + " must be a comma-separated integer list", failure);
+        }
     }
 }

@@ -25,7 +25,37 @@ public record AlgorithmConfig(
         long maxExpansions,
         int maxFrontierFragments,
         boolean deterministic,
-        long seed) {
+        long seed,
+        long queryTimeLimitNanos) {
+
+    /** Compatibility constructor for callers predating internal query deadlines. */
+    public AlgorithmConfig(
+            String algorithm,
+            Ablation ablation,
+            PaceEngineMode paceEngineMode,
+            int theta,
+            int pivotLimitL,
+            int connectorLimitKc,
+            int frontierLimitKf,
+            long connectorExpansionCapMc,
+            int breakpointCapMb,
+            long queryWorkCapMq,
+            int threads,
+            int rpqStepMinutes,
+            int baselineK,
+            long maxEnumeratedPaths,
+            long maxLabels,
+            long maxExpansions,
+            int maxFrontierFragments,
+            boolean deterministic,
+            long seed) {
+        this(
+                algorithm, ablation, paceEngineMode, theta, pivotLimitL,
+                connectorLimitKc, frontierLimitKf, connectorExpansionCapMc,
+                breakpointCapMb, queryWorkCapMq, threads, rpqStepMinutes,
+                baselineK, maxEnumeratedPaths, maxLabels, maxExpansions,
+                maxFrontierFragments, deterministic, seed, 0L);
+    }
 
     /** Compatibility constructor for the previous shared L/K CLI shape. */
     public AlgorithmConfig(
@@ -62,7 +92,8 @@ public record AlgorithmConfig(
                 maxExpansions,
                 maxFrontierFragments,
                 deterministic,
-                seed);
+                seed,
+                0L);
     }
 
     /** Builds the feature-flagged PACE option object. */
@@ -149,5 +180,13 @@ public record AlgorithmConfig(
     /** Historical shared-K alias, now the frontier K_f. */
     public int k() {
         return frontierLimitKf;
+    }
+
+    /** Configured internal query limit, or the supplied default when absent. */
+    public long queryTimeLimitOr(long defaultNanos) {
+        if (queryTimeLimitNanos < 0 || defaultNanos <= 0) {
+            throw new IllegalArgumentException("query time limits must be nonnegative");
+        }
+        return queryTimeLimitNanos == 0 ? defaultNanos : queryTimeLimitNanos;
     }
 }

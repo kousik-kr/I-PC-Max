@@ -4,6 +4,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
@@ -37,6 +39,22 @@ final class CanonicalPathProfileBuilder {
             double budget,
             int pivotId,
             boolean compressed) {
+        return replay(
+                graph, anchors, arcIds, source, destination, requestedDomain,
+                budget, pivotId, compressed, () -> false);
+    }
+
+    static Optional<CandidateProfile> replay(
+            TDGraph graph,
+            AnchorIndex anchors,
+            List<Integer> arcIds,
+            int source,
+            int destination,
+            Domain requestedDomain,
+            double budget,
+            int pivotId,
+            boolean compressed,
+            BooleanSupplier cancelled) {
         if (anchors == null) {
             throw new IllegalArgumentException("anchor index is required");
         }
@@ -50,7 +68,8 @@ final class CanonicalPathProfileBuilder {
                 requestedDomain,
                 budget,
                 pivotId,
-                compressed);
+                compressed,
+                cancelled);
     }
 
     /**
@@ -68,6 +87,24 @@ final class CanonicalPathProfileBuilder {
             double budget,
             int pivotId,
             boolean compressed) {
+        return replay(
+                graph, queryHorizon, selectedPivotArcIds, arcIds, source,
+                destination, requestedDomain, budget, pivotId, compressed,
+                () -> false);
+    }
+
+    static Optional<CandidateProfile> replay(
+            TDGraph graph,
+            Domain queryHorizon,
+            Set<Integer> selectedPivotArcIds,
+            List<Integer> arcIds,
+            int source,
+            int destination,
+            Domain requestedDomain,
+            double budget,
+            int pivotId,
+            boolean compressed,
+            BooleanSupplier cancelled) {
         if (graph == null
                 || queryHorizon == null
                 || selectedPivotArcIds == null
@@ -110,7 +147,8 @@ final class CanonicalPathProfileBuilder {
                 vertices,
                 edges,
                 explicitAnchorCount,
-                usedPivotArcIds);
+                usedPivotArcIds,
+                cancelled);
     }
 
     /**
@@ -248,6 +286,37 @@ final class CanonicalPathProfileBuilder {
             Set<Integer> edges,
             int initialExplicitAnchorCount,
             Set<Integer> initialUsedPivotArcIds) {
+        return continueReplay(
+                graph, queryHorizon, selectedPivotArcIds, fullArcIds,
+                remainingArcIds, source, initialCurrent, destination,
+                rootDomain, budget, pivotId, compressed, initialArrival,
+                initialScore, vertices, edges, initialExplicitAnchorCount,
+                initialUsedPivotArcIds, () -> false);
+    }
+
+    private static Optional<CandidateProfile> continueReplay(
+            TDGraph graph,
+            Domain queryHorizon,
+            Set<Integer> selectedPivotArcIds,
+            List<Integer> fullArcIds,
+            List<Integer> remainingArcIds,
+            int source,
+            int initialCurrent,
+            int destination,
+            Domain rootDomain,
+            double budget,
+            int pivotId,
+            boolean compressed,
+            TimeProfile initialArrival,
+            ScoreProfile initialScore,
+            Set<Integer> vertices,
+            Set<Integer> edges,
+            int initialExplicitAnchorCount,
+            Set<Integer> initialUsedPivotArcIds,
+            BooleanSupplier cancelled) {
+        if (cancelled == null) {
+            throw new IllegalArgumentException("cancellation predicate is required");
+        }
         int current = initialCurrent;
         int explicitAnchorCount = initialExplicitAnchorCount;
         Set<Integer> usedPivotArcIds =
@@ -258,6 +327,7 @@ final class CanonicalPathProfileBuilder {
                 "canonical_replay_edges", remainingArcIds.size());
 
         for (int arcId : remainingArcIds) {
+            requireActive(cancelled);
             if (arcId < 0 || arcId >= graph.edgeCount()) {
                 throw new IllegalArgumentException("candidate contains unknown arc id: " + arcId);
             }
@@ -312,6 +382,8 @@ final class CanonicalPathProfileBuilder {
             current = edge.target();
         }
 
+        requireActive(cancelled);
+
         if (current != destination) {
             throw new IllegalArgumentException(
                     "candidate path ends at " + current
@@ -337,5 +409,13 @@ final class CanonicalPathProfileBuilder {
                 pivotId,
                 compressed,
                 usedPivotArcIds));
+    }
+
+    private static void requireActive(BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()
+                || Thread.currentThread().isInterrupted()) {
+            throw new CancellationException(
+                    "exact path profiling reached its query deadline");
+        }
     }
 }

@@ -13,7 +13,12 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from experiments.scripts.common.atomic_io import atomic_write_json, write_jsonl
-from experiments.scripts.common.config import filtered_design, load_design, repo_path
+from experiments.scripts.common.config import (
+    algorithm_timeout_seconds,
+    filtered_design,
+    load_design,
+    repo_path,
+)
 from experiments.scripts.common.hashing import (
     canonical_json,
     sha256_file,
@@ -152,6 +157,7 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
     hashes: dict[str, str] = {}
     total = 0
     pace_b_jobs = 0
+    serial_timeout_upper_bound = 0
     all_job_ids: set[str] = set()
     duplicate_job_ids: list[str] = []
     ledger: list[dict[str, Any]] = []
@@ -195,6 +201,10 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
         write_jsonl(path, jobs)
         counts[study["study_id"]] = len(jobs)
         pace_b_jobs += sum(job["algorithm_id"] == "pace-b" for job in jobs)
+        serial_timeout_upper_bound += sum(
+            algorithm_timeout_seconds(design, str(job["algorithm_id"]))
+            for job in jobs
+        )
         hashes[study["study_id"]] = sha256_json(jobs)
         total += len(jobs)
     if duplicate_job_ids:
@@ -206,7 +216,6 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
     ledger_path = output_directory / "canonical_job_ledger.jsonl"
     write_jsonl(ledger_path, ledger)
     resources = design["resources"]
-    timeout_seconds = int(resources["timeout_seconds"])
     max_concurrent = int(resources["max_concurrent"])
     planning = design.get("planning", {})
     bytes_per_job = int(
@@ -251,9 +260,9 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
         "estimated_storage_bytes": total * bytes_per_job + fixed_bytes,
         "estimated_raw_bytes_per_job": bytes_per_job,
         "serial_timeout_upper_bound_seconds":
-            total * timeout_seconds,
+            serial_timeout_upper_bound,
         "configured_parallel_timeout_upper_bound_seconds":
-            math.ceil(total / max_concurrent) * timeout_seconds,
+            math.ceil(serial_timeout_upper_bound / max_concurrent),
         "pace_b_candidate_work_upper_bound":
             pace_b_jobs * query_work_cap,
         "pace_b_jobs": pace_b_jobs,

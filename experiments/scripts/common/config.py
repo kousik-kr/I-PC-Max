@@ -46,6 +46,18 @@ def repo_path(value: str | Path) -> Path:
     return path if path.is_absolute() else REPO_ROOT / path
 
 
+def algorithm_timeout_seconds(
+    design: dict[str, Any],
+    algorithm_id: str,
+) -> int:
+    """Return the effective query timeout for one planned algorithm."""
+    resources = design["resources"]
+    per_algorithm = resources.get("algorithm_timeout_seconds")
+    if isinstance(per_algorithm, dict) and algorithm_id in per_algorithm:
+        return int(per_algorithm[algorithm_id])
+    return int(resources["timeout_seconds"])
+
+
 def _validate_final_q1(
     design: dict[str, Any],
     studies: list[dict[str, Any]],
@@ -215,6 +227,66 @@ def _validate_two_track(
         raise ValueError("PACE-X must use evaluation manifests only")
 
 
+def _validate_scalability_5s(
+    design: dict[str, Any],
+    studies: list[dict[str, Any]],
+) -> None:
+    if set(design["datasets"]) != {"NY", "FLA", "CAL"}:
+        raise ValueError("T03 scalability requires exactly NY, FLA, and CAL")
+    by_id = {study["study_id"]: study for study in studies}
+    if set(by_id) != {"T03"}:
+        raise ValueError(
+            "five-second scalability is a T03-only continuation; "
+            "PACE-X exactness studies must use the unchanged two-track config"
+        )
+    algorithms = [
+        algorithm.get("id")
+        for algorithm in by_id["T03"].get("algorithms", [])
+    ]
+    if algorithms != ["pace-b", "iscope", "allfp"]:
+        raise ValueError(
+            "T03 scalability requires pace-b, iscope, and allfp in that order"
+        )
+    resources = design["resources"]
+    algorithm_timeouts = resources.get("algorithm_timeout_seconds")
+    if not isinstance(algorithm_timeouts, dict):
+        raise ValueError("T03 scalability requires per-algorithm timeouts")
+    expected_timeouts = {"pace-b": 10, "iscope": 5, "allfp": 10}
+    for algorithm, timeout in expected_timeouts.items():
+        if int(algorithm_timeouts.get(algorithm, 0)) != timeout:
+            raise ValueError(
+                f"T03 requires {algorithm} timeout_seconds={timeout}"
+            )
+    timeout_policies = resources.get("timeout_result_policy")
+    if not isinstance(timeout_policies, dict):
+        raise ValueError("T03 scalability requires timeout result policies")
+    expected_policies = {
+        "pace-b": "TIMEOUT_ONLY_EXCLUDE_FROM_COMPARISON",
+        "iscope": "ANYTIME_PROFILE_WITHIN_CAP",
+        "allfp": "TIMEOUT_ONLY_EXCLUDE_FROM_COMPARISON",
+    }
+    for algorithm, policy in expected_policies.items():
+        if timeout_policies.get(algorithm) != policy:
+            raise ValueError(
+                f"T03 timeout result policy mismatch for {algorithm}"
+            )
+    reconciliation = design["reconciliation"]
+    if (
+        int(reconciliation.get("source_timeout_ms", 0)) != 10_000
+        or int(reconciliation.get("new_timeout_ms", 0)) != 10_000
+    ):
+        raise ValueError(
+            "T03 mixed-timeout config must declare the frozen 10s source "
+            "and current 10s PACE-B policy"
+        )
+    if reconciliation.get("pace_b_semantic_version") != design.get(
+        "pace_b_defaults", {}
+    ).get("semantic_version"):
+        raise ValueError("PACE-B reconciliation semantic versions do not match")
+    if design.get("paths", {}).get("jar") == "target/pace-bench.jar":
+        raise ValueError("T03 continuation must not overwrite the historical live JAR")
+
+
 def load_design(path: Path) -> dict[str, Any]:
     path = path.resolve()
     design = load_document(path)
@@ -259,6 +331,8 @@ def load_design(path: Path) -> dict[str, Any]:
             raise ValueError("scalability_pilot requires at least one study")
     elif profile == "two_track":
         expected = {f"T0{index}" for index in range(1, 7)}
+    elif profile == "scalability_5s":
+        expected = {"T03"}
     else:
         expected = {f"E{index:02d}" for index in range(14)}
     if study_ids != expected:
@@ -276,7 +350,9 @@ def load_design(path: Path) -> dict[str, Any]:
             raise ValueError(
                 "query_generation is missing: " + ", ".join(query_missing)
             )
-    if not design.get("smoke", False) and profile == "two_track":
+    if not design.get("smoke", False) and profile == "scalability_5s":
+        _validate_scalability_5s(design, studies)
+    elif not design.get("smoke", False) and profile == "two_track":
         _validate_two_track(design, studies)
     elif not design.get("smoke", False) and profile != "scalability_pilot":
         _validate_final_q1(design, studies)

@@ -8,6 +8,8 @@ import edu.ipcmax.core.profile.TimeProfile;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeSet;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /**
  * Exact temporal-cell construction shared by frontier compression and envelope extraction.
@@ -32,11 +34,29 @@ final class ProfileCellPartition {
             List<CandidateProfile> candidates,
             boolean includeTravelEqualityRoots,
             PaceExecutionMetrics metrics) {
+        return cells(
+                domain,
+                candidates,
+                includeTravelEqualityRoots,
+                metrics,
+                () -> false);
+    }
+
+    static List<Domain.Interval> cells(
+            Domain domain,
+            List<CandidateProfile> candidates,
+            boolean includeTravelEqualityRoots,
+            PaceExecutionMetrics metrics,
+            BooleanSupplier cancelled) {
+        if (cancelled == null) {
+            throw new IllegalArgumentException("cancellation predicate is required");
+        }
         List<Double> cuts;
         try (PaceExecutionMetrics.Timer ignored = metrics.phase(
                 PaceExecutionMetrics.BREAKPOINT_PROCESSING)) {
             cuts = new ArrayList<>(domain.breakpoints());
             for (CandidateProfile candidate : candidates) {
+                requireActive(cancelled);
                 cuts.addAll(candidate.domain().breakpoints());
                 for (TimeProfile.Breakpoint breakpoint :
                         candidate.arrivalProfile().breakpoints()) {
@@ -51,11 +71,13 @@ final class ProfileCellPartition {
                     PaceExecutionMetrics.EQUALITY_ROOTS)) {
                 for (int i = 0; i < candidates.size(); i++) {
                     for (int j = i + 1; j < candidates.size(); j++) {
+                        requireActive(cancelled);
                         metrics.increment("candidate_pair_root_checks");
                         List<Double> roots = travelEqualityBreakpoints(
                                 candidates.get(i),
                                 candidates.get(j),
-                                domain);
+                                domain,
+                                cancelled);
                         metrics.addCounter(
                                 "equality_roots_created", roots.size());
                         cuts.addAll(roots);
@@ -68,6 +90,7 @@ final class ProfileCellPartition {
                 PaceExecutionMetrics.BREAKPOINT_PROCESSING)) {
             result = partition(domain, cuts);
         }
+        requireActive(cancelled);
         metrics.addCounter("temporal_cells_created", result.size());
         return result;
     }
@@ -80,6 +103,15 @@ final class ProfileCellPartition {
             CandidateProfile left,
             CandidateProfile right,
             Domain containingDomain) {
+        return travelEqualityBreakpoints(
+                left, right, containingDomain, () -> false);
+    }
+
+    static List<Double> travelEqualityBreakpoints(
+            CandidateProfile left,
+            CandidateProfile right,
+            Domain containingDomain,
+            BooleanSupplier cancelled) {
         Domain overlap = containingDomain.intersection(left.domain()).intersection(right.domain());
         if (overlap.isEmpty()) {
             return List.of();
@@ -99,6 +131,7 @@ final class ProfileCellPartition {
 
         List<Double> roots = new ArrayList<>();
         for (Domain.Interval cell : partition(overlap, baseCuts)) {
+            requireActive(cancelled);
             if (cell.end() <= cell.start()) {
                 continue;
             }
@@ -126,6 +159,14 @@ final class ProfileCellPartition {
             }
         }
         return uniqueSorted(roots);
+    }
+
+    private static void requireActive(BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()
+                || Thread.currentThread().isInterrupted()) {
+            throw new CancellationException(
+                    "temporal envelope construction reached its query deadline");
+        }
     }
 
     static boolean covers(Domain domain, Domain.Interval cell) {

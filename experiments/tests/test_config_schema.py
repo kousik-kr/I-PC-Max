@@ -2,6 +2,7 @@ from pathlib import Path
 import unittest
 
 from experiments.scripts.common.config import load_design
+from experiments.scripts.run_all import _preflight_resources_compatible
 
 
 class ConfigContractTest(unittest.TestCase):
@@ -43,6 +44,73 @@ class ConfigContractTest(unittest.TestCase):
                 if algorithm["id"] == "pace-b"
                 for axis in algorithm["axes"]
             },
+        )
+
+    def test_mixed_timeout_profile_is_t03_only_and_excludes_exact_algorithms(self):
+        design = load_design(Path(
+            "experiments/configs/paper_q1_server_24c_250g_5s.yaml"
+        ))
+        self.assertEqual("scalability_5s", design["profile"])
+        self.assertEqual(["NY", "FLA", "CAL"], design["datasets"])
+        self.assertEqual(
+            ["T03"],
+            [row["study_id"] for row in design["study_definitions"]],
+        )
+        self.assertEqual(
+            ["pace-b", "iscope", "allfp"],
+            [
+                row["id"]
+                for row in design["study_definitions"][0]["algorithms"]
+            ],
+        )
+        self.assertEqual(10, design["resources"]["timeout_seconds"])
+        self.assertEqual(
+            {"pace-b": 10, "iscope": 5, "allfp": 10},
+            design["resources"]["algorithm_timeout_seconds"],
+        )
+        self.assertEqual(
+            "TIMEOUT_ONLY_EXCLUDE_FROM_COMPARISON",
+            design["resources"]["timeout_result_policy"]["pace-b"],
+        )
+        self.assertEqual(
+            "ANYTIME_PROFILE_WITHIN_CAP",
+            design["resources"]["timeout_result_policy"]["iscope"],
+        )
+        allfp = design["study_definitions"][0]["algorithms"][2]
+        self.assertEqual(24, allfp["parameters"]["threads"])
+        self.assertTrue(design["implementation_gates"][
+            "allfp_budget_independent_search_reuse"
+        ])
+        self.assertNotEqual("target/pace-bench.jar", design["paths"]["jar"])
+
+    def test_deep_data_preflight_can_cross_only_watchdog_duration_change(self):
+        evidence = {
+            "timeout_seconds": 10,
+            "max_concurrent": 1,
+            "memory_limit_mb": 256000,
+        }
+        requested = {
+            "timeout_seconds": 10,
+            "algorithm_timeout_seconds": {
+                "pace-b": 10,
+                "iscope": 5,
+                "allfp": 10,
+            },
+            "timeout_result_policy": {
+                "pace-b": "TIMEOUT_ONLY_EXCLUDE_FROM_COMPARISON",
+                "iscope": "ANYTIME_PROFILE_WITHIN_CAP",
+                "allfp": "TIMEOUT_ONLY_EXCLUDE_FROM_COMPARISON",
+            },
+            "preprocessing_timeout_seconds": 1800,
+            "max_concurrent": 1,
+            "memory_limit_mb": 256000,
+        }
+        self.assertTrue(
+            _preflight_resources_compatible(evidence, requested)
+        )
+        requested["memory_limit_mb"] = 128000
+        self.assertFalse(
+            _preflight_resources_compatible(evidence, requested)
         )
 
 

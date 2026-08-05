@@ -5,6 +5,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
@@ -66,15 +68,33 @@ public final class DenseDijkstraLowerBoundOracle
 
     @Override
     public Labels distancesFrom(int source) {
-        return dijkstra(source, true);
+        return dijkstra(source, true, () -> false);
+    }
+
+    @Override
+    public Labels distancesFrom(
+            int source,
+            BooleanSupplier cancelled) {
+        return dijkstra(source, true, cancelled);
     }
 
     @Override
     public Labels distancesTo(int target) {
-        return dijkstra(target, false);
+        return dijkstra(target, false, () -> false);
     }
 
-    private Labels dijkstra(int start, boolean forward) {
+    @Override
+    public Labels distancesTo(
+            int target,
+            BooleanSupplier cancelled) {
+        return dijkstra(target, false, cancelled);
+    }
+
+    private Labels dijkstra(
+            int start,
+            boolean forward,
+            BooleanSupplier cancelled) {
+        Objects.requireNonNull(cancelled, "cancelled");
         graph.node(start);
         double[] distances = new double[maximumNodeId + 1];
         int[] edgeCounts = new int[maximumNodeId + 1];
@@ -90,7 +110,14 @@ public final class DenseDijkstraLowerBoundOracle
                 distances,
                 edgeCounts);
         queue.addOrDecrease(start);
+        int settled = 0;
         while (!queue.isEmpty()) {
+            if ((settled++ & 1023) == 0
+                    && (cancelled.getAsBoolean()
+                        || Thread.currentThread().isInterrupted())) {
+                throw new CancellationException(
+                        "dense lower-bound search reached its query deadline");
+            }
             int labelNode = queue.removeMinimum();
             double labelDistance = distances[labelNode];
             int labelEdgeCount = edgeCounts[labelNode];

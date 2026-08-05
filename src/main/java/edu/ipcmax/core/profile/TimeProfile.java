@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 import java.util.function.DoubleUnaryOperator;
 
 import edu.ipcmax.core.function.Domain;
@@ -197,7 +199,18 @@ public final class TimeProfile {
      * {@code target}. Flat segments yield interval preimages.
      */
     public Domain preimage(Domain target, Domain rootDomain) {
+        return preimage(target, rootDomain, () -> false);
+    }
+
+    /** Cancellation-aware exact preimage used by bounded compositions. */
+    public Domain preimage(
+            Domain target,
+            Domain rootDomain,
+            BooleanSupplier cancelled) {
         Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(rootDomain, "rootDomain");
+        Objects.requireNonNull(cancelled, "cancelled");
+        requireCompositionActive(cancelled);
         TemporalProfileWork.increment("temporal_preimage_calls");
         Domain restricted = domain.intersection(rootDomain);
         if (restricted.isEmpty() || target.isEmpty()) {
@@ -206,6 +219,7 @@ public final class TimeProfile {
 
         Domain result = Domain.empty();
         for (LinearSegment segment : segments(restricted)) {
+            requireCompositionActive(cancelled);
             result = result.union(preimageOfSegment(segment, target));
         }
         return result;
@@ -242,15 +256,39 @@ public final class TimeProfile {
      * Composes {@code outer(this(t))} exactly.
      */
     public TimeProfile compose(TimeProfile outer, String composedFingerprint) {
-        Objects.requireNonNull(outer, "outer");
-        TemporalProfileWork.increment("temporal_compose_calls");
-        Domain composedDomain = preimage(outer.domain, domain);
-        if (composedDomain.isEmpty()) {
+        TimeProfile result = composeOrNull(
+                outer, composedFingerprint, () -> false);
+        if (result == null) {
             throw new IllegalArgumentException("composition domain is empty");
+        }
+        return result;
+    }
+
+    /**
+     * Composes exactly while returning {@code null} for an empty preimage.
+     *
+     * <p>This keeps callers from computing the same temporal preimage once to
+     * test support and a second time inside {@link #compose}. Cancellation is
+     * checked throughout breakpoint propagation.</p>
+     */
+    public TimeProfile composeOrNull(
+            TimeProfile outer,
+            String composedFingerprint,
+            BooleanSupplier cancelled) {
+        Objects.requireNonNull(outer, "outer");
+        Objects.requireNonNull(composedFingerprint, "composedFingerprint");
+        Objects.requireNonNull(cancelled, "cancelled");
+        requireCompositionActive(cancelled);
+        TemporalProfileWork.increment("temporal_compose_calls");
+        Domain composedDomain = preimage(
+                outer.domain, domain, cancelled);
+        if (composedDomain.isEmpty()) {
+            return null;
         }
 
         List<Breakpoint> composed = new ArrayList<>();
         for (Domain.Interval component : composedDomain.intervals()) {
+            requireCompositionActive(cancelled);
             List<Double> cuts = new ArrayList<>();
             cuts.add(component.start());
             for (Breakpoint innerBreakpoint : breakpoints) {
@@ -260,9 +298,11 @@ public final class TimeProfile {
                 }
             }
             for (Breakpoint outerBreakpoint : outer.breakpoints) {
+                requireCompositionActive(cancelled);
                 Domain roots = preimage(
                         Domain.closed(outerBreakpoint.minute(), outerBreakpoint.minute()),
-                        Domain.of(component));
+                        Domain.of(component),
+                        cancelled);
                 for (double root : roots.breakpoints()) {
                     if (root > component.start() && root < component.end()) {
                         addCut(cuts, root);
@@ -272,11 +312,50 @@ public final class TimeProfile {
             cuts.add(component.end());
             cuts.sort(Double::compare);
             for (double cut : cuts) {
+                requireCompositionActive(cancelled);
                 double innerValue = evaluateUnchecked(cut);
                 addBreakpoint(composed, new Breakpoint(cut, outer.evaluateUnchecked(innerValue)));
             }
         }
         return new TimeProfile(composedDomain, composed, composedFingerprint);
+    }
+
+    /** Exact pointwise no-later-than test over a covered root domain. */
+    public boolean noLaterThan(
+            TimeProfile other,
+            Domain rootDomain) {
+        Objects.requireNonNull(other, "other");
+        Objects.requireNonNull(rootDomain, "rootDomain");
+        if (!rootDomain.difference(domain).isEmpty()
+                || !rootDomain.difference(other.domain).isEmpty()) {
+            return false;
+        }
+        List<Double> cuts = new ArrayList<>(rootDomain.breakpoints());
+        breakpoints.stream()
+                .map(Breakpoint::minute)
+                .filter(rootDomain::contains)
+                .forEach(point -> addCut(cuts, point));
+        other.breakpoints.stream()
+                .map(Breakpoint::minute)
+                .filter(rootDomain::contains)
+                .forEach(point -> addCut(cuts, point));
+        cuts.sort(Double::compare);
+        for (double cut : cuts) {
+            if (Domain.canonicalTime(
+                    valueAtClosure(cut) - other.valueAtClosure(cut)) > 0.0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void requireCompositionActive(
+            BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()
+                || Thread.currentThread().isInterrupted()) {
+            throw new CancellationException(
+                    "temporal composition reached its query deadline");
+        }
     }
 
     /**

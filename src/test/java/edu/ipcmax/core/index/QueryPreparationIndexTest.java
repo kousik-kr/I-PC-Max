@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.CancellationException;
 
 import org.junit.jupiter.api.Test;
 
@@ -141,6 +142,17 @@ class QueryPreparationIndexTest {
                         denseTo.witnessPath(other));
             }
         }
+    }
+
+    @Test
+    void denseLowerBoundSearchHonorsCancellation() {
+        TDGraph graph = graph(List.of(zero(), zero(), zero(), zero()));
+        LowerBoundOracle dense = new DenseDijkstraLowerBoundOracle(graph);
+
+        assertThrows(CancellationException.class,
+                () -> dense.distancesTo(4, () -> true));
+        assertThrows(CancellationException.class,
+                () -> dense.distancesFrom(1, () -> true));
     }
 
     @Test

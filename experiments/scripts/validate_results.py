@@ -140,6 +140,11 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     deterministic: dict[tuple[Any, ...], set[str]] = collections.defaultdict(set)
     thread_determinism: dict[tuple[Any, ...], set[str]] = collections.defaultdict(set)
     exact_checksums: dict[tuple[str, str], dict[str, str]] = collections.defaultdict(dict)
+    valid_profile_statuses = {
+        "SUCCESS",
+        "TIME_CAPPED_NOT_CERTIFIED",
+        "PATH_CAPPED_NOT_CERTIFIED",
+    }
     for job_id, group in by_job.items():
         record = group[0]
         plan = plans.get(job_id)
@@ -150,8 +155,8 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         if record.get("completion_status") not in TERMINAL_STATUSES:
             errors.append(f"invalid terminal status for {job_id}")
         java = record.get("java_record")
-        if record.get("completion_status") == "SUCCESS" and not isinstance(java, dict):
-            errors.append(f"successful job {job_id} has no Java terminal record")
+        if record.get("completion_status") in valid_profile_statuses and not isinstance(java, dict):
+            errors.append(f"valid-profile job {job_id} has no Java terminal record")
             continue
         if not isinstance(java, dict):
             continue
@@ -174,12 +179,33 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         exactness = status.get("exactness_scope")
         if algorithm == "pace-b" and exactness == "GLOBAL_CERTIFIED":
             errors.append(f"PACE-B is globally certified in {job_id}")
+        if status.get("status_code") in {
+            "TIME_CAPPED_NOT_CERTIFIED", "PATH_CAPPED_NOT_CERTIFIED"
+        } and exactness != "NOT_CERTIFIED":
+            errors.append(f"capped result is certified in {job_id}")
         if algorithm == "pace-x" and status.get("status_code") in {"LIMIT_EXCEEDED", "TIMEOUT", "OUT_OF_MEMORY"}:
             if status.get("completed") or exactness == "GLOBAL_CERTIFIED":
                 errors.append(f"resource-limited PACE-X is marked completed/exact in {job_id}")
         checksum = output.get("profile_checksum")
-        if record.get("completion_status") == "SUCCESS" and not checksum:
-            errors.append(f"successful job {job_id} has no output checksum")
+        if record.get("completion_status") in valid_profile_statuses and not checksum:
+            errors.append(f"valid-profile job {job_id} has no output checksum")
+        if algorithm in {"pace-b", "iscope", "allfp"} and checksum:
+            if counters.get("output_validation_contract") != (
+                "CANONICAL_EXACT_PROFILE_AND_VERTEX_SIMPLE-v1"
+            ):
+                errors.append(f"{job_id} lacks the exact output validation contract")
+            if counters.get("output_loopless") is not True:
+                errors.append(f"{job_id} lacks validated looplessness evidence")
+        if algorithm == "allfp":
+            if counters.get("preference_score_used_for_search") is not False:
+                errors.append(f"allFP used preference score in {job_id}")
+            if counters.get("pcmax_budget_used_for_search") is not False:
+                errors.append(f"allFP used the PC-Max budget in {job_id}")
+            if (
+                status.get("status_code") == "CERTIFIED_COMPLETE"
+                and counters.get("full_interval_coverage") is not True
+            ):
+                errors.append(f"certified allFP lacks full coverage in {job_id}")
         if checksum:
             semantic = (plan["study_id"], plan["dataset_id"], plan["query_id"], plan["algorithm_id"], plan["variant_id"], json.dumps(plan["axis"], sort_keys=True))
             deterministic[semantic].add(checksum)

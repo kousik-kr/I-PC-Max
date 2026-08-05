@@ -18,6 +18,7 @@ public record AlgorithmResult(
         Objects.requireNonNull(exactnessScope, "exactnessScope");
         if (exactnessScope == ExactnessScope.GLOBAL_CERTIFIED
                 && status != ExperimentStatus.COMPLETED
+                && status != ExperimentStatus.CERTIFIED_COMPLETE
                 && status != ExperimentStatus.NO_FEASIBLE_PATH) {
             exactnessScope = ExactnessScope.NOT_CERTIFIED;
         }

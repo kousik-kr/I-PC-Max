@@ -8,6 +8,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LowerBoundGraphTest {
     @Test
+    void queryTimedConstructionHonorsCancellation() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1)
+                .node(2)
+                .edge(1, 2, 1)
+                .build();
+
+        assertThrows(
+                java.util.concurrent.CancellationException.class,
+                () -> new LowerBoundGraph(graph, () -> true));
+    }
+
+    @Test
     void distancesToTargetUseMinimumEdgeWeights() {
         TDGraph graph = new TinyGraphBuilder()
                 .node(1)

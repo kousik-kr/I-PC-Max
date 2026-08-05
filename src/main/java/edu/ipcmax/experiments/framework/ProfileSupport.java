@@ -56,6 +56,7 @@ public final class ProfileSupport {
         double total = measure(profile.domain());
         double feasible = 0;
         double integratedScore = 0;
+        double integratedTravelTime = 0;
         int bestScore = 0;
         int paths = 0;
         int pathChanges = 0;
@@ -67,6 +68,18 @@ public final class ProfileSupport {
             if (segment.found()) {
                 feasible += length;
                 distinct.add(segment.path().arcIds().toString());
+                if (length > 0) {
+                    double startTravel = segment.candidate()
+                            .arrivalProfile().valueAtClosure(
+                                    segment.interval().start())
+                            - segment.interval().start();
+                    double endTravel = segment.candidate()
+                            .arrivalProfile().valueAtClosure(
+                                    segment.interval().end())
+                            - segment.interval().end();
+                    integratedTravelTime += length
+                            * (startTravel + endTravel) / 2.0;
+                }
                 for (var piece : segment.candidate().scoreProfile().intervals()) {
                     double overlap = Math.max(0, Math.min(segment.interval().end(), piece.endMinute())
                             - Math.max(segment.interval().start(), piece.startMinute()));
@@ -100,6 +113,8 @@ public final class ProfileSupport {
                 ? null : total / profile.segments().size());
         output.put("minimum_interval_length", Double.isFinite(min) ? min : 0.0);
         output.put("average_selected_score", feasible == 0 ? null : integratedScore / feasible);
+        output.put("average_selected_travel_time",
+                feasible == 0 ? null : integratedTravelTime / feasible);
         output.put("best_selected_score", paths == 0 ? null : bestScore);
         output.put("selected_departure_time", result.scalars().get("selected_departure_time"));
         output.put("selected_path_id", result.scalars().get("selected_path_id"));
@@ -115,6 +130,7 @@ public final class ProfileSupport {
                 "feasible_coverage_fraction", "elementary_envelope_cells", "final_profile_intervals",
                 "distinct_selected_paths", "path_changes", "average_interval_length",
                 "minimum_interval_length", "average_selected_score", "best_selected_score",
+                "average_selected_travel_time",
                 "selected_departure_time", "selected_path_id",
                 "selected_score", "selected_travel_time", "profile_checksum", "profile_file")) {
             output.put(name, null);

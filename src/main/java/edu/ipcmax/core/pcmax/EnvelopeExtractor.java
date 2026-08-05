@@ -7,6 +7,8 @@ import edu.ipcmax.core.profile.PathPointer;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /**
  * Exact retained-frontier PACE envelope extraction.
@@ -29,11 +31,21 @@ public final class EnvelopeExtractor {
             CandidateSet frontier,
             Domain rootDomain,
             PaceExecutionMetrics metrics) {
+        return extract(frontier, rootDomain, metrics, () -> false);
+    }
+
+    /** Cancellation-aware exact extraction for query-deadline algorithms. */
+    public static EnvelopeProfile extract(
+            CandidateSet frontier,
+            Domain rootDomain,
+            PaceExecutionMetrics metrics,
+            BooleanSupplier cancelled) {
         if (frontier == null || rootDomain == null || rootDomain.isEmpty()) {
             throw new IllegalArgumentException("frontier and non-empty root domain are required");
         }
         List<CandidateProfile> candidates = frontier.candidates();
         for (CandidateProfile candidate : candidates) {
+            requireActive(cancelled);
             requireExactContinuousMetadata(candidate);
         }
 
@@ -43,12 +55,15 @@ public final class EnvelopeExtractor {
                                 rootDomain,
                                 candidates,
                                 true,
-                                metrics)
+                                metrics,
+                                cancelled)
                         : frontier.temporalCells();
         List<EnvelopeSegment> raw = new ArrayList<>();
         for (Domain.Interval cell : cells) {
-            raw.addAll(assignCellExactly(candidates, cell));
+            requireActive(cancelled);
+            raw.addAll(assignCellExactly(candidates, cell, cancelled));
         }
+        requireActive(cancelled);
         return new EnvelopeProfile(rootDomain, mergeAdjacentAssignments(raw));
     }
 
@@ -109,7 +124,9 @@ public final class EnvelopeExtractor {
 
     private static List<EnvelopeSegment> assignCellExactly(
             List<CandidateProfile> candidates,
-            Domain.Interval cell) {
+            Domain.Interval cell,
+            BooleanSupplier cancelled) {
+        requireActive(cancelled);
         if (cell.start() == cell.end()) {
             return List.of(new EnvelopeSegment(cell, bestCandidateAtPoint(candidates, cell.start())));
         }
@@ -143,6 +160,17 @@ public final class EnvelopeExtractor {
                     new Domain.Interval(cell.end(), cell.end()), end));
         }
         return result;
+    }
+
+    private static void requireActive(BooleanSupplier cancelled) {
+        if (cancelled == null) {
+            throw new IllegalArgumentException("cancellation predicate is required");
+        }
+        if (cancelled.getAsBoolean()
+                || Thread.currentThread().isInterrupted()) {
+            throw new CancellationException(
+                    "score envelope construction reached its query deadline");
+        }
     }
 
     private static List<EnvelopeSegment> mergeAdjacentAssignments(List<EnvelopeSegment> raw) {

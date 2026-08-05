@@ -9,6 +9,7 @@ import edu.ipcmax.core.pcmax.PaceCompletion;
 import edu.ipcmax.core.pcmax.PaceExactnessScope;
 import edu.ipcmax.core.pcmax.PaceExecutionMetrics;
 import edu.ipcmax.core.pcmax.QuerySpec;
+import edu.ipcmax.core.validate.LooplessChecker;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
 import edu.ipcmax.experiments.framework.ExactnessScope;
@@ -116,6 +117,16 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
         scalars.put("selected_pivot_arc_ids",
                 generation.selectedPivotArcIds());
         scalars.put("output_checksum", generation.outputChecksum());
+        scalars.put("output_feasible", feasible);
+        scalars.put(
+                "output_loopless",
+                profile.segments().stream()
+                        .filter(segment -> segment.found())
+                        .allMatch(segment -> LooplessChecker.isLoopless(
+                                graph, segment.path())));
+        scalars.put(
+                "output_validation_contract",
+                "CANONICAL_EXACT_PROFILE_AND_VERTEX_SIMPLE-v1");
         addRetainedPathStatistics(
                 scalars, generation.frontier());
         return new AlgorithmResult(
