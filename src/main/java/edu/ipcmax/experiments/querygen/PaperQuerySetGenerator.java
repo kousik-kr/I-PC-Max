@@ -153,6 +153,9 @@ public final class PaperQuerySetGenerator {
                         base.horizonSafeCandidatePoolSize(),
                         base.candidatePoolSize()
                                 - base.horizonSafeCandidatePoolSize(),
+                        base.budgetEligibleCandidatePoolSize(),
+                        base.horizonSafeCandidatePoolSize()
+                                - base.budgetEligibleCandidatePoolSize(),
                         base.pairs().size()));
     }
 
@@ -172,8 +175,11 @@ public final class PaperQuerySetGenerator {
         List<QueryPairCandidate> horizonSafe =
                 horizonSafeCandidates(
                         dataset, sampling.candidates(), spec);
+        List<QueryPairCandidate> budgetEligible =
+                absoluteBudgetRangeCandidates(
+                        dataset, horizonSafe, spec);
         List<List<QueryPairCandidate>> bands = distanceBands(
-                horizonSafe, spec.distanceBands());
+                budgetEligible, spec.distanceBands());
         List<SelectedPair> pairs = selectDisjointPairs(spec, bands);
         List<QueryManifestEntry> rows = materializeBaseRows(
                 spec, dataset, checksums, pairs);
@@ -190,7 +196,57 @@ public final class PaperQuerySetGenerator {
                 checksums,
                 sampling.pairsExamined(),
                 sampling.candidates().size(),
-                horizonSafe.size());
+                horizonSafe.size(),
+                budgetEligible.size());
+    }
+
+    private static List<QueryPairCandidate> absoluteBudgetRangeCandidates(
+            GeneratedGraphDataset dataset,
+            List<QueryPairCandidate> candidates,
+            GenerationSpec spec) throws IOException {
+        AbsoluteBudgetRangeSpec range = spec.absoluteBudgetRange();
+        if (range == null) {
+            return candidates;
+        }
+        List<SelectedPair> prepared = new ArrayList<>();
+        int index = 0;
+        for (QueryPairCandidate candidate : candidates) {
+            prepared.add(new SelectedPair(
+                    "budget-range", ++index, 0, candidate));
+        }
+        List<Cell> cells = allCells(spec);
+        GridWitnessBudgetStore budgets = new GridWitnessBudgetStore(
+                dataset,
+                prepared,
+                spec.evaluationGridMinutes(),
+                cells,
+                true);
+        List<QueryPairCandidate> eligible = new ArrayList<>();
+        for (QueryPairCandidate candidate : candidates) {
+            double minimum = Double.POSITIVE_INFINITY;
+            double maximum = Double.NEGATIVE_INFINITY;
+            for (Cell cell : cells) {
+                double value = budgets.build(candidate, cell).budget();
+                minimum = Math.min(minimum, value);
+                maximum = Math.max(maximum, value);
+            }
+            if (minimum >= range.minimumMinutes()
+                    && maximum <= range.maximumMinutes()) {
+                eligible.add(candidate);
+            }
+        }
+        int required = Math.addExact(
+                Math.addExact(spec.pilotPairs(), spec.warmupPairs()),
+                spec.evaluationPairs());
+        if (eligible.size() < required) {
+            throw new IOException(
+                    spec.datasetId() + " has only " + eligible.size()
+                            + " candidates inside absolute budget range ["
+                            + range.minimumMinutes() + ", "
+                            + range.maximumMinutes() + "]; requires at least "
+                            + required);
+        }
+        return List.copyOf(eligible);
     }
 
     /**
@@ -563,6 +619,18 @@ public final class PaperQuerySetGenerator {
         return List.copyOf(cells);
     }
 
+    private static List<Cell> allCells(GenerationSpec spec) {
+        List<Cell> cells = new ArrayList<>();
+        for (int center : spec.centers()) {
+            for (int window : spec.windowMinutes()) {
+                for (double overhead : spec.budgetOverheads()) {
+                    cells.add(new Cell(center, window, overhead));
+                }
+            }
+        }
+        return List.copyOf(cells);
+    }
+
     private static List<Cell> defaultCells(GenerationSpec spec) {
         return spec.centers().stream()
                 .map(center -> new Cell(
@@ -652,6 +720,19 @@ public final class PaperQuerySetGenerator {
         metadata.put("witness_evaluated_departure_end",
                 temporal.intervalEnd());
         metadata.put("final_generated_budget", temporal.budget());
+        if (spec.absoluteBudgetRange() != null) {
+            AbsoluteBudgetRangeSpec range = spec.absoluteBudgetRange();
+            metadata.put("absolute_budget_range_contract",
+                    range.contract());
+            metadata.put("absolute_budget_min_minutes",
+                    range.minimumMinutes());
+            metadata.put("absolute_budget_max_minutes",
+                    range.maximumMinutes());
+            metadata.put("budget_range_reference_dataset",
+                    range.referenceDataset());
+            metadata.put("budget_range_reference_manifest_sha256",
+                    range.referenceManifestSha256());
+        }
         metadata.put("validation_path_expected", true);
         metadata.put("validation_source_destination_present", true);
         if (variant != null) {
@@ -899,11 +980,19 @@ public final class PaperQuerySetGenerator {
                 boolean reuseCandidateWitnesses) throws IOException {
             TreeMap<Integer, Set<Integer>> destinationsBySource =
                     new TreeMap<>();
+            Map<EndpointPair, SelectedPair> selectedByEndpoint =
+                    new LinkedHashMap<>();
             for (SelectedPair selected : pairs) {
                 QueryPairCandidate pair = selected.candidate();
                 destinationsBySource.computeIfAbsent(
                         pair.source(), ignored -> new TreeSet<>())
                         .add(pair.destination());
+                EndpointPair endpoint = new EndpointPair(
+                        pair.source(), pair.destination());
+                if (selectedByEndpoint.put(endpoint, selected) != null) {
+                    throw new IOException(
+                            "duplicate prepared endpoint pair: " + endpoint);
+                }
             }
             TreeSet<Integer> departures = new TreeSet<>();
             for (Cell cell : cells) {
@@ -936,13 +1025,13 @@ public final class PaperQuerySetGenerator {
                                 ? null
                                 : lowerBoundOracle.distancesFrom(source);
                 for (int destination : sourceEntry.getValue()) {
-                    SelectedPair selected = pairs.stream()
-                            .filter(item ->
-                                    item.candidate().source() == source
-                                    && item.candidate().destination()
-                                        == destination)
-                            .findFirst()
-                            .orElseThrow();
+                    SelectedPair selected = selectedByEndpoint.get(
+                            new EndpointPair(source, destination));
+                    if (selected == null) {
+                        throw new IOException(
+                                "missing prepared endpoint pair: "
+                                        + source + "->" + destination);
+                    }
                     if (!reuseCandidateWitnesses
                             && !labels.reached(destination)) {
                         throw new IOException(
@@ -1112,6 +1201,7 @@ public final class PaperQuerySetGenerator {
             int evaluationGridMinutes,
             String budgetDefinition,
             int requiredSupportEnd,
+            AbsoluteBudgetRangeSpec absoluteBudgetRange,
             List<VariantSpec> variants) {
         public GenerationSpec {
             splitSeeds = splitSeeds == null ? Map.of() : Map.copyOf(splitSeeds);
@@ -1178,6 +1268,9 @@ public final class PaperQuerySetGenerator {
                 throw new IllegalArgumentException(
                         "PACE Q1 requires temporal support through 10080");
             }
+            if (absoluteBudgetRange != null) {
+                absoluteBudgetRange.validate();
+            }
             Set<String> suffixes = new TreeSet<>();
             for (VariantSpec variant : variants) {
                 variant.validate();
@@ -1206,6 +1299,35 @@ public final class PaperQuerySetGenerator {
                     || new TreeSet<>(values).size() != values.size()) {
                 throw new IllegalArgumentException(
                         name + " must contain distinct positive integers");
+            }
+        }
+    }
+
+    public record AbsoluteBudgetRangeSpec(
+            String contract,
+            double minimumMinutes,
+            double maximumMinutes,
+            String referenceDataset,
+            String referenceManifest,
+            String referenceManifestSha256) {
+        void validate() {
+            requireText(contract, "absolute_budget_range.contract");
+            if (!Double.isFinite(minimumMinutes)
+                    || !Double.isFinite(maximumMinutes)
+                    || minimumMinutes <= 0
+                    || maximumMinutes < minimumMinutes) {
+                throw new IllegalArgumentException(
+                        "absolute budget range must be positive and ordered");
+            }
+            requireText(referenceDataset,
+                    "absolute_budget_range.reference_dataset");
+            requireText(referenceManifest,
+                    "absolute_budget_range.reference_manifest");
+            if (referenceManifestSha256 == null
+                    || !referenceManifestSha256.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException(
+                        "absolute_budget_range.reference_manifest_sha256 "
+                                + "must be lowercase SHA-256");
             }
         }
     }
@@ -1298,7 +1420,8 @@ public final class PaperQuerySetGenerator {
             DatasetChecksums checksums,
             long pairsExamined,
             int candidatePoolSize,
-            int horizonSafeCandidatePoolSize) {
+            int horizonSafeCandidatePoolSize,
+            int budgetEligibleCandidatePoolSize) {
     }
 
     private record VariantGeneration(
@@ -1321,6 +1444,8 @@ public final class PaperQuerySetGenerator {
             int candidatePoolSize,
             int horizonSafeCandidatePoolSize,
             int horizonRejectedCandidateCount,
+            int budgetEligibleCandidatePoolSize,
+            int budgetRejectedCandidateCount,
             int basePairCount) {
     }
 

@@ -31,6 +31,22 @@ def _jsonl(paths: list[Path]) -> list[dict[str, Any]]:
     return rows
 
 
+def _skipped_algorithms(run_root: Path) -> set[str]:
+    path = run_root / "provenance" / "skipped_algorithms.json"
+    if not path.is_file():
+        return set()
+    value = json.loads(path.read_text(encoding="utf-8"))
+    algorithms = value.get("skip_algorithms", [])
+    if not isinstance(algorithms, list) or not all(
+        isinstance(item, str) for item in algorithms
+    ):
+        raise ValueError(
+            "provenance/skipped_algorithms.json must contain a string "
+            "skip_algorithms list"
+        )
+    return set(algorithms)
+
+
 def _expected_cells(design: dict[str, Any]) -> collections.Counter[tuple[Any, ...]]:
     """Independently enumerate the declarative study Cartesian products."""
     result: collections.Counter[tuple[Any, ...]] = collections.Counter()
@@ -113,6 +129,7 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     records = _jsonl(raw_files)
     errors: list[str] = []
     warnings: list[str] = []
+    skipped_algorithms = _skipped_algorithms(run_root)
     plans = {job["job_id"]: job for job in planned}
     if len(plans) != len(planned):
         errors.append("duplicate job_id in matrix manifests")
@@ -131,10 +148,20 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     for job_id, duplicates in by_job.items():
         if len(duplicates) != 1:
             errors.append(f"job {job_id} has {len(duplicates)} terminal records")
-    missing = sorted(set(plans) - set(by_job))
+    intentionally_skipped = {
+        job_id for job_id, job in plans.items()
+        if str(job.get("algorithm_id")) in skipped_algorithms
+    }
+    missing = sorted((set(plans) - set(by_job)) - intentionally_skipped)
     unexpected = sorted(set(by_job) - set(plans))
     if missing:
         errors.append(f"missing {len(missing)} planned terminal records")
+    skipped_missing = sorted(intentionally_skipped - set(by_job))
+    if skipped_missing:
+        warnings.append(
+            f"intentionally skipped {len(skipped_missing)} "
+            f"{','.join(sorted(skipped_algorithms))} planned terminal records"
+        )
     if unexpected:
         errors.append(f"found {len(unexpected)} unplanned terminal records")
     deterministic: dict[tuple[Any, ...], set[str]] = collections.defaultdict(set)

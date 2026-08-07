@@ -368,17 +368,16 @@ def _generation_spec(
 ) -> dict[str, Any]:
     definition = design["dataset_definitions"][dataset]
     splits = requirements["split_pairs"]
-    return {
+    query_configuration = _query_configuration(dataset, design)
+    spec = {
         "schema_version": 2,
         "contract": design["query_generation"]["required_contract"],
         "conversion_contract_version":
             definition["required_conversion_contract"],
         "dataset_id": dataset,
         "dataset_path": str(repo_path(definition["path"])),
-        "query_configuration": str(
-            repo_path(design["query_generation"]["configuration"])
-        ),
-        "generator_config_hash": design["query_generation_config_hash"],
+        "query_configuration": str(query_configuration),
+        "generator_config_hash": sha256_file(query_configuration),
         "selection_seed": int(design["seeds"]["query_evaluation"]),
         "split_seeds": {
             "pilot": int(design["seeds"]["query_pilot"]),
@@ -404,6 +403,107 @@ def _generation_spec(
             {**variant, "path": str(repo_path(variant["path"]))}
             for variant in requirements["variants"][dataset]
         ],
+    }
+    budget_range = _verified_absolute_budget_range(design)
+    if budget_range is not None:
+        spec["absolute_budget_range"] = budget_range
+    return spec
+
+
+def _query_configuration(
+    dataset: str,
+    design: dict[str, Any],
+) -> Path:
+    overrides = design["query_generation"].get(
+        "configuration_by_dataset", {}
+    )
+    if not isinstance(overrides, dict):
+        raise ValueError(
+            "query_generation.configuration_by_dataset must be an object"
+        )
+    unknown = sorted(set(overrides) - set(design["datasets"]))
+    if unknown:
+        raise ValueError(
+            "query configuration overrides name unconfigured datasets: "
+            + ", ".join(unknown)
+        )
+    configured = overrides.get(
+        dataset,
+        design["query_generation"]["configuration"],
+    )
+    path = repo_path(configured)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"query-generation configuration is missing: {path}"
+        )
+    return path
+
+
+def _verified_absolute_budget_range(
+    design: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve and verify an optional reference-manifest budget envelope."""
+    configured = design["query_generation"].get("absolute_budget_range")
+    if configured is None:
+        return None
+    if not isinstance(configured, dict):
+        raise ValueError("query_generation.absolute_budget_range must be an object")
+    required = {
+        "contract",
+        "minimum_minutes",
+        "maximum_minutes",
+        "reference_dataset",
+        "reference_manifest",
+        "reference_manifest_sha256",
+    }
+    missing = sorted(required - configured.keys())
+    unexpected = sorted(set(configured) - required)
+    if missing or unexpected:
+        raise ValueError(
+            "invalid absolute budget range fields: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    reference = repo_path(configured["reference_manifest"])
+    if not reference.is_file():
+        raise FileNotFoundError(
+            f"absolute budget reference manifest is missing: {reference}"
+        )
+    actual_checksum = sha256_file(reference)
+    if actual_checksum != configured["reference_manifest_sha256"]:
+        raise ValueError(
+            "absolute budget reference manifest checksum mismatch: "
+            f"{actual_checksum} != {configured['reference_manifest_sha256']}"
+        )
+    rows = [
+        row for row in read_jsonl(reference)
+        if row.get("dataset_id") == configured["reference_dataset"]
+        and row.get("metadata", {}).get("split") == "evaluation"
+        and "variant_kind" not in row.get("metadata", {})
+    ]
+    if not rows:
+        raise ValueError(
+            "absolute budget reference has no base evaluation rows"
+        )
+    actual_minimum = min(_canonical_time(float(row["budget"])) for row in rows)
+    actual_maximum = max(_canonical_time(float(row["budget"])) for row in rows)
+    configured_minimum = _canonical_time(float(configured["minimum_minutes"]))
+    configured_maximum = _canonical_time(float(configured["maximum_minutes"]))
+    if configured_minimum <= 0 or configured_maximum < configured_minimum:
+        raise ValueError("absolute budget range must be positive and ordered")
+    if (
+        configured_minimum != actual_minimum
+        or configured_maximum != actual_maximum
+    ):
+        raise ValueError(
+            "configured absolute budget range does not equal the referenced "
+            f"base evaluation envelope: configured="
+            f"[{configured_minimum}, {configured_maximum}], actual="
+            f"[{actual_minimum}, {actual_maximum}]"
+        )
+    return {
+        **configured,
+        "minimum_minutes": configured_minimum,
+        "maximum_minutes": configured_maximum,
     }
 
 
@@ -493,6 +593,7 @@ def validate_prepared_manifest(
     }
     checksums: dict[Path, tuple[str, str, str]] = {}
     rows_by_split = collections.Counter()
+    absolute_budget_range = _verified_absolute_budget_range(design)
     for row in rows:
         query_id = row.get("query_id")
         metadata = row.get("metadata", {})
@@ -603,6 +704,28 @@ def validate_prepared_manifest(
             > float(metadata["function_support_end"])
         ):
             errors.append(f"query {query_id} is horizon-unsafe")
+        if absolute_budget_range is not None:
+            minimum_budget = absolute_budget_range["minimum_minutes"]
+            maximum_budget = absolute_budget_range["maximum_minutes"]
+            if not minimum_budget <= _canonical_time(float(row["budget"])) <= maximum_budget:
+                errors.append(
+                    f"query {query_id} is outside the absolute budget range"
+                )
+            expected_budget_metadata = {
+                "absolute_budget_range_contract":
+                    absolute_budget_range["contract"],
+                "absolute_budget_min_minutes": minimum_budget,
+                "absolute_budget_max_minutes": maximum_budget,
+                "budget_range_reference_dataset":
+                    absolute_budget_range["reference_dataset"],
+                "budget_range_reference_manifest_sha256":
+                    absolute_budget_range["reference_manifest_sha256"],
+            }
+            for field, expected_value in expected_budget_metadata.items():
+                if metadata.get(field) != expected_value:
+                    errors.append(
+                        f"query {query_id} has invalid {field}"
+                    )
         dataset_path = Path(metadata["dataset_path"])
         if dataset_path not in checksums:
             checksums[dataset_path] = (
@@ -707,6 +830,8 @@ def _sidecar(
                 int(design["workload"]["evaluation_grid_minutes"]),
             "reused_non_query_axes":
                 requirements["reused_non_query_axes"],
+            "absolute_budget_range":
+                _verified_absolute_budget_range(design),
         },
         "independent_expected_counts": expected_counts,
         "number_of_queries": len(rows),
@@ -721,7 +846,12 @@ def _sidecar(
             rows[0]["metadata"]["generator_version"] if rows else None
         ),
         "generator_config_sha256":
-            design["query_generation_config_hash"],
+            (
+                rows[0]["metadata"]["generator_config_hash"]
+                if rows else sha256_file(
+                    _query_configuration(dataset, design)
+                )
+            ),
         "generator_command": [
             "java",
             "-cp",

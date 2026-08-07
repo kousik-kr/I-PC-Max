@@ -151,9 +151,46 @@ class PaperQuerySetGeneratorTest {
         }
     }
 
+    @Test
+    void filtersCandidatesToDeclaredAbsoluteBudgetRange()
+            throws Exception {
+        Path dataset = temporary.resolve("dataset-budget-range");
+        Path configuration = temporary.resolve("query-generation.yaml");
+        writeDataset(dataset);
+        writeConfiguration(configuration);
+        PaperQuerySetGenerator.AbsoluteBudgetRangeSpec range =
+                new PaperQuerySetGenerator.AbsoluteBudgetRangeSpec(
+                        "NY_EVALUATION_BASE_ENVELOPE-v1",
+                        2.2,
+                        3.3,
+                        "NY",
+                        "reference.jsonl",
+                        "a".repeat(64));
+
+        PaperQuerySetGenerator.GenerationResult result =
+                PaperQuerySetGenerator.generate(
+                        spec(dataset, configuration, range));
+
+        assertTrue(result.summary().budgetRejectedCandidateCount() > 0);
+        for (QueryManifestEntry row : result.rows()) {
+            assertTrue(row.budget() >= 2.2);
+            assertTrue(row.budget() <= 3.3);
+            assertEquals(
+                    "NY_EVALUATION_BASE_ENVELOPE-v1",
+                    row.metadata().get("absolute_budget_range_contract"));
+        }
+    }
+
     private PaperQuerySetGenerator.GenerationSpec spec(
             Path dataset,
             Path configuration) {
+        return spec(dataset, configuration, null);
+    }
+
+    private PaperQuerySetGenerator.GenerationSpec spec(
+            Path dataset,
+            Path configuration,
+            PaperQuerySetGenerator.AbsoluteBudgetRangeSpec budgetRange) {
         return new PaperQuerySetGenerator.GenerationSpec(
                 2,
                 "paper-q1-query-generation-v1",
@@ -179,6 +216,7 @@ class PaperQuerySetGeneratorTest {
                 1,
                 "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME",
                 10080,
+                budgetRange,
                 List.of());
     }
 

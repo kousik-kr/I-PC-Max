@@ -127,6 +127,21 @@ def _execute_studies(
         path = root / "plan" / "matrices" / f"{study.lower()}.jsonl"
         if path.is_file():
             selected.extend(read_jsonl(path))
+    skipped_algorithms = _run_local_skipped_algorithms(root)
+    if skipped_algorithms:
+        before = len(selected)
+        selected = [
+            job for job in selected
+            if str(job.get("algorithm_id")) not in skipped_algorithms
+        ]
+        atomic_write_json(root / "provenance" / "active_execution_filter.json", {
+            "schema_version": 1,
+            "run_id": run_id,
+            "skip_algorithms": sorted(skipped_algorithms),
+            "selected_jobs_before_filter": before,
+            "selected_jobs_after_filter": len(selected),
+            "filter_scope": "run-local execution scheduling only",
+        })
     if not selected:
         return {"jobs": 0, "status_counts": {}}
     if backend == "slurm":
@@ -164,6 +179,23 @@ def _execute_studies(
     if infrastructure:
         raise RuntimeError(f"{infrastructure} jobs ended in an infrastructure/input failure")
     return {"jobs": len(results), "status_counts": counts}
+
+
+def _run_local_skipped_algorithms(root: Path) -> set[str]:
+    """Read run-local algorithm skips without changing immutable config hash."""
+    path = root / "provenance" / "skipped_algorithms.json"
+    if not path.is_file():
+        return set()
+    value = json.loads(path.read_text(encoding="utf-8"))
+    algorithms = value.get("skip_algorithms", [])
+    if not isinstance(algorithms, list) or not all(
+        isinstance(item, str) for item in algorithms
+    ):
+        raise ValueError(
+            "provenance/skipped_algorithms.json must contain a string "
+            "skip_algorithms list"
+        )
+    return set(algorithms)
 
 
 def _prepare_reconciliation(

@@ -30,8 +30,25 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
     ]
 
 
+def _skipped_algorithms(root: Path) -> set[str]:
+    path = root / "provenance" / "skipped_algorithms.json"
+    if not path.is_file():
+        return set()
+    value = json.loads(path.read_text(encoding="utf-8"))
+    algorithms = value.get("skip_algorithms", [])
+    if not isinstance(algorithms, list) or not all(
+        isinstance(item, str) for item in algorithms
+    ):
+        raise ValueError(
+            "provenance/skipped_algorithms.json must contain a string "
+            "skip_algorithms list"
+        )
+    return set(algorithms)
+
+
 def progress(run_root: Path) -> dict[str, Any]:
     root = repo_path(run_root)
+    skipped_algorithms = _skipped_algorithms(root)
     logical_path = root / "plan/matrices/t03.jsonl"
     execution_path = root / "plan/reconciliation/execution_manifest.jsonl"
     if execution_path.is_file():
@@ -101,14 +118,21 @@ def progress(run_root: Path) -> dict[str, Any]:
                 terminal_raw.add(job_id)
         completed = algorithm_reused | terminal_raw
         planned = len(algorithm_jobs)
+        skipped_by_request = (
+            planned - len(completed)
+            if algorithm in skipped_algorithms
+            else 0
+        )
+        completed_effective = len(completed) + skipped_by_request
         algorithms[algorithm] = {
             "planned": planned,
             "reused_historical": len(algorithm_reused),
             "raw_unique": len(algorithm_raw),
             "terminal_unique": len(terminal_raw),
-            "completed_effective": len(completed),
-            "remaining": planned - len(completed),
-            "completion_fraction": (len(completed) / planned) if planned else 1.0,
+            "skipped_by_request": skipped_by_request,
+            "completed_effective": completed_effective,
+            "remaining": planned - completed_effective,
+            "completion_fraction": (completed_effective / planned) if planned else 1.0,
             "status_counts": dict(sorted(status_counts.items())),
             "duplicate_job_ids": sum(job_id in duplicates for job_id in algorithm_jobs),
         }
@@ -120,6 +144,7 @@ def progress(run_root: Path) -> dict[str, Any]:
         "run_root": root.as_posix(),
         "planned_total": len(jobs),
         "execution_manifest_total": len(execution_jobs),
+        "skip_algorithms": sorted(skipped_algorithms),
         "reused_historical_total": len(reused_ids),
         "completed_effective_total": completed_total,
         "remaining_total": len(jobs) - completed_total,
