@@ -34,8 +34,10 @@ public final class QueryCandidateSampler {
     public static final String UNREACHABLE = "unreachable";
     public static final String LOWER_BOUND_PATH_TOO_SHORT = "lower_bound_path_too_short";
     public static final String BELOW_MINIMUM_DISTANCE = "below_minimum_distance";
+    public static final String ABOVE_MAXIMUM_DISTANCE = "above_maximum_distance";
     public static final String SELECTED = "selected";
     private static final List<String> SAMPLING_EVENTS = List.of(
+            ABOVE_MAXIMUM_DISTANCE,
             DUPLICATE_PAIRS,
             SOURCE_EQUALS_DESTINATION,
             UNREACHABLE,
@@ -99,9 +101,35 @@ public final class QueryCandidateSampler {
             String graphChecksum,
             long globalSeed,
             QueryGenerationConfig.CandidatePool configuration) {
+        return sample(
+                graph,
+                datasetId,
+                graphChecksum,
+                globalSeed,
+                configuration,
+                Double.POSITIVE_INFINITY);
+    }
+
+    /**
+     * Samples candidates inside an optional admissible lower-bound corridor.
+     * The upper bound is applied before witness materialization and before a
+     * source quota is consumed.
+     */
+    public SamplingResult sample(
+            TDGraph graph,
+            String datasetId,
+            String graphChecksum,
+            long globalSeed,
+            QueryGenerationConfig.CandidatePool configuration,
+            double maximumLowerBoundDistance) {
         Objects.requireNonNull(graph, "graph");
         Objects.requireNonNull(configuration, "configuration");
         configuration.validate();
+        if (Double.isNaN(maximumLowerBoundDistance)
+                || maximumLowerBoundDistance <= 0.0) {
+            throw new IllegalArgumentException(
+                    "maximum lower-bound distance must be positive");
+        }
         String normalizedDataset = ManifestChecksum.normalizeDatasetId(datasetId);
         long datasetSeed = ManifestChecksum.deriveDatasetSeed(globalSeed, normalizedDataset, graphChecksum);
 
@@ -164,6 +192,10 @@ public final class QueryCandidateSampler {
                 }
                 if (distance < configuration.minimumDistance()) {
                     increment(eventCounts, BELOW_MINIMUM_DISTANCE);
+                    continue;
+                }
+                if (distance > maximumLowerBoundDistance) {
+                    increment(eventCounts, ABOVE_MAXIMUM_DISTANCE);
                     continue;
                 }
                 edu.ipcmax.core.validate.Path witness =

@@ -9,7 +9,7 @@ from .hashing import sha256_file, sha256_json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SUPPORTED_DATASETS = ("NY", "FLA", "CAL", "OL", "NY-EXACT")
+SUPPORTED_DATASETS = ("NY", "FLA", "CAL", "USA", "OL", "NY-EXACT")
 FINAL_ABLATIONS = {
     "full",
     "no-safe-corridor",

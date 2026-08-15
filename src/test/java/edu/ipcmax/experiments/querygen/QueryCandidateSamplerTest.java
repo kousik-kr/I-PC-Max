@@ -129,6 +129,7 @@ class QueryCandidateSamplerTest {
                 graph, "NY", CHECKSUM, 7L, settings(2, 100, 2, 3));
 
         assertEquals(List.of(
+                        QueryCandidateSampler.ABOVE_MAXIMUM_DISTANCE,
                         QueryCandidateSampler.BELOW_MINIMUM_DISTANCE,
                         QueryCandidateSampler.DUPLICATE_PAIRS,
                         QueryCandidateSampler.LOWER_BOUND_PATH_TOO_SHORT,
@@ -136,6 +137,7 @@ class QueryCandidateSamplerTest {
                         QueryCandidateSampler.SOURCE_EQUALS_DESTINATION,
                         QueryCandidateSampler.UNREACHABLE),
                 new ArrayList<>(result.eventCounts().keySet()));
+        assertEquals(0, result.eventCount(QueryCandidateSampler.ABOVE_MAXIMUM_DISTANCE));
         assertEquals(1, result.eventCount(QueryCandidateSampler.BELOW_MINIMUM_DISTANCE));
         assertEquals(0, result.eventCount(QueryCandidateSampler.DUPLICATE_PAIRS));
         assertEquals(2, result.eventCount(QueryCandidateSampler.LOWER_BOUND_PATH_TOO_SHORT));
@@ -147,6 +149,24 @@ class QueryCandidateSamplerTest {
                 .sum());
         assertThrows(UnsupportedOperationException.class, () ->
                 result.eventCounts().put(QueryCandidateSampler.SELECTED, 1L));
+    }
+
+    @Test
+    void appliesMaximumDistanceBeforeConsumingSourceQuota() {
+        QueryCandidateSampler.SamplingResult result =
+                new QueryCandidateSampler().sample(
+                        stronglyConnectedRing(12),
+                        "NY",
+                        CHECKSUM,
+                        20260711L,
+                        settings(4, 20, 2, 2.0),
+                        3.0);
+
+        assertEquals(16, result.candidates().size());
+        assertTrue(result.candidates().stream().allMatch(
+                candidate -> candidate.lowerBoundDistance() <= 3.0));
+        assertTrue(result.eventCount(
+                QueryCandidateSampler.ABOVE_MAXIMUM_DISTANCE) > 0);
     }
 
     @Test

@@ -171,7 +171,8 @@ public final class PaperQuerySetGenerator {
                         spec.datasetId(),
                         checksums.datasetPayloadChecksum(),
                         spec.selectionSeed(),
-                        queryConfiguration.candidatePool());
+                        queryConfiguration.candidatePool(),
+                        maximumCandidateLowerBoundDistance(spec));
         List<QueryPairCandidate> horizonSafe =
                 horizonSafeCandidates(
                         dataset, sampling.candidates(), spec);
@@ -198,6 +199,28 @@ public final class PaperQuerySetGenerator {
                 sampling.candidates().size(),
                 horizonSafe.size(),
                 budgetEligible.size());
+    }
+
+    /**
+     * Derives a safe pre-sampling corridor from the requested budget ceiling.
+     * Since the replayed witness time cannot be below the exact lower-bound
+     * distance, a pair above this threshold cannot pass every configured cell.
+     */
+    private static double maximumCandidateLowerBoundDistance(
+            GenerationSpec spec) {
+        if (spec.absoluteBudgetRange() == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double maximumOverhead = spec.budgetOverheads().stream()
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(spec.defaultBudgetOverhead());
+        maximumOverhead = Math.max(
+                maximumOverhead,
+                spec.defaultBudgetOverhead());
+        return Domain.canonicalTime(
+                spec.absoluteBudgetRange().maximumMinutes()
+                        / (1.0 + maximumOverhead));
     }
 
     private static List<QueryPairCandidate> absoluteBudgetRangeCandidates(

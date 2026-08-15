@@ -116,6 +116,8 @@ public final class PaceBench {
             "score_compose_calls", "temporal_segments_visited",
             "temporal_cut_attempts", "temporal_cuts_created",
             "temporal_cuts_deduplicated",
+            "temporal_relaxation_breakpoint_merges",
+            "temporal_collinear_breakpoints_merged",
             "canonical_replay_requests", "canonical_replay_unique_requests",
             "canonical_replay_cache_hits", "canonical_replay_cache_misses",
             "canonical_replay_cache_evictions",

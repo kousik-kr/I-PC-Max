@@ -42,6 +42,61 @@ class TimeProfileExactTest {
     }
 
     @Test
+    void everyCompositionMergesOldAndNewCutSetsWithoutAccumulation() {
+        Domain domain = Domain.closed(0, 10);
+        TimeProfile profile = TimeProfile.piecewise(
+                domain,
+                List.of(
+                        new TimeProfile.Breakpoint(0, 0),
+                        new TimeProfile.Breakpoint(2, 2),
+                        new TimeProfile.Breakpoint(4, 4),
+                        new TimeProfile.Breakpoint(6, 6),
+                        new TimeProfile.Breakpoint(8, 8),
+                        new TimeProfile.Breakpoint(10, 10)),
+                "initial");
+        TimeProfile relaxation = TimeProfile.piecewise(
+                domain,
+                List.of(
+                        new TimeProfile.Breakpoint(0, 0),
+                        new TimeProfile.Breakpoint(2.5, 2.5),
+                        new TimeProfile.Breakpoint(5, 5),
+                        new TimeProfile.Breakpoint(7.5, 7.5),
+                        new TimeProfile.Breakpoint(10, 10)),
+                "relaxation");
+
+        for (int step = 0; step < 100; step++) {
+            profile = profile.compose(
+                    relaxation,
+                    "relaxation-" + step);
+        }
+
+        assertEquals(9, profile.breakpoints().size());
+        assertEquals(0, profile.valueAt(0), 1e-9);
+        assertEquals(10, profile.valueAt(10), 1e-9);
+    }
+
+    @Test
+    void compactedPiecewiseProfilePreservesSlopeChangesOnly() {
+        TimeProfile compacted = TimeProfile.piecewiseCompacted(
+                Domain.closed(0, 10),
+                List.of(
+                        new TimeProfile.Breakpoint(0, 1),
+                        new TimeProfile.Breakpoint(2, 3),
+                        new TimeProfile.Breakpoint(4, 5),
+                        new TimeProfile.Breakpoint(6, 9),
+                        new TimeProfile.Breakpoint(8, 13),
+                        new TimeProfile.Breakpoint(10, 17)),
+                "compacted");
+
+        assertEquals(List.of(
+                new TimeProfile.Breakpoint(0, 1),
+                new TimeProfile.Breakpoint(4, 5),
+                new TimeProfile.Breakpoint(10, 17)),
+                compacted.breakpoints());
+        assertEquals(11, compacted.valueAt(7), 1e-9);
+    }
+
+    @Test
     void cancellableCompositionAvoidsAnEmptyUnsupportedProfile() {
         TimeProfile inner = new TimeProfile(
                 Domain.closed(0, 5), time -> time + 10, "inner");

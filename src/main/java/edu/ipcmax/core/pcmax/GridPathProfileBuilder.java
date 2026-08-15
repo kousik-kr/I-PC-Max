@@ -93,7 +93,7 @@ final class GridPathProfileBuilder {
         String fingerprint = "PACE-B-GRID-REPLAY-v1:path=" + arcIds
                 + ":domain=" + feasible
                 + ":step=" + gridStepMinutes;
-        TimeProfile arrival = TimeProfile.piecewise(
+        TimeProfile arrival = TimeProfile.piecewiseCompacted(
                 feasible,
                 arrivalPoints,
                 fingerprint + ":arrival");

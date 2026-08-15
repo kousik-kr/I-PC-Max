@@ -21,6 +21,10 @@ import edu.ipcmax.core.validate.GraphValidator;
 public final class PACE {
     private static final Map<TDGraph, QueryPreparationIndexes>
             PREPARED_INDEXES = new WeakHashMap<>();
+    /** FIFO/arc-id validation belongs to immutable graph preparation, not to
+     * each timed query construction. Weak keys retain fixture isolation. */
+    private static final Map<TDGraph, Boolean>
+            VALIDATED_GRAPHS = new WeakHashMap<>();
     private final TDGraph graph;
     private final PaceOptions options;
     private final PaceExecutionMetrics metrics;
@@ -61,7 +65,7 @@ public final class PACE {
         this.graph = Objects.requireNonNull(graph, "graph");
         this.options = Objects.requireNonNull(options, "options");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
-        GraphValidator.validate(graph, true);
+        validateGraphOnce(graph);
         if (options.engineMode() == PaceEngineMode.LEGACY) {
             legacyGenerator =
                     new PaceFrontierGenerator(graph, options);
@@ -91,9 +95,25 @@ public final class PACE {
     public static synchronized QueryPreparationIndexes preparedIndexes(
             TDGraph graph) {
         Objects.requireNonNull(graph, "graph");
+        validateGraphOnce(graph);
         return PREPARED_INDEXES.computeIfAbsent(
                 graph,
                 QueryPreparationIndexes::buildAllowingZero);
+    }
+
+    /**
+     * Validates one immutable graph once before its indexes or queries are
+     * used. Experiment shared preprocessing calls {@link #preparedIndexes}
+     * before the per-query timeout starts, so large-dataset validation is not
+     * repeatedly charged to every query.
+     */
+    private static synchronized void validateGraphOnce(
+            TDGraph graph) {
+        if (VALIDATED_GRAPHS.containsKey(graph)) {
+            return;
+        }
+        GraphValidator.validate(graph, true);
+        VALIDATED_GRAPHS.put(graph, Boolean.TRUE);
     }
 
     /** Generates a completion- and cap-bearing candidate frontier. */

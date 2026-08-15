@@ -410,6 +410,7 @@ class ScalablePaceCandidateEngineTest {
                     exact.scoreProfile().valueAt(minute),
                     sampled.scoreProfile().valueAt(minute));
         }
+        assertEquals(2, sampled.arrivalProfile().breakpoints().size());
         assertTrue(sampled.compressed());
     }
 

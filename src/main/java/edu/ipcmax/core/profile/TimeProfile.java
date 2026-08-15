@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.TreeSet;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.DoubleUnaryOperator;
@@ -94,6 +95,28 @@ public final class TimeProfile {
      */
     public static TimeProfile piecewise(Domain domain, List<Breakpoint> breakpoints, String fingerprint) {
         return new TimeProfile(domain, breakpoints, fingerprint);
+    }
+
+    /**
+     * Builds an exact piecewise-linear profile and removes redundant
+     * collinear breakpoints inside every connected domain component.
+     *
+     * <p>The represented function is unchanged. This is used at bounded
+     * relaxation boundaries so old and newly-created breakpoints are reduced
+     * before the profile is admitted to another relaxation.</p>
+     */
+    public static TimeProfile piecewiseCompacted(
+            Domain domain,
+            List<Breakpoint> breakpoints,
+            String fingerprint) {
+        TimeProfile supplied = new TimeProfile(
+                domain, breakpoints, fingerprint);
+        List<Breakpoint> compacted = new ArrayList<>();
+        for (Domain.Interval component : domain.intervals()) {
+            reduced(supplied.breakpointsOver(Domain.of(component)))
+                    .forEach(point -> addBreakpoint(compacted, point));
+        }
+        return new TimeProfile(domain, compacted, fingerprint);
     }
 
     /**
@@ -289,8 +312,8 @@ public final class TimeProfile {
         List<Breakpoint> composed = new ArrayList<>();
         for (Domain.Interval component : composedDomain.intervals()) {
             requireCompositionActive(cancelled);
-            List<Double> cuts = new ArrayList<>();
-            cuts.add(component.start());
+            TreeSet<Long> cuts = new TreeSet<>();
+            addCut(cuts, component.start());
             for (Breakpoint innerBreakpoint : breakpoints) {
                 if (innerBreakpoint.minute() > component.start()
                         && innerBreakpoint.minute() < component.end()) {
@@ -309,13 +332,23 @@ public final class TimeProfile {
                     }
                 }
             }
-            cuts.add(component.end());
-            cuts.sort(Double::compare);
-            for (double cut : cuts) {
+            addCut(cuts, component.end());
+            List<Breakpoint> componentPoints =
+                    new ArrayList<>(cuts.size());
+            for (long tick : cuts) {
                 requireCompositionActive(cancelled);
+                double cut = Domain.timeFromTick(tick);
                 double innerValue = evaluateUnchecked(cut);
-                addBreakpoint(composed, new Breakpoint(cut, outer.evaluateUnchecked(innerValue)));
+                addBreakpoint(
+                        componentPoints,
+                        new Breakpoint(
+                                cut,
+                                outer.evaluateUnchecked(innerValue)));
             }
+            componentPoints.forEach(
+                    point -> addBreakpoint(composed, point));
+            TemporalProfileWork.increment(
+                    "temporal_relaxation_breakpoint_merges");
         }
         return new TimeProfile(composedDomain, composed, composedFingerprint);
     }
@@ -367,13 +400,15 @@ public final class TimeProfile {
         Domain minimumDomain = domain.union(other.domain);
         List<Breakpoint> minimum = new ArrayList<>();
         for (Domain.Interval component : minimumDomain.intervals()) {
-            List<Double> cuts = new ArrayList<>();
-            addCut(cuts, component.start());
-            addInternalCuts(cuts, breakpoints, component);
-            addInternalCuts(cuts, other.breakpoints, component);
-            addDomainCuts(cuts, domain, component);
-            addDomainCuts(cuts, other.domain, component);
-            cuts.sort(Double::compare);
+            TreeSet<Long> cutTicks = new TreeSet<>();
+            addCut(cutTicks, component.start());
+            addInternalCuts(cutTicks, breakpoints, component);
+            addInternalCuts(cutTicks, other.breakpoints, component);
+            addDomainCuts(cutTicks, domain, component);
+            addDomainCuts(cutTicks, other.domain, component);
+            List<Double> cuts = cutTicks.stream()
+                    .map(Domain::timeFromTick)
+                    .toList();
             requireContinuousMinimum(other, cuts);
 
             List<Double> crossings = new ArrayList<>();
@@ -400,14 +435,19 @@ public final class TimeProfile {
                     addCut(crossings, crossing);
                 }
             }
-            crossings.forEach(crossing -> addCut(cuts, crossing));
-            cuts.sort(Double::compare);
+            crossings.forEach(
+                    crossing -> addCut(cutTicks, crossing));
+            cuts = cutTicks.stream()
+                    .map(Domain::timeFromTick)
+                    .toList();
 
             List<Breakpoint> componentPoints = new ArrayList<>();
             for (double cut : cuts) {
                 addBreakpoint(componentPoints, new Breakpoint(cut, minimumValueAtClosure(other, cut)));
             }
             reduced(componentPoints).forEach(point -> addBreakpoint(minimum, point));
+            TemporalProfileWork.increment(
+                    "temporal_relaxation_breakpoint_merges");
         }
         return new TimeProfile(minimumDomain, minimum, minimumFingerprint);
     }
@@ -490,12 +530,41 @@ public final class TimeProfile {
         addCut(cuts, component.end());
     }
 
+    private static void addInternalCuts(
+            TreeSet<Long> cuts,
+            List<Breakpoint> points,
+            Domain.Interval component) {
+        for (Breakpoint point : points) {
+            if (point.minute() > component.start()
+                    && point.minute() < component.end()) {
+                addCut(cuts, point.minute());
+            }
+        }
+        addCut(cuts, component.end());
+    }
+
     private static void addDomainCuts(List<Double> cuts, Domain source, Domain.Interval component) {
         for (Domain.Interval interval : source.intervals()) {
             if (interval.start() > component.start() && interval.start() < component.end()) {
                 addCut(cuts, interval.start());
             }
             if (interval.end() > component.start() && interval.end() < component.end()) {
+                addCut(cuts, interval.end());
+            }
+        }
+    }
+
+    private static void addDomainCuts(
+            TreeSet<Long> cuts,
+            Domain source,
+            Domain.Interval component) {
+        for (Domain.Interval interval : source.intervals()) {
+            if (interval.start() > component.start()
+                    && interval.start() < component.end()) {
+                addCut(cuts, interval.start());
+            }
+            if (interval.end() > component.start()
+                    && interval.end() < component.end()) {
                 addCut(cuts, interval.end());
             }
         }
@@ -542,6 +611,7 @@ public final class TimeProfile {
 
     private static List<Breakpoint> reduced(List<Breakpoint> source) {
         List<Breakpoint> result = new ArrayList<>();
+        long removed = 0;
         for (Breakpoint point : source) {
             while (result.size() >= 2) {
                 Breakpoint left = result.get(result.size() - 2);
@@ -553,9 +623,12 @@ public final class TimeProfile {
                     break;
                 }
                 result.remove(result.size() - 1);
+                removed++;
             }
             result.add(point);
         }
+        TemporalProfileWork.add(
+                "temporal_collinear_breakpoints_merged", removed);
         return result;
     }
 
@@ -833,6 +906,18 @@ public final class TimeProfile {
             }
         }
         cuts.add(cut);
+        TemporalProfileWork.increment("temporal_cuts_created");
+    }
+
+    /** Sorted cut insertion for exact old/new breakpoint merging. */
+    private static void addCut(TreeSet<Long> cuts, double cut) {
+        TemporalProfileWork.increment("temporal_cut_attempts");
+        long tick = Domain.canonicalTick(cut);
+        if (!cuts.add(tick)) {
+            TemporalProfileWork.increment(
+                    "temporal_cuts_deduplicated");
+            return;
+        }
         TemporalProfileWork.increment("temporal_cuts_created");
     }
 
