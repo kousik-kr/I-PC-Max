@@ -1,0 +1,19 @@
+# Official raw observations and derived geospatial assets are reproducible but large.
+raw/**
+!raw/.gitkeep
+intermediate/**
+!intermediate/.gitkeep
+processed/**
+!processed/.gitkeep
+results/**
+!results/.gitkeep
+figures/**
+!figures/.gitkeep
+manifests/downloads/**
+reports/generated/**
+
+# Local environments and credentials.
+.env
+.venv/
+__pycache__/
+*.pyc

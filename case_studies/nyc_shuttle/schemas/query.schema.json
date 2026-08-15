@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NYC shuttle query v1",
+  "type": "object",
+  "required": [
+    "schema_version", "query_id", "pair_id", "dataset_id", "source", "destination",
+    "period_id", "local_clock", "interval_start", "interval_end", "window_length",
+    "budget", "rho", "fastest_travel_time_min", "fastest_travel_time_max",
+    "fastest_profile_checksum", "fastest_departure_count", "budget_definition",
+    "temporal_support_start", "temporal_support_end", "graph_manifest_sha256",
+    "terminal_pair_manifest_sha256", "query_seed"
+  ],
+  "properties": {
+    "schema_version": {"const": "nyc-query-v1"},
+    "query_id": {"type": "string", "minLength": 1},
+    "pair_id": {"type": "string", "minLength": 1},
+    "dataset_id": {"const": "NYC-REAL"},
+    "source": {"type": "integer", "minimum": 1},
+    "destination": {"type": "integer", "minimum": 1},
+    "period_id": {"enum": ["MORNING", "EVENING"]},
+    "local_clock": {"type": "string", "minLength": 1},
+    "interval_start": {"type": "integer", "minimum": 0},
+    "interval_end": {"type": "integer", "minimum": 1},
+    "window_length": {"const": 120},
+    "budget": {"type": "number", "exclusiveMinimum": 0},
+    "rho": {"enum": [0.2, 0.5]},
+    "fastest_travel_time_min": {"type": "number", "exclusiveMinimum": 0},
+    "fastest_travel_time_max": {"type": "number", "exclusiveMinimum": 0},
+    "fastest_profile_checksum": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fastest_departure_count": {"const": 121},
+    "budget_definition": {"const": "B=(1+rho)*max_I(T_fast(t))"},
+    "temporal_support_start": {"type": "number", "minimum": 0},
+    "temporal_support_end": {"type": "number", "exclusiveMinimum": 0},
+    "graph_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "terminal_pair_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "query_seed": {"type": "integer"}
+  },
+  "additionalProperties": false
+}

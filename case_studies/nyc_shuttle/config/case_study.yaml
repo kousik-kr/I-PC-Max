@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "case_id": "NYC-REAL",
+  "seed": 20260815,
+  "source_graph": "data/input/NY",
+  "processed_graph": "case_studies/nyc_shuttle/processed/NYC-REAL",
+  "coordinate_scale": 1000000,
+  "geographic_crs": "EPSG:4326",
+  "projected_crs": "EPSG:32618",
+  "nyc_plausibility_bbox": [-74.30, 40.45, -73.65, 40.95],
+  "time_bin_minutes": 15,
+  "dot_floating_timestamp_timezone": "America/New_York",
+  "dot_travel_time_unit": "seconds",
+  "window_minutes": 120,
+  "rho": [0.20, 0.50],
+  "target_terminal_pairs": 25,
+  "terminal_selection": {
+    "top_terminal_candidates": 40,
+    "maximum_stop_to_graph_distance_m": 250.0,
+    "minimum_terminal_separation_m": 500.0,
+    "minimum_pair_distance_m": 3000.0,
+    "minimum_static_fastest_minutes": 5.0
+  },
+  "periods": [
+    {
+      "id": "MORNING",
+      "local_clock": "07:00-09:00 America/New_York",
+      "interval_start": 420,
+      "interval_end": 540,
+      "coverage_basis": "May 14 DOT audit: all 101 observed links represented in each UTC hour"
+    },
+    {
+      "id": "EVENING",
+      "local_clock": "17:00-19:00 America/New_York",
+      "interval_start": 1020,
+      "interval_end": 1140,
+      "coverage_basis": "May 14 DOT audit: all 101 observed links represented in each UTC hour"
+    }
+  ],
+  "matching": {
+    "centerline_max_distance_m": 35.0,
+    "route_buffer_m": 25.0,
+    "dot_link_buffer_m": 40.0,
+    "minimum_overlap_ratio": 0.45,
+    "maximum_direction_difference_degrees": 45.0,
+    "ambiguity_score_delta": 0.05
+  },
+  "pace_b": {
+    "theta": 2,
+    "pivot_limit_l": 32,
+    "frontier_limit_kf": 16,
+    "breakpoint_cap_mb": 1000000,
+    "threads": 1,
+    "timeout_seconds": 5
+  },
+  "score": {
+    "name": "active transit-corridor affinity",
+    "count_unit": "route_id",
+    "cap": 15
+  }
+}

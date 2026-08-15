@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NYC shuttle result v1",
+  "type": "object",
+  "required": [
+    "schema_version", "query_id", "pair_id", "dataset_id", "source", "destination",
+    "period_id", "interval_start", "interval_end", "budget", "rho", "status",
+    "bounded_parameters", "execution_protocol", "timing_ns", "memory_bytes", "fastest",
+    "pace_b", "candidate_count", "generation", "score_gain_absolute",
+    "score_gain_percent", "travel_time_premium_percent", "final_checksum"
+  ],
+  "properties": {
+    "schema_version": {"const": "nyc-case-result-v1"},
+    "query_id": {"type": "string", "minLength": 1},
+    "bounded_parameters": {
+      "type": "object",
+      "required": ["L", "theta", "Kf", "Mb"],
+      "properties": {
+        "L": {"type": "integer", "minimum": 0},
+        "theta": {"type": "integer", "minimum": 0},
+        "Kf": {"type": "integer", "minimum": 1},
+        "Mb": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "fastest": {"type": "object"},
+    "pace_b": {"type": ["object", "null"]},
+    "final_checksum": {"type": ["string", "null"]}
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "centerline": {
+      "name": "NYC Street Centerline / Centerline",
+      "landing_page_url": "https://data.cityofnewyork.us/City-Government/Centerline/3mf9-qshr",
+      "source_domain": "data.cityofnewyork.us",
+      "view_id": "3mf9-qshr",
+      "resource_view_id": "inkn-q76z",
+      "retrieval_method": "socrata_geojson_paginated",
+      "format": "geojson",
+      "required": true,
+      "intended_pace_use": "geographic matching, direction and road-attribute validation",
+      "attribution_note": "NYC Office of Technology and Innovation / NYC Open Data; 3mf9-qshr is the current map view and inkn-q76z is its official underlying data view"
+    },
+    "dot_traffic_speeds": {
+      "name": "NYC DOT Traffic Speeds",
+      "landing_page_url": "https://dev.socrata.com/foundry/data.cityofnewyork.us/i4gi-tjb9",
+      "feed_page_url": "https://www.nyc.gov/html/dot/html/about/datafeeds.shtml",
+      "source_domain": "data.cityofnewyork.us",
+      "view_id": "i4gi-tjb9",
+      "retrieval_method": "socrata_json_paginated_and_resumable_polling",
+      "format": "json",
+      "where": "data_as_of >= '2026-05-14T00:00:00' and data_as_of < '2026-05-15T00:00:00'",
+      "timestamp_semantics": "Socrata Floating Timestamp localized to America/New_York, then normalized to UTC",
+      "required": true,
+      "intended_pace_use": "observed 15-minute edge travel-time calibration",
+      "attribution_note": "New York City Department of Transportation / NYC Open Data"
+    },
+    "mta_current_bus_routes": {
+      "name": "MTA Current Bus Routes",
+      "landing_page_url": "https://data.ny.gov/Transportation/MTA-Current-Bus-Routes/h2wf-afav",
+      "source_domain": "data.ny.gov",
+      "view_id": "h2wf-afav",
+      "retrieval_method": "socrata_geojson_paginated",
+      "format": "geojson",
+      "required": true,
+      "intended_pace_use": "map current scheduled bus route shapes to DIMACS road arcs",
+      "attribution_note": "Metropolitan Transportation Authority / NY Open Data"
+    },
+    "mta_bus_schedules_2026": {
+      "name": "MTA Bus Schedules: 2026",
+      "landing_page_url": "https://data.ny.gov/Transportation/MTA-Bus-Schedules-2026/4fnn-qsea",
+      "source_domain": "data.ny.gov",
+      "view_id": "4fnn-qsea",
+      "retrieval_method": "socrata_csv_paginated",
+      "format": "csv",
+      "where": "schedule_date = '2026-05-14T00:00:00.000'",
+      "required": true,
+      "intended_pace_use": "active route-pattern bins and terminal candidates",
+      "attribution_note": "Metropolitan Transportation Authority / NY Open Data"
+    },
+    "mta_gtfs_static": {
+      "name": "MTA General Transit Feed Specification (GTFS) Static Data",
+      "landing_page_url": "https://data.ny.gov/Transportation/MTA-General-Transit-Feed-Specification-GTFS-Static/fgm6-ccue",
+      "source_domain": "data.ny.gov",
+      "view_id": "fgm6-ccue",
+      "retrieval_method": "official_catalog_attachment_urls",
+      "format": "zip",
+      "required": false,
+      "fallback_for": "mta_bus_schedules_2026",
+      "intended_pace_use": "fallback only if schedule rows cannot determine trips, stop times, calendar, routes, and shapes",
+      "attribution_note": "Metropolitan Transportation Authority / NY Open Data"
+    },
+    "mta_bus_time": {
+      "name": "MTA Bus Time",
+      "landing_page_url": "https://bustime.mta.info/",
+      "source_domain": "bustime.mta.info",
+      "retrieval_method": "optional_vehicle_monitoring_api",
+      "required": false,
+      "intended_pace_use": "optional observed bus-movement validation only",
+      "attribution_note": "Metropolitan Transportation Authority"
+    }
+  }
+}
