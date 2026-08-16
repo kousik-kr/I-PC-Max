@@ -1,0 +1,13 @@
+{
+  "schema_version": "nyc-v1-preservation-proof-v1",
+  "v1_artifact_manifest_sha256": "a2585eaeefb7349760df55eb2c1a44d5eb604f1b4622555479acdab011bc4674",
+  "v1_content_tree_sha256": "b047ef09bfbb79d5762363b108cd575035a82346c26beb073655b12610e5a22e",
+  "v1_declared_artifact_count": 61,
+  "v1_declared_artifact_mismatches": [],
+  "v1_declared_artifacts_verified": 61,
+  "v1_expected_result_sha256": "c0427dc91d2e7195e847436841f0faf1463311ee2fc4cabb7208c2cada16045d",
+  "v1_file_count": 63,
+  "v1_official_result_sha256": "c0427dc91d2e7195e847436841f0faf1463311ee2fc4cabb7208c2cada16045d",
+  "v1_path": "experiments/results/Final-result/NYC-real-shuttle",
+  "v1_preservation_pass": true
+}

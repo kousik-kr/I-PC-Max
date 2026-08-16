@@ -1,0 +1,468 @@
+{
+  "caps": {
+    "10": {
+      "budget_utilization": {
+        "maximum": 0.7769306534612593,
+        "mean": 0.6438474587697627,
+        "median": 0.621544522768988,
+        "minimum": 0.4790949902069681,
+        "n": 1573,
+        "q1": 0.5779292224162326,
+        "q3": 0.7224115280202907
+      },
+      "budget_violation_count": 0,
+      "by_rho": {
+        "0.2": {
+          "full_interval_delta_s_unresolved_zero": -91.5920661157025,
+          "query_count": 50,
+          "resolved_coverage": 0.12,
+          "resolved_only_delta_s": -0.28650137741046716,
+          "status_counts": {
+            "COMPLETE": 6,
+            "TIMEOUT": 44
+          }
+        },
+        "0.5": {
+          "full_interval_delta_s_unresolved_zero": -92.7920661157025,
+          "query_count": 50,
+          "resolved_coverage": 0.14,
+          "resolved_only_delta_s": -1.101534828807555,
+          "status_counts": {
+            "COMPLETE": 7,
+            "TIMEOUT": 43
+          }
+        }
+      },
+      "cap_seconds": 10,
+      "corr_delta_s_delta_t_pearson": -0.15323833699861863,
+      "corr_delta_s_delta_t_spearman": -0.06300847938835404,
+      "delta_s": {
+        "maximum": 38.0,
+        "mean": -0.7253655435473607,
+        "median": 0.0,
+        "minimum": -17.0,
+        "n": 1573,
+        "q1": -0.19008264462809166,
+        "q3": 0.0
+      },
+      "delta_t_minutes": {
+        "maximum": 1.5241806474427566,
+        "mean": 0.050625479660715865,
+        "median": 0.0,
+        "minimum": -1.423524395052933,
+        "n": 1573,
+        "q1": -0.21707386231761383,
+        "q3": 0.4551876853441641
+      },
+      "departure_samples": 12100,
+      "distinct_path_count": {
+        "maximum": 1.0,
+        "mean": 1.0,
+        "median": 1.0,
+        "minimum": 1.0,
+        "n": 13,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "full_interval_delta_s_unresolved_zero": -92.1920661157024,
+      "full_interval_fastest_score": 99.64826446280992,
+      "full_interval_pace_score_unresolved_zero": 7.456198347107522,
+      "multi_path_rate": 0.0,
+      "pace_vs_fastest_path_change_coverage": 0.47425301970756517,
+      "preference_equal_coverage": 0.5155753337571519,
+      "preference_improvement_coverage": 0.21869040050858232,
+      "preference_loss_coverage": 0.26573426573426573,
+      "profile_cell_count": {
+        "maximum": 1.0,
+        "mean": 1.0,
+        "median": 1.0,
+        "minimum": 1.0,
+        "n": 13,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "query_count": 100,
+      "resolved_coverage": 0.13,
+      "resolved_departure_samples": 1573,
+      "resolved_only_delta_s": -0.7253655435473607,
+      "resolved_only_fastest_score": 58.08073744437381,
+      "resolved_only_pace_score": 57.35537190082645,
+      "route_switches": {
+        "maximum": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "minimum": 0.0,
+        "n": 13,
+        "q1": 0.0,
+        "q3": 0.0
+      },
+      "status_counts": {
+        "COMPLETE": 13,
+        "TIMEOUT": 87
+      },
+      "within_profile_change_coverage": {
+        "maximum": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "minimum": 0.0,
+        "n": 13,
+        "q1": 0.0,
+        "q3": 0.0
+      }
+    },
+    "30": {
+      "budget_utilization": {
+        "maximum": 0.9991693371524323,
+        "mean": 0.6529602859411837,
+        "median": 0.6423518479454828,
+        "minimum": 0.40074378196909605,
+        "n": 1815,
+        "q1": 0.5659142495453895,
+        "q3": 0.7536447808833165
+      },
+      "budget_violation_count": 0,
+      "by_rho": {
+        "0.2": {
+          "full_interval_delta_s_unresolved_zero": -89.13636363636364,
+          "query_count": 50,
+          "resolved_coverage": 0.16,
+          "resolved_only_delta_s": 0.3202479338842975,
+          "status_counts": {
+            "COMPLETE": 8,
+            "TIMEOUT": 42
+          }
+        },
+        "0.5": {
+          "full_interval_delta_s_unresolved_zero": -92.79206611570248,
+          "query_count": 50,
+          "resolved_coverage": 0.14,
+          "resolved_only_delta_s": -1.1015348288075562,
+          "status_counts": {
+            "COMPLETE": 7,
+            "TIMEOUT": 43
+          }
+        }
+      },
+      "cap_seconds": 30,
+      "corr_delta_s_delta_t_pearson": 0.5416649965753108,
+      "corr_delta_s_delta_t_spearman": -0.14484175262955648,
+      "delta_s": {
+        "maximum": 70.0,
+        "mean": -0.3432506887052342,
+        "median": 0.0,
+        "minimum": -31.0,
+        "n": 1815,
+        "q1": -2.0,
+        "q3": 0.0
+      },
+      "delta_t_minutes": {
+        "maximum": 3.425362226379036,
+        "mean": 0.11011439320023456,
+        "median": 0.0019377081391667161,
+        "minimum": 0.0,
+        "n": 1815,
+        "q1": 0.0,
+        "q3": 0.06027499383048962
+      },
+      "departure_samples": 12100,
+      "distinct_path_count": {
+        "maximum": 5.0,
+        "mean": 1.2666666666666666,
+        "median": 1.0,
+        "minimum": 1.0,
+        "n": 15,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "full_interval_delta_s_unresolved_zero": -90.96421487603305,
+      "full_interval_fastest_score": 99.64826446280992,
+      "full_interval_pace_score_unresolved_zero": 8.68404958677686,
+      "multi_path_rate": 0.06666666666666667,
+      "pace_vs_fastest_path_change_coverage": 0.5349862258953169,
+      "preference_equal_coverage": 0.512396694214876,
+      "preference_improvement_coverage": 0.21542699724517905,
+      "preference_loss_coverage": 0.2721763085399449,
+      "profile_cell_count": {
+        "maximum": 12.0,
+        "mean": 1.7333333333333334,
+        "median": 1.0,
+        "minimum": 1.0,
+        "n": 15,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "query_count": 100,
+      "resolved_coverage": 0.15,
+      "resolved_departure_samples": 1815,
+      "resolved_only_delta_s": -0.3432506887052342,
+      "resolved_only_fastest_score": 58.23691460055097,
+      "resolved_only_pace_score": 57.89366391184573,
+      "route_switches": {
+        "maximum": 7.0,
+        "mean": 0.4666666666666667,
+        "median": 0.0,
+        "minimum": 0.0,
+        "n": 15,
+        "q1": 0.0,
+        "q3": 0.0
+      },
+      "status_counts": {
+        "COMPLETE": 15,
+        "TIMEOUT": 85
+      },
+      "within_profile_change_coverage": {
+        "maximum": 0.21487603305785125,
+        "mean": 0.014325068870523417,
+        "median": 0.0,
+        "minimum": 0.0,
+        "n": 15,
+        "q1": 0.0,
+        "q3": 0.0
+      }
+    },
+    "5": {
+      "budget_utilization": {
+        "maximum": 0.7224115280202907,
+        "mean": 0.585960857594488,
+        "median": 0.5779292224162326,
+        "minimum": 0.4790949902069681,
+        "n": 847,
+        "q1": 0.5479968808868098,
+        "q3": 0.621544522768988
+      },
+      "budget_violation_count": 0,
+      "by_rho": {
+        "0.2": {
+          "full_interval_delta_s_unresolved_zero": -99.22826446280992,
+          "query_count": 50,
+          "resolved_coverage": 0.02,
+          "resolved_only_delta_s": -0.47107438016528924,
+          "status_counts": {
+            "COMPLETE": 1,
+            "TIMEOUT": 49
+          }
+        },
+        "0.5": {
+          "full_interval_delta_s_unresolved_zero": -95.70826446280992,
+          "query_count": 50,
+          "resolved_coverage": 0.12,
+          "resolved_only_delta_s": -1.3085399449035813,
+          "status_counts": {
+            "COMPLETE": 6,
+            "TIMEOUT": 44
+          }
+        }
+      },
+      "cap_seconds": 5,
+      "corr_delta_s_delta_t_pearson": -0.26641298383546297,
+      "corr_delta_s_delta_t_spearman": -0.12954828405858548,
+      "delta_s": {
+        "maximum": 22.0,
+        "mean": -1.1889020070838252,
+        "median": 0.0,
+        "minimum": -17.0,
+        "n": 847,
+        "q1": -3.0,
+        "q3": 0.0
+      },
+      "delta_t_minutes": {
+        "maximum": 1.5241806474427566,
+        "mean": 0.05648556502694336,
+        "median": 0.0,
+        "minimum": -1.423524395052933,
+        "n": 847,
+        "q1": -0.2105001014423591,
+        "q3": 0.4551876853441641
+      },
+      "departure_samples": 12100,
+      "distinct_path_count": {
+        "maximum": 1.0,
+        "mean": 1.0,
+        "median": 1.0,
+        "minimum": 1.0,
+        "n": 7,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "full_interval_delta_s_unresolved_zero": -97.46826446280991,
+      "full_interval_fastest_score": 99.64826446280992,
+      "full_interval_pace_score_unresolved_zero": 2.18,
+      "multi_path_rate": 0.0,
+      "pace_vs_fastest_path_change_coverage": 0.5371900826446281,
+      "preference_equal_coverage": 0.5312868949232585,
+      "preference_improvement_coverage": 0.16765053128689492,
+      "preference_loss_coverage": 0.3010625737898465,
+      "profile_cell_count": {
+        "maximum": 1.0,
+        "mean": 1.0,
+        "median": 1.0,
+        "minimum": 1.0,
+        "n": 7,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "query_count": 100,
+      "resolved_coverage": 0.07,
+      "resolved_departure_samples": 847,
+      "resolved_only_delta_s": -1.1889020070838252,
+      "resolved_only_fastest_score": 32.33175914994097,
+      "resolved_only_pace_score": 31.142857142857142,
+      "route_switches": {
+        "maximum": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "minimum": 0.0,
+        "n": 7,
+        "q1": 0.0,
+        "q3": 0.0
+      },
+      "status_counts": {
+        "COMPLETE": 7,
+        "TIMEOUT": 93
+      },
+      "within_profile_change_coverage": {
+        "maximum": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "minimum": 0.0,
+        "n": 7,
+        "q1": 0.0,
+        "q3": 0.0
+      }
+    }
+  },
+  "controlled_variants": {
+    "boundary_note": "External-cap status differences near 30 seconds are timing-sensitive; scientific comparisons use common completed queries.",
+    "effects_vs_v1_control": {
+      "FULL_V2": {
+        "common_completed_queries": 10,
+        "identical_point_path_fraction_on_common_completed": 0.3,
+        "mean_full_interval_score_change_vs_v1_control": 1.897520661157025
+      },
+      "IMPROVED_SCORE_OLD_CONNECTOR": {
+        "common_completed_queries": 19,
+        "identical_point_path_fraction_on_common_completed": 0.8477598956067856,
+        "mean_full_interval_score_change_vs_v1_control": 5.166159199652022
+      },
+      "V1_DATA_CORRECTED_CONNECTOR": {
+        "common_completed_queries": 10,
+        "identical_point_path_fraction_on_common_completed": 0.3,
+        "mean_full_interval_score_change_vs_v1_control": -5.505785123966942
+      }
+    },
+    "selection_manifest_sha256": "d84d851a54b96890ef5e741d7e2a9cf02fca0df15020e835d1e3dd03326c430f",
+    "selection_query_count": 20,
+    "variants": {
+      "FULL_V2": {
+        "mean_full_interval_score_completed": 31.989256198347107,
+        "mean_resolved_score_completed": 31.989256198347107,
+        "query_count": 20,
+        "status_counts": {
+          "COMPLETE": 10,
+          "EXTERNAL_TIMEOUT": 10
+        }
+      },
+      "IMPROVED_SCORE_OLD_CONNECTOR": {
+        "mean_full_interval_score_completed": 43.00371900826446,
+        "mean_resolved_score_completed": 43.34193825042882,
+        "query_count": 20,
+        "status_counts": {
+          "COMPLETE": 20
+        }
+      },
+      "V1_DATA_CORRECTED_CONNECTOR": {
+        "mean_full_interval_score_completed": 33.89421487603306,
+        "mean_resolved_score_completed": 33.89421487603306,
+        "query_count": 20,
+        "status_counts": {
+          "COMPLETE": 10,
+          "EXTERNAL_TIMEOUT": 10
+        }
+      },
+      "V1_DATA_OLD_CONNECTOR": {
+        "mean_full_interval_score_completed": 38.10091344062636,
+        "mean_resolved_score_completed": 38.24993229213686,
+        "query_count": 20,
+        "status_counts": {
+          "COMPLETE": 19,
+          "NO_FEASIBLE_PATH": 1
+        }
+      }
+    }
+  },
+  "determinism": {
+    "cross_cap_all_agree": true,
+    "cross_cap_checksum_agreements": 13,
+    "cross_cap_repeated_completed_queries": 13,
+    "independent_trace_checksum_agreements": 15,
+    "independent_trace_reruns": 15,
+    "trace_all_agree": true
+  },
+  "input_sha256": {
+    "cap_10": "a6b6c726fea8fa818473e4ffd8bec292f7171b4cb523d84071de5bd19dc6801a",
+    "cap_30": "1026fecb511254b3310796d7a08caa6e53d64bce026bd777b48007e1b2945bc2",
+    "cap_5": "4116785b669720fe9ae346f1bc390f95be62ee01c629f23194b3fe71a5f0f09a",
+    "replay": "d2fc16c69f96a96eb6f01d65c088dea3e5b082883f17549458e3a359e294a0a1",
+    "v1_results": "c0427dc91d2e7195e847436841f0faf1463311ee2fc4cabb7208c2cada16045d"
+  },
+  "interval_best_registry": {
+    "csv_sha256": "1331e01759d692600961a895755dcf575c4efbc424e615a81e7ae23b48302371",
+    "query_count": 15,
+    "selected_departure_coverage": {
+      "maximum": 1.0,
+      "mean": 0.9421487603305785,
+      "median": 1.0,
+      "minimum": 0.1322314049586777,
+      "n": 15,
+      "q1": 1.0,
+      "q3": 1.0
+    }
+  },
+  "invariants": {
+    "departure_samples": 12100,
+    "fastest_in_query_region": 12100,
+    "fresh_fastest_path_agreement": 12100,
+    "fresh_fastest_travel_agreement": 12100,
+    "fresh_fastest_valid": 12100,
+    "pace_budget_violations": 0,
+    "pace_exact_replay_valid": 1815,
+    "pace_resolved_samples": 1815,
+    "query_count": 100,
+    "stored_fastest_valid": 12100,
+    "trace_output_checksum_agreements": 15,
+    "traced_resolved_queries": 15
+  },
+  "query_region_growth": {
+    "csv_sha256": "467b5a2dd07330061600eeb4d6e138714a394ec735c1d36883c30e2b5c108594",
+    "edges_nondecrease_fraction": 1,
+    "edges_ratio_r50_r20": {
+      "maximum": 1.741933291035983,
+      "mean": 1.4354150399374848,
+      "median": 1.4602703660004681,
+      "minimum": 1.0691495093783863,
+      "n": 50,
+      "q1": 1.3089543061046576,
+      "q3": 1.612924703291236
+    },
+    "nodes_nondecrease_fraction": 1,
+    "nodes_ratio_r50_r20": {
+      "maximum": 1.790368484122229,
+      "mean": 1.4683422055478546,
+      "median": 1.4986074357254422,
+      "minimum": 1.0787765240821825,
+      "n": 50,
+      "q1": 1.348760881424758,
+      "q3": 1.6399772743579213
+    },
+    "paired_query_families": 50
+  },
+  "schema_version": "nyc-v2-validation-metrics-v1",
+  "segmentation_bias": {
+    "corr_score_edge_count": 0.5592274513897784,
+    "corr_score_geometric_length": 0.8029077996835845,
+    "csv_sha256": "a12a9816d6b7281dd152a74d8c56dbd7d5dcddacb0d6f1cb39897f15c23886fc",
+    "resolved_temporal_path_samples": 1815,
+    "severe_segmentation_bias_by_predeclared_rule": false,
+    "severity_rule": "severe iff |corr(score,edge_count)| >= 0.70 and exceeds |corr(score,geometric_length)| by > 0.15"
+  }
+}

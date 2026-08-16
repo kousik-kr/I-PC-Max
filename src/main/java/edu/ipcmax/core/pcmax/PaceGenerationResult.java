@@ -31,5 +31,10 @@ public record PaceGenerationResult(
             throw new IllegalArgumentException(
                     "global exactness requires complete uncapped generation");
         }
+        if (completion == PaceCompletion.NO_FEASIBLE_PATH
+                && exactnessScope != PaceExactnessScope.GLOBAL_CERTIFIED) {
+            throw new IllegalArgumentException(
+                    "NO_FEASIBLE_PATH requires independent global certification");
+        }
     }
 }

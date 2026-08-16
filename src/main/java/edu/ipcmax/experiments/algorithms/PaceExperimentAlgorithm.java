@@ -97,7 +97,11 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
         ExperimentStatus status = switch (generation.completion()) {
             case COMPLETE -> feasible
                     ? ExperimentStatus.COMPLETED
-                    : ExperimentStatus.NO_FEASIBLE_PATH;
+                    : ExperimentStatus
+                            .UNRESOLVED_NO_GENERATED_CANDIDATE;
+            case UNRESOLVED_NO_GENERATED_CANDIDATE ->
+                    ExperimentStatus
+                            .UNRESOLVED_NO_GENERATED_CANDIDATE;
             case NO_FEASIBLE_PATH -> ExperimentStatus.NO_FEASIBLE_PATH;
             case RESOURCE_TRUNCATED, ABORTED ->
                     ExperimentStatus.LIMIT_EXCEEDED;

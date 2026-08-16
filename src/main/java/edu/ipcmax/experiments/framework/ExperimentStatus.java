@@ -4,6 +4,7 @@ package edu.ipcmax.experiments.framework;
 public enum ExperimentStatus {
     COMPLETED,
     CERTIFIED_COMPLETE,
+    UNRESOLVED_NO_GENERATED_CANDIDATE,
     NO_FEASIBLE_PATH,
     TIME_CAPPED_NOT_CERTIFIED,
     PATH_CAPPED_NOT_CERTIFIED,

@@ -1009,6 +1009,9 @@ public final class PaceBench {
         status.put("status_code", result.status().name());
         status.put("completed", result.status() == ExperimentStatus.COMPLETED
                 || result.status() == ExperimentStatus.CERTIFIED_COMPLETE
+                || result.status()
+                        == ExperimentStatus
+                                .UNRESOLVED_NO_GENERATED_CANDIDATE
                 || result.status() == ExperimentStatus.NO_FEASIBLE_PATH
                 || result.status() == ExperimentStatus.TIME_CAPPED_NOT_CERTIFIED
                 || result.status() == ExperimentStatus.PATH_CAPPED_NOT_CERTIFIED);
@@ -1159,16 +1162,15 @@ public final class PaceBench {
                 : pace.features().pivotDiversificationEnabled());
         result.put("connector_portfolio_enabled", pace == null ? false
                 : pace.features().connectorPortfolioEnabled());
-        result.put("single_fastest_lower_bound_witness_enabled",
+        result.put("single_fastest_lower_bound_witness_enabled", false);
+        result.put("single_midpoint_fastest_connector_enabled",
                 pace != null
-                        && pace.singleFastestLowerBoundWitnessEnabled());
+                        && pace.singleMidpointFastestConnectorEnabled());
         result.put("temporal_replay_contract",
                 options.algorithm.equals("iscope") || options.algorithm.equals("allfp")
                         ? "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1"
                         : pace == null ? null
-                : pace.singleFastestLowerBoundWitnessEnabled()
-                        ? "DECLARED_DEPARTURE_GRID_LINEARIZED-v1"
-                        : "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1");
+                                : "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1");
         result.put("connector_cache_enabled", pace == null ? false
                 : pace.features().connectorCacheEnabled());
         result.put("profile_cache_enabled", pace == null ? false
@@ -1223,6 +1225,7 @@ public final class PaceBench {
                 "pivot_diversification_enabled",
                 "connector_portfolio_enabled",
                 "single_fastest_lower_bound_witness_enabled",
+                "single_midpoint_fastest_connector_enabled",
                 "temporal_replay_contract",
                 "connector_cache_enabled",
                 "profile_cache_enabled",
@@ -1656,6 +1659,9 @@ public final class PaceBench {
     private static boolean isFailure(ExperimentStatus status) {
         return status != ExperimentStatus.COMPLETED
                 && status != ExperimentStatus.CERTIFIED_COMPLETE
+                && status
+                        != ExperimentStatus
+                                .UNRESOLVED_NO_GENERATED_CANDIDATE
                 && status != ExperimentStatus.NO_FEASIBLE_PATH
                 && status != ExperimentStatus.TIME_CAPPED_NOT_CERTIFIED
                 && status != ExperimentStatus.PATH_CAPPED_NOT_CERTIFIED;

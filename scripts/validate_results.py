@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_TOP = {"schema_version", "run", "system", "dataset", "query", "configuration", "status", "timing_ns", "memory_bytes", "counters", "output", "quality", "error"}
-STATUSES = {"COMPLETED", "NO_FEASIBLE_PATH", "TIMEOUT", "OUT_OF_MEMORY", "LIMIT_EXCEEDED", "FUNCTION_HORIZON_EXCEEDED", "INVALID_QUERY", "INVALID_CONFIGURATION", "ERROR"}
+STATUSES = {"COMPLETED", "UNRESOLVED_NO_GENERATED_CANDIDATE", "NO_FEASIBLE_PATH", "TIMEOUT", "OUT_OF_MEMORY", "LIMIT_EXCEEDED", "FUNCTION_HORIZON_EXCEEDED", "INVALID_QUERY", "INVALID_CONFIGURATION", "ERROR"}
 
 
 def paths(inputs: list[Path]) -> list[Path]:
@@ -140,7 +140,7 @@ def main() -> int:
         checksum = record["output"].get("profile_checksum")
         method = config["algorithm"]
         status = record["status"]
-        expected_completed = status["status_code"] in {"COMPLETED", "NO_FEASIBLE_PATH"}
+        expected_completed = status["status_code"] in {"COMPLETED", "UNRESOLVED_NO_GENERATED_CANDIDATE", "NO_FEASIBLE_PATH"}
         if status.get("completed") != expected_completed:
             errors.append(f"invalid completed flag: {query}/{method}")
         if method not in {"pace-x", "pace-b"} and any(config.get(name) is not None for name in ("theta", "anchor_limit", "k")):

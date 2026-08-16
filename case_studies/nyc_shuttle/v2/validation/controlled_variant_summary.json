@@ -1,0 +1,59 @@
+{
+  "boundary_note": "External-cap status differences near 30 seconds are timing-sensitive; scientific comparisons use common completed queries.",
+  "effects_vs_v1_control": {
+    "FULL_V2": {
+      "common_completed_queries": 10,
+      "identical_point_path_fraction_on_common_completed": 0.3,
+      "mean_full_interval_score_change_vs_v1_control": 1.897520661157025
+    },
+    "IMPROVED_SCORE_OLD_CONNECTOR": {
+      "common_completed_queries": 19,
+      "identical_point_path_fraction_on_common_completed": 0.8477598956067856,
+      "mean_full_interval_score_change_vs_v1_control": 5.166159199652022
+    },
+    "V1_DATA_CORRECTED_CONNECTOR": {
+      "common_completed_queries": 10,
+      "identical_point_path_fraction_on_common_completed": 0.3,
+      "mean_full_interval_score_change_vs_v1_control": -5.505785123966942
+    }
+  },
+  "selection_manifest_sha256": "d84d851a54b96890ef5e741d7e2a9cf02fca0df15020e835d1e3dd03326c430f",
+  "selection_query_count": 20,
+  "variants": {
+    "FULL_V2": {
+      "mean_full_interval_score_completed": 31.989256198347107,
+      "mean_resolved_score_completed": 31.989256198347107,
+      "query_count": 20,
+      "status_counts": {
+        "COMPLETE": 10,
+        "EXTERNAL_TIMEOUT": 10
+      }
+    },
+    "IMPROVED_SCORE_OLD_CONNECTOR": {
+      "mean_full_interval_score_completed": 43.00371900826446,
+      "mean_resolved_score_completed": 43.34193825042882,
+      "query_count": 20,
+      "status_counts": {
+        "COMPLETE": 20
+      }
+    },
+    "V1_DATA_CORRECTED_CONNECTOR": {
+      "mean_full_interval_score_completed": 33.89421487603306,
+      "mean_resolved_score_completed": 33.89421487603306,
+      "query_count": 20,
+      "status_counts": {
+        "COMPLETE": 10,
+        "EXTERNAL_TIMEOUT": 10
+      }
+    },
+    "V1_DATA_OLD_CONNECTOR": {
+      "mean_full_interval_score_completed": 38.10091344062636,
+      "mean_resolved_score_completed": 38.24993229213686,
+      "query_count": 20,
+      "status_counts": {
+        "COMPLETE": 19,
+        "NO_FEASIBLE_PATH": 1
+      }
+    }
+  }
+}

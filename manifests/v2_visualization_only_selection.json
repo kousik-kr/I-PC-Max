@@ -1,0 +1,39 @@
+{
+  "schema_version": "nyc-v2-visualization-only-selection-v1",
+  "purpose": "INTERVAL_BEST_LIMITATION_ROLE_C",
+  "official_statistical_inclusion": false,
+  "selection_population": "30-second TIMEOUT results whose pair-period has a different rho configuration that normally completed at 30 seconds, excluding Role A and Role B query IDs",
+  "selection_rule": [
+    "maximum fastest distinct_path_count",
+    "then maximum fastest route_switches",
+    "then maximum fastest profile_cell_count",
+    "then lexicographically smallest query_id"
+  ],
+  "selected_query": {
+    "query_id": "NYC-Q024-EVENING-R50",
+    "pair_id": "NYC-024",
+    "period": "EVENING",
+    "rho": 0.5,
+    "B": 19.657666921282,
+    "source": 137023,
+    "destination": 190723,
+    "interval_start": 1020,
+    "interval_end": 1140,
+    "source_30s_status": "TIMEOUT",
+    "fastest_profile_cells": 20,
+    "fastest_distinct_paths": 16,
+    "fastest_route_switches": 19,
+    "fastest_profile_checksum": "e9442a7621f0a396ac7a69d11899b22f0eecd7f886bdbd12a68f07bf11c8b93e"
+  },
+  "source_30s_result_sha256": "1026fecb511254b3310796d7a08caa6e53d64bce026bd777b48007e1b2945bc2",
+  "execution_sequence": [60, 120],
+  "stop_after_first_normal_completion": true,
+  "frozen_parameters": {
+    "L": 32,
+    "theta": 2,
+    "Kf": 16,
+    "Mb": 1000000,
+    "threads": 1,
+    "baseline_threads": 8
+  }
+}

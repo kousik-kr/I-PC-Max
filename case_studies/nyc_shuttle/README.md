@@ -46,6 +46,29 @@ make nyc-report
 make nyc-finalize
 ```
 
+The post-run story validation is intentionally separate from the official
+five-second runner. With the frozen query and result JSONL present, run:
+
+```bash
+python3 scripts/run_maven.py -DskipTests package
+java -Xmx48g -cp target/pace-bench.jar \
+  edu.ipcmax.casestudy.nyc.NycStoryDiagnosticBench \
+  --dataset case_studies/nyc_shuttle/processed/NYC-REAL \
+  --query-file case_studies/nyc_shuttle/manifests/nyc_queries.jsonl \
+  --result-file case_studies/nyc_shuttle/results/nyc_case_results.jsonl \
+  --output case_studies/nyc_shuttle/results/diagnostics/nyc_story_replay.jsonl \
+  --scope-output case_studies/nyc_shuttle/results/diagnostics/query_region_union.json
+PYTHONPATH=case_studies/nyc_shuttle/scripts \
+  case_studies/nyc_shuttle/.venv/bin/python \
+  case_studies/nyc_shuttle/scripts/analyze_story_validation.py
+make nyc-finalize
+```
+
+The policy-cap and PACE-X diagnostics use
+`edu.ipcmax.casestudy.nyc.NycPolicyDiagnosticBench`; their configurations,
+caps, hashes, and outcomes are recorded in `reports/nyc_story_validation.md`
+and `results/diagnostics/`.
+
 `nyc-run` is resumable and refuses non-five-second protocols. It writes one JSONL row per manifest query, including exact-replay feasibility, profile structure, score gain, travel-time premium, timing, memory samples, candidate statistics, and checksums. `nyc-analyze` rejects partial/mismatched batches and any exact-replay budget violation.
 
 If a future DOT inspection shows only a latest snapshot, collect observations explicitly:
@@ -62,6 +85,8 @@ This target polls every five minutes by default, saves raw responses and checksu
 - `processed/NYC-REAL/`: production-loader graph, FIFO travel functions, provenance, scores, and graph manifest.
 - `manifests/`: deterministic terminal pairs, queries, and exclusions.
 - `results/`: exact batch JSONL and aggregate summaries.
+- `results/diagnostics/`: independent feasibility replay, stage traces,
+  PACE-X attempts, cap sweeps, provenance scopes, and derived CSV/JSON.
 - `reports/`: source diagnostics, mapping quality, score definition, data quality, findings, and LaTeX tables.
 - `figures/`: only an automatically qualifying, actual result figure; figure generation fails explicitly if the predeclared rule has no qualifying query.
 - `experiments/results/Final-result/NYC-real-shuttle/`: compact final bundle created by `make nyc-finalize`. Existing USA and other final results are not overwritten.

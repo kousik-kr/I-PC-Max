@@ -74,7 +74,7 @@ def aggregate(records: list[dict], keys: tuple[str, ...]) -> list[dict]:
             "mean_path_agreement": statistics.fmean(agreements) if agreements else None,
             "median_path_agreement": statistics.median(agreements) if agreements else None,
             "mean_integrated_regret": statistics.fmean(regrets) if regrets else None,
-            "completion_fraction": sum(row["status"] in {"COMPLETED", "NO_FEASIBLE_PATH"} for row in group) / total,
+            "completion_fraction": sum(row["status"] in {"COMPLETED", "UNRESOLVED_NO_GENERATED_CANDIDATE", "NO_FEASIBLE_PATH"} for row in group) / total,
             "timeout_fraction": sum(row["status"] == "TIMEOUT" for row in group) / total,
             "out_of_memory_fraction": sum(row["status"] == "OUT_OF_MEMORY" for row in group) / total,
             "peak_memory_bytes": max((row["peak_memory_bytes"] for row in group if isinstance(row["peak_memory_bytes"], (int, float))), default=None),
@@ -97,7 +97,7 @@ def main() -> int:
     write(args.output_dir / "quality_runtime_summary.csv", method)
     write(args.output_dir / "ablation_summary.csv", [row for row in method if row["ablation"] != "none"])
     write(args.output_dir / "parallelism_summary.csv", aggregate(records, ("algorithm", "threads")))
-    failures = [flat(record) for record in records if record["status"]["status_code"] not in {"COMPLETED", "NO_FEASIBLE_PATH"}]
+    failures = [flat(record) for record in records if record["status"]["status_code"] not in {"COMPLETED", "UNRESOLVED_NO_GENERATED_CANDIDATE", "NO_FEASIBLE_PATH"}]
     write(args.output_dir / "failure_summary.csv", failures)
     print(json.dumps({"records": len(records), "output_dir": str(args.output_dir)}))
     return 0

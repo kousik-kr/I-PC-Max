@@ -50,7 +50,12 @@ public record AlgorithmResult(
     public static AlgorithmResult profile(EnvelopeProfile profile, ExactnessScope exactnessScope) {
         boolean feasible = profile.segments().stream().anyMatch(segment -> segment.found());
         return new AlgorithmResult(
-                feasible ? ExperimentStatus.COMPLETED : ExperimentStatus.NO_FEASIBLE_PATH,
+                feasible
+                        ? ExperimentStatus.COMPLETED
+                        : exactnessScope == ExactnessScope.GLOBAL_CERTIFIED
+                                ? ExperimentStatus.NO_FEASIBLE_PATH
+                                : ExperimentStatus
+                                        .UNRESOLVED_NO_GENERATED_CANDIDATE,
                 profile, exactnessScope, Map.of(), null, null);
     }
 

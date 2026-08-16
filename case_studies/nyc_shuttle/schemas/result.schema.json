@@ -1,17 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "NYC shuttle result v1",
+  "title": "NYC shuttle result v2",
   "type": "object",
   "required": [
     "schema_version", "query_id", "pair_id", "dataset_id", "source", "destination",
     "period_id", "interval_start", "interval_end", "budget", "rho", "status",
+    "manuscript_status_symbol",
     "bounded_parameters", "execution_protocol", "timing_ns", "memory_bytes", "fastest",
     "pace_b", "candidate_count", "generation", "score_gain_absolute",
     "score_gain_percent", "travel_time_premium_percent", "final_checksum"
   ],
   "properties": {
-    "schema_version": {"const": "nyc-case-result-v1"},
+    "schema_version": {"const": "nyc-case-result-v2"},
     "query_id": {"type": "string", "minLength": 1},
+    "manuscript_status_symbol": {"type": ["string", "null"], "enum": ["U", null]},
     "bounded_parameters": {
       "type": "object",
       "required": ["L", "theta", "Kf", "Mb"],

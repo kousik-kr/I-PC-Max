@@ -369,7 +369,8 @@ def read_schedule_pages(paths: list[Path]) -> Any:
 
 
 def build_scores(output_graph: Path, shape_map_path: Path, schedule_pages: list[Path],
-                 report: Path, config: dict[str, Any]) -> dict[str, Any]:
+                 report: Path, config: dict[str, Any],
+                 shape_inventory_path: Path | None = None) -> dict[str, Any]:
     import pandas as pd  # type: ignore
 
     manifest_path = output_graph / "manifest.json"
@@ -381,7 +382,7 @@ def build_scores(output_graph: Path, shape_map_path: Path, schedule_pages: list[
         support["observed_end_utc"], minutes,
     )
     mapping = pd.read_parquet(shape_map_path)
-    required = {"route_id", "shape_id", "arc_id"}
+    required = {"shape_id", "arc_id"}
     if not required.issubset(mapping.columns):
         raise CaseStudyError(f"MTA shape map missing {sorted(required - set(mapping.columns))}")
     route_by_shape_bin: dict[tuple[str, int], set[str]] = defaultdict(set)
@@ -402,6 +403,14 @@ def build_scores(output_graph: Path, shape_map_path: Path, schedule_pages: list[
     joined_route_ids = {
         route for route, shape, _ in active if shape in arcs_by_shape
     }
+    active_shape_ids = {shape for _, shape, _ in active}
+    mapped_active_shape_ids = active_shape_ids.intersection(arcs_by_shape.index)
+    exact_matched_units = sum(1 for _, shape, _ in active if shape in arcs_by_shape)
+    inventory: dict[str, Any] = {}
+    if shape_inventory_path is not None:
+        inventory = json.loads(shape_inventory_path.read_text(encoding="utf-8"))
+    exact_available = int(inventory.get(
+        "exact_shape_geometries_available", len(mapped_active_shape_ids)))
     horizon = int(support["end"])
     bin_count = horizon // minutes
     cap = int(config["score"]["cap"])
@@ -444,8 +453,15 @@ def build_scores(output_graph: Path, shape_map_path: Path, schedule_pages: list[
         "score_bearing_edges": bearing_edges,
         "active_route_ids": len({route for route, _, _ in active}),
         "mapped_active_route_ids": len(joined_route_ids),
-        "active_shape_ids": len({shape for _, shape, _ in active}),
+        "active_shape_ids": len(active_shape_ids),
+        "exact_shape_geometries_available": exact_available,
+        "exact_shape_geometries_mapped_to_dimacs": len(mapped_active_shape_ids),
         "unmatched_active_shapes": len(unmatched_active_shapes),
+        "active_route_shape_bin_exact_matches": exact_matched_units,
+        "active_route_shape_bin_exact_match_percent":
+            100 * exact_matched_units / len(active),
+        "route_geometry_fallback_count": 0,
+        "shape_geometry_contract": "EXACT_SHAPE_ID_TO_GTFS_SHAPES_TXT_ONLY",
     }
     if "score_functions.jsonl.gz" not in manifest["output_files"]:
         manifest["output_files"].append("score_functions.jsonl.gz")
@@ -456,8 +472,15 @@ def build_scores(output_graph: Path, shape_map_path: Path, schedule_pages: list[
         "active_route_shape_bins": len(active),
         "active_route_ids": len({route for route, _, _ in active}),
         "mapped_active_route_ids": len(joined_route_ids),
-        "active_shape_ids": len({shape for _, shape, _ in active}),
+        "active_shape_ids": len(active_shape_ids),
+        "exact_shape_geometries_available": exact_available,
+        "exact_shape_geometries_mapped_to_dimacs": len(mapped_active_shape_ids),
         "unmatched_active_shapes": len(unmatched_active_shapes),
+        "active_route_shape_bin_exact_matches": exact_matched_units,
+        "active_route_shape_bin_exact_match_percent":
+            100 * exact_matched_units / len(active),
+        "route_geometry_fallback_count": 0,
+        "shape_geometry_contract": "EXACT_SHAPE_ID_TO_GTFS_SHAPES_TXT_ONLY",
         "score_bearing_edges": bearing_edges,
         "score_bearing_edge_percent": 100 * bearing_edges / arc_count,
         "score_breakpoints": breakpoints,
@@ -468,9 +491,10 @@ def build_scores(output_graph: Path, shape_map_path: Path, schedule_pages: list[
         "# Transit-corridor affinity score", "",
         "The primary score is a shuttle corridor preference proxy, not a ground-truth MTA preference.", "",
         "For each directed DIMACS arc `e` and 15-minute bin `t`, `N_e(t)` is the number of distinct ",
-        "scheduled active MTA `route_id` values whose mapped route shape uses `e`. The score is ",
+        "scheduled active MTA `route_id` values whose exact `shape_id -> shapes.txt` mapping uses `e`. The score is ",
         "`sigma_e(t) = min(15, N_e(t))`; all other arcs have score zero.", "",
-        "Route IDs are counted instead of shape IDs so bundle/direction shape duplication cannot inflate the proxy.", "",
+        "Route IDs are counted instead of shape IDs so bundle/direction shape duplication cannot inflate the proxy. ",
+        "No `route_id` geometry fallback is used.", "",
     ] + [f"- {key}: {value}" for key, value in stats.items()]
     atomic_write_text(report, "\n".join(lines) + "\n")
     return stats

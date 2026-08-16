@@ -10,11 +10,10 @@ import edu.ipcmax.core.function.Domain;
  * Query-scoped temporal forward/backward label index.
  *
  * <p>Lower-bound labels are still supplied by {@link QueryLowerBounds}; this
- * class adds reusable exact temporal portfolios inside the already-built
- * corridor.  A request is single-flight keyed by its complete temporal domain,
- * residual budget, and looplessness masks.  Thus concurrent pivot/final joins
- * share every exact alternative while cache-disabled runs retain the old
- * online connector path as an explicit fallback.</p>
+ * class adds reusable exact temporal connector labels inside the already-built
+ * corridor. A request is single-flight keyed by its complete temporal domain,
+ * residual budget, and looplessness masks. PACE-B retains one midpoint-fastest
+ * structure per connected request cell.</p>
  */
 final class QueryScopedConnectorLabelStore {
     private static final int MAXIMUM_LABEL_ENTRIES = 8_192;
@@ -44,7 +43,6 @@ final class QueryScopedConnectorLabelStore {
                 toDestination, "toDestination");
         this.metrics = java.util.Objects.requireNonNull(
                 metrics, "metrics");
-        connectors.attachQueryLabels(fromSource, toDestination);
         this.cacheEnabled = connectors.memoizationEnabled();
         metrics.observeCounter(
                 "forward_lower_bound_labels",

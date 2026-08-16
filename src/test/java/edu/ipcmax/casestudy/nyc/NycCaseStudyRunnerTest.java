@@ -25,13 +25,35 @@ class NycCaseStudyRunnerTest {
     }
 
     @Test
-    void boundedProtocolRequiresFiveSecondsBeforeGraphLoading() {
+    void boundedProtocolAllowsOnlyPredeclaredCapsBeforeGraphLoading() {
         IllegalArgumentException failure = assertThrows(
                 IllegalArgumentException.class,
                 () -> NycShuttleCaseStudyBench.main(new String[] {
                         "--dataset", "missing", "--query-file", "missing",
                         "--output", "missing", "--timeout-seconds", "4"}));
-        assertTrue(failure.getMessage().contains("exactly --timeout-seconds 5"));
+        assertTrue(failure.getMessage().contains("5, 10, or 30"));
+    }
+
+    @Test
+    void visualizationOnlyProtocolRejectsOfficialCapsBeforeGraphLoading() {
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> NycShuttleCaseStudyBench.main(new String[] {
+                        "--dataset", "missing", "--query-file", "missing",
+                        "--output", "missing", "--query-id", "NYC-Q024-EVENING-R50",
+                        "--timeout-seconds", "30", "--visualization-only"}));
+        assertTrue(failure.getMessage().contains("60 or 120"));
+    }
+
+    @Test
+    void visualizationOnlyProtocolRequiresOneQueryBeforeGraphLoading() {
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> NycShuttleCaseStudyBench.main(new String[] {
+                        "--dataset", "missing", "--query-file", "missing",
+                        "--output", "missing", "--timeout-seconds", "60",
+                        "--visualization-only"}));
+        assertTrue(failure.getMessage().contains("requires exactly one --query-id"));
     }
 
     @Test

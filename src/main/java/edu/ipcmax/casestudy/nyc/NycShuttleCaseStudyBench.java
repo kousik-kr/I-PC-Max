@@ -64,8 +64,18 @@ public final class NycShuttleCaseStudyBench {
 
     public static void main(String[] args) throws Exception {
         Options options = Options.parse(args);
-        if (options.timeoutSeconds() != 5) {
-            throw new IllegalArgumentException("NYC bounded protocol requires exactly --timeout-seconds 5");
+        if (options.visualizationOnly()) {
+            if (!Set.of(60, 120).contains(options.timeoutSeconds())) {
+                throw new IllegalArgumentException(
+                        "NYC visualization-only protocol permits only --timeout-seconds 60 or 120");
+            }
+            if (options.queryId() == null || options.queryId().isBlank()) {
+                throw new IllegalArgumentException(
+                        "NYC visualization-only protocol requires exactly one --query-id");
+            }
+        } else if (!Set.of(5, 10, 30).contains(options.timeoutSeconds())) {
+            throw new IllegalArgumentException(
+                    "NYC V2 protocol permits only --timeout-seconds 5, 10, or 30");
         }
         GeneratedGraphDataset loaded = new GeneratedGraphLoader().load(options.dataset());
         TDGraph graph = loaded.graph();
@@ -145,7 +155,8 @@ public final class NycShuttleCaseStudyBench {
         } catch (TimeoutException timeout) {
             future.cancel(true);
             status = "TIMEOUT";
-            error = "PACE-B exceeded the 5-second case-study execution limit";
+            error = "PACE-B exceeded the " + options.timeoutSeconds()
+                    + "-second case-study execution limit";
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             future.cancel(true);
@@ -161,7 +172,7 @@ public final class NycShuttleCaseStudyBench {
         long memoryAfter = usedHeap();
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("schema_version", "nyc-case-result-v1");
+        result.put("schema_version", "nyc-case-result-v2");
         result.put("query_id", row.queryId());
         result.put("pair_id", row.pairId());
         result.put("dataset_id", row.datasetId());
@@ -173,6 +184,9 @@ public final class NycShuttleCaseStudyBench {
         result.put("budget", row.budget());
         result.put("rho", row.rho());
         result.put("status", status);
+        result.put("manuscript_status_symbol",
+                "UNRESOLVED_NO_GENERATED_CANDIDATE".equals(status)
+                        ? "U" : null);
         result.put("error", error);
         result.put("bounded_parameters", Map.of(
                 "L", options.pivotLimitL(),
@@ -181,14 +195,21 @@ public final class NycShuttleCaseStudyBench {
                 "Mb", options.breakpointCapMb()));
         result.put("execution_protocol", Map.of(
                 "timeout_seconds", options.timeoutSeconds(),
+                "run_role", options.visualizationOnly()
+                        ? "VISUALIZATION_ONLY"
+                        : options.timeoutSeconds() == 5 ? "PRIMARY" : "DIAGNOSTIC",
+                "official_statistical_inclusion", !options.visualizationOnly(),
                 "threads", options.threads(),
                 "baseline_threads", options.baselineThreads(),
+                "connector_selection",
+                        "EXACT_FIFO_AT_CONNECTED_CELL_MIDPOINT_ONE_STRUCTURE_V2",
                 "legacy_connector_portfolio_enabled", false,
                 "legacy_connector_cache_enabled", false,
                 "legacy_connector_and_query_work_caps", "UNBOUNDED_NOT_STOPPING_CRITERIA"));
         result.put("timing_ns", Map.of(
                 "pace_b", paceNanos,
                 "fastest_profile", baselineNanos));
+        result.put("actual_pace_runtime_seconds", paceNanos / 1_000_000_000.0);
         result.put("memory_bytes", Map.of(
                 "heap_before", memoryBefore,
                 "heap_after", memoryAfter,
@@ -461,7 +482,9 @@ public final class NycShuttleCaseStudyBench {
                     continue;
                 }
                 JsonNode node = JSON.readTree(line);
-                if (!"nyc-query-v1".equals(node.path("schema_version").asText())) {
+                String schemaVersion = node.path("schema_version").asText();
+                if (!"nyc-query-v1".equals(schemaVersion)
+                        && !"nyc-query-v2".equals(schemaVersion)) {
                     throw new IOException(path + ":" + lineNumber + ": unsupported schema_version");
                 }
                 QueryRow row = new QueryRow(
@@ -623,7 +646,8 @@ public final class NycShuttleCaseStudyBench {
             int threads,
             int baselineThreads,
             int timeoutSeconds,
-            boolean resume) {
+            boolean resume,
+            boolean visualizationOnly) {
         private static final Set<String> OBSOLETE = Set.of(
                 "--connector-limit-kc", "--connector-expansion-cap-mc",
                 "--query-work-cap-mq", "--connector-portfolio",
@@ -632,11 +656,12 @@ public final class NycShuttleCaseStudyBench {
                 "--dataset", "--query-file", "--output", "--query-id",
                 "--theta", "--pivot-limit-l", "--frontier-limit-kf",
                 "--breakpoint-cap-mb", "--threads", "--baseline-threads",
-                "--timeout-seconds", "--resume");
+                "--timeout-seconds", "--resume", "--visualization-only");
 
         static Options parse(String[] args) {
             Map<String, String> values = new LinkedHashMap<>();
             boolean resume = false;
+            boolean visualizationOnly = false;
             for (int index = 0; index < args.length; index++) {
                 String option = args[index];
                 if (OBSOLETE.contains(option)) {
@@ -649,6 +674,10 @@ public final class NycShuttleCaseStudyBench {
                 }
                 if ("--resume".equals(option)) {
                     resume = true;
+                    continue;
+                }
+                if ("--visualization-only".equals(option)) {
+                    visualizationOnly = true;
                     continue;
                 }
                 if (!option.startsWith("--") || index + 1 >= args.length) {
@@ -673,7 +702,8 @@ public final class NycShuttleCaseStudyBench {
                     integer(values, "--threads", 1),
                     integer(values, "--baseline-threads", 8),
                     integer(values, "--timeout-seconds", 5),
-                    resume);
+                    resume,
+                    visualizationOnly);
         }
 
         private static int integer(Map<String, String> values, String key, int fallback) {
@@ -693,7 +723,9 @@ public final class NycShuttleCaseStudyBench {
                             + "--output JSONL [--query-id ID] [--theta N] [--pivot-limit-l N] "
                             + "[--frontier-limit-kf N] [--breakpoint-cap-mb N] "
                             + "[--threads N] [--baseline-threads N] "
-                            + "[--timeout-seconds 5] [--resume]");
+                            + "[--timeout-seconds 5|10|30] [--resume] or "
+                            + "--query-id ID --visualization-only "
+                            + "--timeout-seconds 60|120");
         }
     }
 }

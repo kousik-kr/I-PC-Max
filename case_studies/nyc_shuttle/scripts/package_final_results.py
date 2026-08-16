@@ -61,9 +61,10 @@ def main() -> int:
             "results": [CASE_ROOT / "results/nyc_case_results.jsonl",
                         CASE_ROOT / "results/summary.json",
                         CASE_ROOT / "results/summary_by_rho.csv"],
+            "diagnostics": sorted((CASE_ROOT / "results/diagnostics").glob("*")),
             "reports": sorted((CASE_ROOT / "reports").glob("*.md")),
             "tables": sorted((CASE_ROOT / "reports/generated").glob("*.tex")),
-            "figures": sorted((CASE_ROOT / "figures").glob("nyc_representative_query.*")),
+            "figures": sorted((CASE_ROOT / "figures").glob("nyc_*")),
             "manifests": sorted((CASE_ROOT / "manifests").glob("nyc_*")),
             "config": sorted((CASE_ROOT / "config").glob("*.yaml")),
             "schemas": sorted((CASE_ROOT / "schemas").glob("*.json")),
@@ -116,6 +117,7 @@ def main() -> int:
             f"- Exact batch records: {len(result_ids)}/{len(query_ids)}\n"
             f"- Status counts: `{dict(sorted(statuses.items()))}`\n"
             "- Analysis, tables, reports, manifests, schemas, and any qualifying figure are bundled.\n"
+            "- Story-validation diagnostics retain the frozen five-second result set and all negative outcomes.\n"
             "- Raw official downloads and the large processed graph remain in the reproducible case-study workspace.\n")
     except (CaseStudyError, OSError, ValueError, json.JSONDecodeError) as failure:
         print(f"ERROR: {failure}", file=sys.stderr)

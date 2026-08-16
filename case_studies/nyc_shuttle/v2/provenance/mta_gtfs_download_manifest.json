@@ -1,0 +1,76 @@
+{
+  "archive_role": "MobilityDatabase preserves historical bytes fetched from each listed official MTA producer URL",
+  "feeds": [
+    {
+      "archive_url": "https://files.mobilitydatabase.org/mdb-528/mdb-528-202604090053/mdb-528-202604090053.zip",
+      "feed": "bronx",
+      "local_path": "v2/raw/mta_gtfs_static/bronx.zip",
+      "mdb_id": "mdb-528",
+      "official_producer_url": "http://web.mta.info/developers/data/nyct/bus/google_transit_bronx.zip",
+      "service_range": "2026-04-11 through 2026-06-28",
+      "sha256": "1410a9c02ebda744c45e42ddf91de6c871d2298bae7cb3603b5bc0ec2b482bb2",
+      "size_bytes": 7774521,
+      "snapshot": "202604090053"
+    },
+    {
+      "archive_url": "https://files.mobilitydatabase.org/mdb-512/mdb-512-202604090141/mdb-512-202604090141.zip",
+      "feed": "brooklyn",
+      "local_path": "v2/raw/mta_gtfs_static/brooklyn.zip",
+      "mdb_id": "mdb-512",
+      "official_producer_url": "http://web.mta.info/developers/data/nyct/bus/google_transit_brooklyn.zip",
+      "service_range": "2026-04-11 through 2026-06-28",
+      "sha256": "c32d2f6401dba21b3fcc8bd522c5f0f54921042289c0c8953767a58b5712c46d",
+      "size_bytes": 15937868,
+      "snapshot": "202604090141"
+    },
+    {
+      "archive_url": "https://files.mobilitydatabase.org/mdb-510/mdb-510-202604180128/mdb-510-202604180128.zip",
+      "feed": "bus_company",
+      "local_path": "v2/raw/mta_gtfs_static/bus_company.zip",
+      "mdb_id": "mdb-510",
+      "official_producer_url": "http://web.mta.info/developers/data/busco/google_transit.zip",
+      "service_range": "2026-04-12 through 2026-06-28",
+      "sha256": "ab8b62a9453e6b0dbf31398fc859bea8dcc7a2d861bba6c7331b7e1747f53eb9",
+      "size_bytes": 8090707,
+      "snapshot": "202604180128"
+    },
+    {
+      "archive_url": "https://files.mobilitydatabase.org/mdb-513/mdb-513-202604090120/mdb-513-202604090120.zip",
+      "feed": "manhattan",
+      "local_path": "v2/raw/mta_gtfs_static/manhattan.zip",
+      "mdb_id": "mdb-513",
+      "official_producer_url": "http://web.mta.info/developers/data/nyct/bus/google_transit_manhattan.zip",
+      "service_range": "2026-04-11 through 2026-06-28",
+      "sha256": "a3953c5fe720e6fa33b774e058b26dcce7ae5834eb205a7eafd6c896ec3c4861",
+      "size_bytes": 7762091,
+      "snapshot": "202604090120"
+    },
+    {
+      "archive_url": "https://files.mobilitydatabase.org/mdb-520/mdb-520-202604090051/mdb-520-202604090051.zip",
+      "feed": "queens",
+      "local_path": "v2/raw/mta_gtfs_static/queens.zip",
+      "mdb_id": "mdb-520",
+      "official_producer_url": "http://web.mta.info/developers/data/nyct/bus/google_transit_queens.zip",
+      "service_range": "2026-04-11 through 2026-06-28",
+      "sha256": "11222c8b872336201d4c3a7490ed6b0a7fbe77af7aa74700ff4c12e840ee359f",
+      "size_bytes": 5525076,
+      "snapshot": "202604090051"
+    },
+    {
+      "archive_url": "https://files.mobilitydatabase.org/mdb-514/mdb-514-202604090047/mdb-514-202604090047.zip",
+      "feed": "staten_island",
+      "local_path": "v2/raw/mta_gtfs_static/staten_island.zip",
+      "mdb_id": "mdb-514",
+      "official_producer_url": "http://web.mta.info/developers/data/nyct/bus/google_transit_staten_island.zip",
+      "service_range": "2026-04-12 through 2026-06-28",
+      "sha256": "976ea34d72fee9f511ffabb48243e59094b39421118af36555f41e8d690f51dc",
+      "size_bytes": 6122389,
+      "snapshot": "202604090047"
+    }
+  ],
+  "retrieved_at_utc": "2026-08-15T13:39:39Z",
+  "schema_version": "nyc-v2-mta-gtfs-download-manifest-v1",
+  "selection_rule": "closest archived official-MTA producer feed whose declared service range contains 2026-05-14",
+  "target_schedule_bundle": "2026Apr",
+  "target_schedule_date": "2026-05-14"
+}

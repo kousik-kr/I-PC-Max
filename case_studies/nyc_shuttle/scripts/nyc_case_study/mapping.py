@@ -6,6 +6,7 @@ import gzip
 import json
 import math
 import statistics
+import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -354,6 +355,194 @@ def map_mta_shapes(edges_path: Path, route_pages: list[Path], output: Path,
     }
     atomic_write_text(report, "# MTA route-shape mapping quality\n\n" +
                       "\n".join(f"- {key}: {value}" for key, value in stats.items()) + "\n")
+    return stats
+
+
+def map_mta_gtfs_shapes(
+        edges_path: Path,
+        gtfs_archives: list[Path],
+        active_shape_ids: set[str],
+        output: Path,
+        report: Path,
+        inventory_output: Path,
+        config: dict[str, Any]) -> dict[str, Any]:
+    """Map exact GTFS ``shape_id -> shapes.txt`` geometry to DIMACS arcs.
+
+    No route-level geometry is accepted by this function. Duplicate shape IDs
+    across official feeds must have byte-identical coordinate sequences.
+    """
+    import geopandas as gpd  # type: ignore
+    import numpy as np  # type: ignore
+    import pandas as pd  # type: ignore
+    import shapely  # type: ignore
+    from shapely.geometry import LineString  # type: ignore
+    from shapely.strtree import STRtree  # type: ignore
+
+    if not gtfs_archives:
+        raise CaseStudyError("at least one official GTFS archive is required")
+    if not active_shape_ids:
+        raise CaseStudyError("active schedule shape IDs are required")
+    shape_coordinates: dict[str, tuple[tuple[float, float], ...]] = {}
+    shape_source: dict[str, str] = {}
+    archive_stats: list[dict[str, Any]] = []
+    for archive in sorted(gtfs_archives):
+        with zipfile.ZipFile(archive) as bundle:
+            names = {name.lower(): name for name in bundle.namelist()}
+            member = names.get("shapes.txt")
+            if member is None:
+                raise CaseStudyError(f"GTFS archive has no shapes.txt: {archive}")
+            with bundle.open(member) as stream:
+                rows = pd.read_csv(stream, dtype={
+                    "shape_id": str,
+                    "shape_pt_lat": float,
+                    "shape_pt_lon": float,
+                    "shape_pt_sequence": int,
+                })
+        required = {
+            "shape_id", "shape_pt_lat", "shape_pt_lon",
+            "shape_pt_sequence",
+        }
+        if not required.issubset(rows.columns):
+            raise CaseStudyError(
+                f"{archive} shapes.txt lacks {sorted(required - set(rows.columns))}")
+        rows["shape_id"] = rows.shape_id.astype(str).str.strip()
+        archive_shape_count = int(rows.shape_id.nunique())
+        retained = rows[rows.shape_id.isin(active_shape_ids)].copy()
+        for shape_id, points in retained.groupby("shape_id", sort=True):
+            ordered = points.sort_values("shape_pt_sequence")
+            coordinates = tuple(
+                (float(lon), float(lat))
+                for lon, lat in zip(
+                    ordered.shape_pt_lon,
+                    ordered.shape_pt_lat,
+                )
+            )
+            if len(coordinates) < 2 or len(set(coordinates)) < 2:
+                continue
+            previous = shape_coordinates.get(str(shape_id))
+            if previous is not None and previous != coordinates:
+                raise CaseStudyError(
+                    "conflicting official shapes.txt geometry for shape_id "
+                    f"{shape_id}: {shape_source[str(shape_id)]} and {archive}")
+            shape_coordinates[str(shape_id)] = coordinates
+            shape_source[str(shape_id)] = archive.name
+        archive_stats.append({
+            "archive": archive.name,
+            "sha256": sha256_file(archive),
+            "shape_ids": archive_shape_count,
+            "active_shape_ids_present": int(retained.shape_id.nunique()),
+        })
+    if not shape_coordinates:
+        raise CaseStudyError("no active schedule shape has exact GTFS geometry")
+
+    shape_ids = sorted(shape_coordinates)
+    shapes = gpd.GeoDataFrame({
+        "shape_id": shape_ids,
+        "source_archive": [shape_source[item] for item in shape_ids],
+        "geometry": [LineString(shape_coordinates[item]) for item in shape_ids],
+    }, geometry="geometry", crs="EPSG:4326")
+    crs = config["projected_crs"]
+    radius = float(config["matching"]["route_buffer_m"])
+    minimum_overlap = float(config["matching"]["minimum_overlap_ratio"])
+    max_angle = float(config["matching"]["maximum_direction_difference_degrees"])
+    edges = gpd.read_parquet(edges_path).to_crs(crs)
+    shapes = shapes.to_crs(crs)
+    shape_geometries = shapes.geometry.to_numpy()
+    edge_geometries = edges.geometry.to_numpy()
+    tree = STRtree(edge_geometries)
+    pairs = tree.query(shape_geometries, predicate="dwithin", distance=radius)
+    shape_indexes = pairs[0].astype(np.int64)
+    edge_indexes = pairs[1].astype(np.int64)
+    pair_shapes = shape_geometries[shape_indexes]
+    pair_edges = edge_geometries[edge_indexes]
+    distances = shapely.distance(pair_edges, pair_shapes)
+    shape_buffers = shapely.buffer(shape_geometries, radius)
+    overlaps = np.minimum(
+        1.0,
+        shapely.length(shapely.intersection(
+            pair_edges, shape_buffers[shape_indexes]))
+        / np.maximum(shapely.length(pair_edges), 1e-9),
+    )
+    edge_bearings = np.asarray([
+        bearing_degrees(item) for item in edge_geometries
+    ])
+    shape_bearings = np.asarray([
+        bearing_degrees(item) for item in shape_geometries
+    ])
+    angles = np.abs(
+        edge_bearings[edge_indexes] - shape_bearings[shape_indexes]
+    ) % 360.0
+    angles = np.minimum(angles, 360.0 - angles)
+    keep = (
+        (distances <= radius)
+        & (overlaps >= minimum_overlap)
+        & (angles <= max_angle)
+    )
+    shape_indexes = shape_indexes[keep]
+    edge_indexes = edge_indexes[keep]
+    pair_shapes = pair_shapes[keep]
+    pair_edges = pair_edges[keep]
+    midpoints = shapely.line_interpolate_point(
+        pair_edges, 0.5, normalized=True)
+    positions = shapely.line_locate_point(pair_shapes, midpoints)
+    result = pd.DataFrame({
+        "shape_index": shape_indexes,
+        "arc_id": edges.arc_id.to_numpy()[edge_indexes].astype(int),
+        "mapping_distance_m": distances[keep],
+        "overlap_ratio": overlaps[keep],
+        "direction_difference_degrees": angles[keep],
+        "shape_position_m": positions,
+        "mapped_arc_length_m": shapely.length(pair_edges),
+    }).sort_values(["shape_index", "shape_position_m", "arc_id"])
+    result = result.drop_duplicates(["shape_index", "arc_id"], keep="first")
+    result["arc_order"] = result.groupby("shape_index").cumcount()
+    source_rows = shapes.iloc[result.shape_index.to_numpy()].reset_index(drop=True)
+    result["shape_id"] = source_rows.shape_id.to_numpy()
+    result["source_archive"] = source_rows.source_archive.to_numpy()
+    result = result[[
+        "shape_id", "source_archive", "arc_id", "arc_order",
+        "mapping_distance_m", "overlap_ratio",
+        "direction_difference_degrees", "shape_position_m",
+        "mapped_arc_length_m",
+    ]]
+    if result.empty:
+        raise CaseStudyError(
+            "no exact GTFS shape could be mapped under configured thresholds")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    result.to_parquet(output, index=False)
+    available = set(shape_coordinates)
+    mapped = set(result.shape_id.astype(str))
+    unmatched = active_shape_ids.difference(mapped)
+    stats = {
+        "active_shape_ids": len(active_shape_ids),
+        "exact_shape_geometries_available": len(available),
+        "exact_shape_geometries_mapped_to_dimacs": len(mapped),
+        "unmatched_active_shapes": len(unmatched),
+        "mapping_rows": len(result),
+        "geometry_fallback_count": 0,
+        "geometry_contract": "EXACT_SHAPE_ID_TO_GTFS_SHAPES_TXT_ONLY",
+        "output_sha256": sha256_file(output),
+    }
+    inventory = {
+        "schema_version": "nyc-v2-gtfs-shape-inventory-v1",
+        **stats,
+        "active_shape_ids_sha256": __import__("hashlib").sha256(
+            "\n".join(sorted(active_shape_ids)).encode("utf-8")
+        ).hexdigest(),
+        "available_active_shape_ids": sorted(available),
+        "mapped_active_shape_ids": sorted(mapped),
+        "unmatched_active_shape_ids": sorted(unmatched),
+        "archives": archive_stats,
+    }
+    atomic_write_json(inventory_output, inventory)
+    lines = [
+        "# Exact MTA GTFS shape mapping quality",
+        "",
+        "Only exact `shape_id -> shapes.txt` geometries are used; `route_id` "
+        "fallback is forbidden.",
+        "",
+    ] + [f"- {key}: {value}" for key, value in stats.items()]
+    atomic_write_text(report, "\n".join(lines) + "\n")
     return stats
 
 

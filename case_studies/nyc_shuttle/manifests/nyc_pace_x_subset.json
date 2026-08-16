@@ -1,0 +1,29 @@
+{
+  "schema_version": "nyc-pace-x-subset-v1",
+  "selection_rule": "five smallest safe query-corridor |E_q| in each of MORNING R20, MORNING R50, EVENING R20, EVENING R50; ties by query_id",
+  "query_manifest_sha256": "29842bc57033ab93b1dac5790276c886335a3a6f65c2bf97edc475dcddfec347",
+  "official_result_sha256": "c0427dc91d2e7195e847436841f0faf1463311ee2fc4cabb7208c2cada16045d",
+  "diagnostic_replay_sha256": "6760da10acec930a76f203573ac268eb679b608bcb12ca98ae4c50e395388f08",
+  "query_ids": [
+    "NYC-Q008-EVENING-R20",
+    "NYC-Q002-EVENING-R20",
+    "NYC-Q019-EVENING-R20",
+    "NYC-Q017-EVENING-R20",
+    "NYC-Q012-EVENING-R20",
+    "NYC-Q008-EVENING-R50",
+    "NYC-Q002-EVENING-R50",
+    "NYC-Q019-EVENING-R50",
+    "NYC-Q017-EVENING-R50",
+    "NYC-Q012-EVENING-R50",
+    "NYC-Q008-MORNING-R20",
+    "NYC-Q002-MORNING-R20",
+    "NYC-Q012-MORNING-R20",
+    "NYC-Q019-MORNING-R20",
+    "NYC-Q017-MORNING-R20",
+    "NYC-Q008-MORNING-R50",
+    "NYC-Q002-MORNING-R50",
+    "NYC-Q012-MORNING-R50",
+    "NYC-Q019-MORNING-R50",
+    "NYC-Q003-MORNING-R50"
+  ]
+}

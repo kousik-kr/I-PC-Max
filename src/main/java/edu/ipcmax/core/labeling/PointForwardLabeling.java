@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Point-departure earliest-arrival labeling for FIFO time-dependent graphs.
@@ -35,6 +36,17 @@ public final class PointForwardLabeling {
     }
 
     /**
+     * Computes earliest arrivals from a source at an exact, possibly
+     * fractional, departure time.
+     */
+    public Result run(
+            int source,
+            double departureTime,
+            double maxTravelTime) {
+        return run(source, departureTime, maxTravelTime, null, null, null);
+    }
+
+    /**
      * Computes an exact fixed-departure fastest path and stops after the
      * requested target receives its final FIFO label.
      */
@@ -49,7 +61,38 @@ public final class PointForwardLabeling {
                 departureTime,
                 maxTravelTime,
                 Set.of(target),
+                null,
                 null);
+    }
+
+    /**
+     * Computes an exact restricted-subgraph fastest path at a possibly
+     * fractional departure time.
+     *
+     * <p>The predicate is evaluated for every prospective directed edge.
+     * It is the caller's responsibility to encode a fixed subgraph (for
+     * example, a query corridor with selected pivots and previously visited
+     * vertices removed). The FIFO labeling itself remains exact in that
+     * subgraph.</p>
+     */
+    public Result runToTarget(
+            int source,
+            int target,
+            double departureTime,
+            double maxTravelTime,
+            Predicate<Edge> allowedEdge) {
+        graph.node(target);
+        if (allowedEdge == null) {
+            throw new IllegalArgumentException(
+                    "allowed-edge predicate is required");
+        }
+        return run(
+                source,
+                departureTime,
+                maxTravelTime,
+                Set.of(target),
+                null,
+                allowedEdge);
     }
 
     /**
@@ -76,7 +119,8 @@ public final class PointForwardLabeling {
                 departureTime,
                 maxTravelTime,
                 Set.of(target),
-                reverseLowerBounds);
+                reverseLowerBounds,
+                null);
     }
 
     /**
@@ -100,6 +144,7 @@ public final class PointForwardLabeling {
                 departureTime,
                 maxTravelTime,
                 Set.copyOf(targets),
+                null,
                 null);
     }
 
@@ -113,15 +158,23 @@ public final class PointForwardLabeling {
                 departureTime,
                 maxTravelTime,
                 targets,
+                null,
                 null);
     }
 
     private Result run(
             int source,
-            int departureTime,
+            double departureTime,
             double maxTravelTime,
             Set<Integer> targets,
-            LowerBoundOracle.Labels reverseLowerBounds) {
+            LowerBoundOracle.Labels reverseLowerBounds,
+            Predicate<Edge> allowedEdge) {
+        if (!Double.isFinite(departureTime)
+                || !Double.isFinite(maxTravelTime)
+                || maxTravelTime < 0) {
+            throw new IllegalArgumentException(
+                    "departure and travel budget must be finite and nonnegative");
+        }
         Map<Integer, Double> arrival = new HashMap<>();
         Map<Integer, Integer> predecessorArc = new HashMap<>();
         PriorityQueue<Label> queue = new PriorityQueue<>();
@@ -150,6 +203,9 @@ public final class PointForwardLabeling {
                 break;
             }
             for (Edge edge : graph.outgoingEdges(label.node)) {
+                if (allowedEdge != null && !allowedEdge.test(edge)) {
+                    continue;
+                }
                 double potential = lowerBound(
                         reverseLowerBounds, edge.target());
                 if (!Double.isFinite(potential)) {

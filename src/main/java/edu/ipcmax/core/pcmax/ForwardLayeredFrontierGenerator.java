@@ -44,6 +44,7 @@ public final class ForwardLayeredFrontierGenerator {
     private final GraphPartitionMetadata partition;
     private final ScoreSupportIndex scoreIndex;
     private final PaceExecutionMetrics metrics;
+    private final PaceDiagnosticTrace diagnosticTrace;
     private volatile PaceGenerationResult lastResult;
 
     public ForwardLayeredFrontierGenerator(
@@ -53,14 +54,18 @@ public final class ForwardLayeredFrontierGenerator {
                 graph,
                 options,
                 QueryPreparationIndexes.buildAllowingZero(graph),
-                PaceExecutionMetrics.none());
+                PaceExecutionMetrics.none(),
+                PaceDiagnosticTrace.none());
     }
 
     public ForwardLayeredFrontierGenerator(
             TDGraph graph,
             PaceOptions options,
             QueryPreparationIndexes indexes) {
-        this(graph, options, indexes, PaceExecutionMetrics.none());
+        this(
+                graph, options, indexes,
+                PaceExecutionMetrics.none(),
+                PaceDiagnosticTrace.none());
     }
 
     public ForwardLayeredFrontierGenerator(
@@ -68,10 +73,23 @@ public final class ForwardLayeredFrontierGenerator {
             PaceOptions options,
             QueryPreparationIndexes indexes,
             PaceExecutionMetrics metrics) {
+        this(
+                graph, options, indexes, metrics,
+                PaceDiagnosticTrace.none());
+    }
+
+    public ForwardLayeredFrontierGenerator(
+            TDGraph graph,
+            PaceOptions options,
+            QueryPreparationIndexes indexes,
+            PaceExecutionMetrics metrics,
+            PaceDiagnosticTrace diagnosticTrace) {
         this.graph = graph;
         this.options = options;
         this.metrics = java.util.Objects.requireNonNull(
                 metrics, "metrics");
+        this.diagnosticTrace = java.util.Objects.requireNonNull(
+                diagnosticTrace, "diagnostic trace");
         if (indexes == null) {
             throw new IllegalArgumentException(
                     "query preparation indexes are required");
@@ -156,6 +174,8 @@ public final class ForwardLayeredFrontierGenerator {
                     fromSource,
                     toDestination);
         }
+        diagnosticTrace.configure(
+                pivots.selectedArcIds(), rootDomain);
         PaceWorkLedger ledger = new PaceWorkLedger(options);
         BoundedConnectorGenerator connectors =
                 new BoundedConnectorGenerator(
@@ -355,6 +375,12 @@ public final class ForwardLayeredFrontierGenerator {
                         }
                         for (PivotConnector result : results) {
                             stats.addConnector(result.result());
+                            diagnosticTrace.connectorRequest(
+                                    partial.endpoint(),
+                                    result.expansion().pivot().source(),
+                                    result.expansion().entryDomain(),
+                                    result.expansion().connectorBudget(),
+                                    result.result());
                             reducePivot(
                                     partial,
                                     result,
@@ -379,6 +405,7 @@ public final class ForwardLayeredFrontierGenerator {
         }
         PaceCapStatus caps = ledger.capStatus();
         CandidateSet rootFrontier = completed.candidates();
+        diagnosticTrace.finalFrontier(rootFrontier);
         completed.releaseCaches();
         current.values().forEach(
                 IncrementalFrontier::releaseCaches);
@@ -449,6 +476,9 @@ public final class ForwardLayeredFrontierGenerator {
                     partial.visitedEdges(),
                     connectorBudget,
                     workItem);
+            diagnosticTrace.connectorRequest(
+                    partial.endpoint(), target,
+                    entryDomain, connectorBudget, result);
             stats.addConnector(result);
             return result;
         } finally {
@@ -551,6 +581,8 @@ public final class ForwardLayeredFrontierGenerator {
                 PathPointer pointer = PathPointer.concat(
                         partial.profile().pathPointer(),
                         connector.pathPointer());
+                diagnosticTrace.connectorOutput(
+                        pointer, rootDomain, true);
                 String verificationWork =
                         "complete:verify:"
                                 + pointer.stablePathId();
@@ -579,6 +611,8 @@ public final class ForwardLayeredFrontierGenerator {
                         PathPointer.empty());
                 if (replayStore.admitReplay(request)) {
                     requests.add(request);
+                    diagnosticTrace.completeDescriptor(
+                            pointer, rootDomain);
                 }
             }
         }
@@ -608,12 +642,18 @@ public final class ForwardLayeredFrontierGenerator {
                 stats.invalidConnectors++;
                 continue;
             }
+            diagnosticTrace.replayedCandidate(
+                    replayed.orElseThrow());
+            metrics.increment("canonical_replay_accepts");
             stats.candidatesGenerated++;
             if (completed.insert(
                     replayed.orElseThrow(),
                     "root:" + request.pointer().stablePathId())) {
                 stats.candidatesRetained++;
+                metrics.increment("root_candidate_retained_offers");
             }
+            diagnosticTrace.rootFrontier(
+                    completed.candidates());
         }
         observeMemory(
                 "memory_after_final_reduction_used_heap_bytes");
@@ -647,6 +687,8 @@ public final class ForwardLayeredFrontierGenerator {
                 PathPointer pointer = PathPointer.concat(
                         partial.profile().pathPointer(),
                         suffix);
+                diagnosticTrace.connectorOutput(
+                        pointer, expansion.rootDomain(), false);
                 if (!replayStore.ledger.reserve(
                         PaceWorkKind.PATH_VERIFICATION,
                         "pivot-" + pivot.arcId()
@@ -723,6 +765,8 @@ public final class ForwardLayeredFrontierGenerator {
                     entry.getValue(),
                     "layer=" + key.depth()
                             + ":pivot=" + pivot.arcId());
+            diagnosticTrace.partialStateFrontier(
+                    frontier.candidates());
         }
     }
 
@@ -851,9 +895,12 @@ public final class ForwardLayeredFrontierGenerator {
                     ? PaceCompletion.ABORTED
                     : PaceCompletion.RESOURCE_TRUNCATED;
         }
-        return frontier.isEmpty()
+        if (!frontier.isEmpty()) {
+            return PaceCompletion.COMPLETE;
+        }
+        return policy == PaceExecutionPolicy.PACE_X
                 ? PaceCompletion.NO_FEASIBLE_PATH
-                : PaceCompletion.COMPLETE;
+                : PaceCompletion.UNRESOLVED_NO_GENERATED_CANDIDATE;
     }
 
     private PaceExactnessScope exactness(
@@ -864,7 +911,7 @@ public final class ForwardLayeredFrontierGenerator {
             return PaceExactnessScope.NOT_CERTIFIED;
         }
         if (options.policy() == PaceExecutionPolicy.PACE_B) {
-            return options.singleFastestLowerBoundWitnessEnabled()
+            return options.singleMidpointFastestConnectorEnabled()
                     ? PaceExactnessScope.NOT_CERTIFIED
                     : PaceExactnessScope.RETAINED_FRONTIER;
         }
@@ -942,7 +989,7 @@ public final class ForwardLayeredFrontierGenerator {
     private PaceGenerationResult emptyResult() {
         return new PaceGenerationResult(
                 new CandidateSet(),
-                PaceCompletion.NO_FEASIBLE_PATH,
+                PaceCompletion.UNRESOLVED_NO_GENERATED_CANDIDATE,
                 PaceExactnessScope.NOT_CERTIFIED,
                 PaceCapStatus.none(),
                 PaceGenerationStats.empty(),
@@ -1165,10 +1212,7 @@ public final class ForwardLayeredFrontierGenerator {
                     item + ":replay")) {
                 return false;
             }
-            int admittedEdges = options
-                    .singleFastestLowerBoundWitnessEnabled()
-                    ? request.pointer().edgeCount()
-                    : reusableConnectorProfile(request)
+            int admittedEdges = reusableConnectorProfile(request)
                     ? request.reusableTail().edgeCount()
                     : cacheEnabled
                             ? request.suffix().edgeCount()
@@ -1279,19 +1323,6 @@ public final class ForwardLayeredFrontierGenerator {
                     "memory_during_replay_used_heap_bytes");
             try (PaceExecutionMetrics.Timer ignored = metrics.phase(
                     PaceExecutionMetrics.PATH_REPLAY)) {
-                if (options.singleFastestLowerBoundWitnessEnabled()) {
-                    return GridPathProfileBuilder.replay(
-                            graph,
-                            queryHorizon,
-                            selectedPivotArcIdSet,
-                            request.pointer().stablePathId(),
-                            query.source(),
-                            request.endpoint(),
-                            request.domain(),
-                            query.maxTravelTime(),
-                            -1,
-                            query.granularityMinutes());
-                }
                 if (reusableConnectorProfile(request)) {
                     Domain reusableDomain = request.domain().intersection(
                             request.reusableConnector().domain());

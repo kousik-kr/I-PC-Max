@@ -1,0 +1,104 @@
+{
+  "schema_version": "nyc-v2-representative-visual-queries-v1",
+  "source_bundle": "experiments/results/Final-result/NYC-real-shuttle-v2",
+  "source_result_file": "results/diagnostic_30s.jsonl",
+  "source_result_file_sha256": "1026fecb511254b3310796d7a08caa6e53d64bce026bd777b48007e1b2945bc2",
+  "roles": {
+    "A": {
+      "label": "RICH MULTIPATH PROFILE",
+      "selection_rule": "maximum distinct paths, then maximum route switches, then maximum profile cells, then lexicographically smallest query_id among normally completed corrected-V2 30-second results",
+      "adequate_for_role": true,
+      "query": {
+        "query_id": "NYC-Q012-MORNING-R20",
+        "pair_id": "NYC-012",
+        "period": "MORNING",
+        "rho": 0.2,
+        "B": 8.382654224124,
+        "profile_cells": 12,
+        "maximal_materialized_cells": 8,
+        "distinct_paths": 5,
+        "route_switches": 7,
+        "interval_best_path_coverage": 0.1322314049586777
+      },
+      "source_result_checksum": "4ae66017b536f29bf6a77e3cbacdaa49f27182e0c122b05da329d9471000f7d3",
+      "pace_profile_checksum": "fe13efe4063aa8916ee2f337b9ec74e3c26d58631a1fb9c8a777c72e970e3d0e",
+      "figure_outputs": {
+        "pdf": "figures/v2_role_a_nyc-q012-morning-r20.pdf",
+        "pdf_sha256": "d2ca6015bb995660d16328b473d8a10d76b333916536c018e4849e4cea662853",
+        "png": "figures/v2_role_a_nyc-q012-morning-r20.png",
+        "png_sha256": "f76761f988da2f7f1ee5df9c204d65c058f0f1e5ce1893da8cc10b85b1860b2c"
+      }
+    },
+    "B": {
+      "label": "SCORE-VS-TRAVEL TRADEOFF",
+      "selection_rule": "excluding Role A, maximum positive integrated sum over departures of S_PACE minus S_fast among normally completed results with zero budget violations, then lexicographically smallest query_id",
+      "adequate_for_role": true,
+      "query": {
+        "query_id": "NYC-Q020-MORNING-R20",
+        "pair_id": "NYC-020",
+        "period": "MORNING",
+        "rho": 0.2,
+        "B": 13.172058427806,
+        "integrated_score_difference": 266,
+        "average_score_difference": 2.198347107438011,
+        "travel_time_premium_percent": 0.020519203451348195,
+        "budget_violations": 0
+      },
+      "source_result_checksum": "fc5108a6e0d227d8911f7e181cf341e1fbe351b365e68068361f9f019d7cb47b",
+      "pace_profile_checksum": "14a10762972a3932344f891d027da648c0a03c1d7d9c9375b6eca0d4c5fb4320",
+      "figure_outputs": {
+        "pdf": "figures/v2_role_b_nyc-q020-morning-r20.pdf",
+        "pdf_sha256": "23506175687e695225f28210c0735ecc998d1a35edef59df599ad7c7036bcecb",
+        "png": "figures/v2_role_b_nyc-q020-morning-r20.png",
+        "png_sha256": "47cc1587e3beb565c49e2ac2bb9297a072c4aedecdcce92660e94721d7cf385b"
+      }
+    },
+    "C": {
+      "label": "INTERVAL-BEST LIMITATION",
+      "selection_rule": "excluding Roles A and B, minimum IntervalBestPathCoverage among normally completed results, then lexicographically smallest query_id",
+      "adequate_for_role": false,
+      "adequacy_reason": "All eligible completed results have IntervalBestPathCoverage 1.0; therefore this deterministic minimum does not itself exhibit a mismatch.",
+      "query": {
+        "query_id": "NYC-Q002-EVENING-R50",
+        "pair_id": "NYC-002",
+        "period": "EVENING",
+        "rho": 0.5,
+        "B": 8.803279788204,
+        "interval_best_path_coverage": 1.0,
+        "budget_violations": 0
+      },
+      "source_result_checksum": "b6e068340fd2f93d32533a9e4fe40eabdc0b91d47398bb456f745c31d76aee1d",
+      "pace_profile_checksum": "f8dd8e4368c99292ccd1e308578a8d4308e17b7035535d3920cc965a3cc34140",
+      "figure_outputs": {
+        "pdf": "figures/v2_role_c_nyc-q002-evening-r50.pdf",
+        "pdf_sha256": "1a502f875f606f3de1ae8751473f2777a9f36982955bd8a9dec24197d785f26e",
+        "png": "figures/v2_role_c_nyc-q002-evening-r50.png",
+        "png_sha256": "67a677c9f50f5a323d64c99412820bdacb4f702f27157a1556f79cbe798dc0ea"
+      }
+    }
+  },
+  "visualization_only_extension": {
+    "selection_manifest": "manifests/v2_visualization_only_selection.json",
+    "query_id": "NYC-Q024-EVENING-R50",
+    "official_statistical_inclusion": false,
+    "attempts": [
+      {
+        "cap_seconds": 60,
+        "status": "TIMEOUT",
+        "actual_pace_runtime_seconds": 60.003494812,
+        "result": "results/visualization-only/nyc-q024-evening-r50-60s.jsonl",
+        "result_sha256": "0bb95a2bb8114a6ca09cd6b03b3ecf979210d57a16225c6a0cf9a257a72303db"
+      },
+      {
+        "cap_seconds": 120,
+        "status": "TIMEOUT",
+        "actual_pace_runtime_seconds": 120.004164642,
+        "result": "results/visualization-only/nyc-q024-evening-r50-120s.jsonl",
+        "result_sha256": "c548b9552a6b4ed06f9bff90d4646cac82f2a785b328366bd87bce8333915d2e"
+      }
+    ],
+    "outcome": "NO_ADDITIONAL_NORMAL_COMPLETION"
+  },
+  "scientific_parameters_changed": false,
+  "official_statistics_changed": false
+}

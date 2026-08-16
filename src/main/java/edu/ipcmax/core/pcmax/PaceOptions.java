@@ -234,10 +234,10 @@ public record PaceOptions(
     }
 
     /**
-     * True for the explicitly aggressive one-witness scalability policy.
-     * Exact PACE-X and portfolio PACE-B never enter this sampled path.
+     * True for the one-exact-midpoint-connector PACE-B policy. Exact PACE-X
+     * and portfolio diagnostics never enter this production path.
      */
-    public boolean singleFastestLowerBoundWitnessEnabled() {
+    public boolean singleMidpointFastestConnectorEnabled() {
         return policy == PaceExecutionPolicy.PACE_B
                 && !features.connectorPortfolioEnabled()
                 && effectiveConnectorLimit() == 1;

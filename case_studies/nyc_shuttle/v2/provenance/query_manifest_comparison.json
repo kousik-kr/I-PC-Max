@@ -1,0 +1,27 @@
+{
+  "all_scientific_query_fields_identical": true,
+  "permitted_provenance_changes": [
+    "schema_version",
+    "dataset_id",
+    "graph_manifest_sha256"
+  ],
+  "schema_version": "nyc-v1-v2-query-comparison-v1",
+  "scientific_field_mismatches": [],
+  "scientific_fields": [
+    "query_id",
+    "pair_id",
+    "source",
+    "destination",
+    "period_id",
+    "interval_start",
+    "interval_end",
+    "rho",
+    "budget"
+  ],
+  "v1_pair_count": 25,
+  "v1_query_count": 100,
+  "v1_sha256": "29842bc57033ab93b1dac5790276c886335a3a6f65c2bf97edc475dcddfec347",
+  "v2_pair_count": 25,
+  "v2_query_count": 100,
+  "v2_sha256": "298889e8d22e7567b7a399b9009ddff0364b6945141336226b2bd0e5a149def4"
+}

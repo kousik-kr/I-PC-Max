@@ -22,9 +22,38 @@ import edu.ipcmax.core.graph.TinyGraphBuilder;
 import edu.ipcmax.core.index.EdgeTemporalSummaryStore;
 import edu.ipcmax.core.index.GraphPartitionMetadata;
 import edu.ipcmax.core.index.ScoreSupportIndex;
+import edu.ipcmax.core.labeling.PointForwardLabeling;
 import edu.ipcmax.core.profile.CandidateProfile;
 
 class ScalablePaceCandidateEngineTest {
+    @Test
+    void boundedEmptyFrontierIsUnresolvedWhileExactEmptyIsCertified() {
+        TDGraph graph = new TinyGraphBuilder()
+                .node(1).node(2)
+                .build();
+        QuerySpec query = new QuerySpec(1, 2, 0, 5, 10, 1);
+
+        PaceGenerationResult bounded = new PACE(
+                graph,
+                PaceOptions.bounded(
+                        0, 0, 1, 100,
+                        4, 100, 1_000, 1)).generate(query);
+        PaceGenerationResult exact = new PACE(
+                graph,
+                PaceOptions.exhaustive(0)).generate(query);
+
+        assertEquals(
+                PaceCompletion.UNRESOLVED_NO_GENERATED_CANDIDATE,
+                bounded.completion());
+        assertFalse(bounded.exactnessScope()
+                        == PaceExactnessScope.GLOBAL_CERTIFIED,
+                "bounded empty output must not carry an infeasibility certificate");
+        assertEquals(PaceCompletion.NO_FEASIBLE_PATH,
+                exact.completion());
+        assertEquals(PaceExactnessScope.GLOBAL_CERTIFIED,
+                exact.exactnessScope());
+    }
+
     @Test
     void nonSelectedScoreEdgeRemainsInsideAnExactConnector() {
         TDGraph graph = new TinyGraphBuilder()
@@ -246,7 +275,7 @@ class ScalablePaceCandidateEngineTest {
     }
 
     @Test
-    void fastOnlyKcOneReplaysOnlyTheStoredLowerBoundWitness() {
+    void fastOnlyKcOneEqualsPointForwardLabelingAtCellMidpoint() {
         Domain support = Domain.closed(0, 40);
         PiecewiseConstFn zero = PiecewiseConstFn.constant(support, 0);
         PiecewiseLinearFn slowAtQueryTime = new PiecewiseLinearFn(List.of(
@@ -340,14 +369,41 @@ class ScalablePaceCandidateEngineTest {
                 visited,
                 new BitSet(),
                 5,
-                "fastest-witness");
+                "midpoint-fastest");
 
-        assertTrue(result.connectors().isEmpty(),
-                "the temporally invalid fastest witness must not trigger "
-                        + "alternative-path enumeration");
-        assertEquals(1, result.invalidConnectors());
+        List<Integer> independentlyLabeled =
+                new PointForwardLabeling(graph).runToTarget(
+                        1,
+                        4,
+                        5.5,
+                        5,
+                        edge -> corridor.containsArc(edge.arcId())
+                                && !pivots.isSelectedPivot(edge.arcId())
+                                && !visited.get(edge.target()))
+                        .pathTo(4).arcIds();
+        assertEquals(1, result.connectors().size(),
+                "exactly one structure must be retained for the connected cell");
+        assertEquals(
+                independentlyLabeled,
+                result.connectors().get(0).stablePathId());
+        assertEquals(List.of(2, 3), independentlyLabeled,
+                "the midpoint fastest connector must replace the static witness");
+        assertEquals(0, result.invalidConnectors());
         assertEquals(2, result.expansions());
         assertFalse(result.connectorCapReached());
+
+        BitSet conflictingVisited = (BitSet) visited.clone();
+        conflictingVisited.set(3);
+        ConnectorResult masked = labels.suffixLabels(
+                1,
+                4,
+                Domain.closed(5, 6),
+                conflictingVisited,
+                new BitSet(),
+                5,
+                "midpoint-fastest-masked");
+        assertTrue(masked.connectors().isEmpty(),
+                "visited-vertex exclusions must be enforced by labeling");
         assertEquals(
                 PaceExactnessScope.NOT_CERTIFIED,
                 new PACE(graph, options).generate(

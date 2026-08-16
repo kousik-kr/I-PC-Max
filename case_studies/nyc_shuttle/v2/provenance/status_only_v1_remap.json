@@ -1,0 +1,17 @@
+{
+  "remap_rule": "bounded empty without independent infeasibility certificate: NO_FEASIBLE_PATH -> UNRESOLVED_NO_GENERATED_CANDIDATE (U)",
+  "remapped_query_count": 3,
+  "remapped_query_ids": [
+    "NYC-Q008-MORNING-R20",
+    "NYC-Q016-EVENING-R20",
+    "NYC-Q016-EVENING-R50"
+  ],
+  "schema_version": "nyc-status-only-remap-v1",
+  "scientific_numeric_fields_changed": false,
+  "source_result_sha256": "c0427dc91d2e7195e847436841f0faf1463311ee2fc4cabb7208c2cada16045d",
+  "source_status_counts": {
+    "COMPLETE": 35,
+    "NO_FEASIBLE_PATH": 3,
+    "TIMEOUT": 62
+  }
+}

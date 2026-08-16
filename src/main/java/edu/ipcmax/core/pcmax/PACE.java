@@ -41,7 +41,8 @@ public final class PACE {
                             == PaceEngineMode.SCALABLE
                         ? preparedIndexes(graph)
                         : null,
-                PaceExecutionMetrics.none());
+                PaceExecutionMetrics.none(),
+                PaceDiagnosticTrace.none());
     }
 
     /**
@@ -51,7 +52,10 @@ public final class PACE {
             TDGraph graph,
             PaceOptions options,
             QueryPreparationIndexes indexes) {
-        this(graph, options, indexes, PaceExecutionMetrics.none());
+        this(
+                graph, options, indexes,
+                PaceExecutionMetrics.none(),
+                PaceDiagnosticTrace.none());
     }
 
     /**
@@ -62,6 +66,18 @@ public final class PACE {
             PaceOptions options,
             QueryPreparationIndexes indexes,
             PaceExecutionMetrics metrics) {
+        this(
+                graph, options, indexes, metrics,
+                PaceDiagnosticTrace.none());
+    }
+
+    /** Creates PACE with live metrics and target-filtered diagnostics. */
+    public PACE(
+            TDGraph graph,
+            PaceOptions options,
+            QueryPreparationIndexes indexes,
+            PaceExecutionMetrics metrics,
+            PaceDiagnosticTrace diagnosticTrace) {
         this.graph = Objects.requireNonNull(graph, "graph");
         this.options = Objects.requireNonNull(options, "options");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
@@ -78,12 +94,15 @@ public final class PACE {
                             Objects.requireNonNull(
                                     indexes,
                                     "query preparation indexes"),
-                            metrics);
+                            metrics,
+                            Objects.requireNonNull(
+                                    diagnosticTrace,
+                                    "diagnostic trace"));
             legacyGenerator = null;
         }
         lastResult = new PaceGenerationResult(
                 new CandidateSet(),
-                PaceCompletion.NO_FEASIBLE_PATH,
+                PaceCompletion.UNRESOLVED_NO_GENERATED_CANDIDATE,
                 PaceExactnessScope.NOT_CERTIFIED,
                 PaceCapStatus.none(),
                 PaceGenerationStats.empty(),
@@ -125,9 +144,13 @@ public final class PACE {
         }
         CandidateSet frontier =
                 legacyGenerator.generateFrontier(query);
-        PaceCompletion completion = frontier.isEmpty()
-                ? PaceCompletion.NO_FEASIBLE_PATH
-                : PaceCompletion.COMPLETE;
+        PaceCompletion completion;
+        if (!frontier.isEmpty()) {
+            completion = PaceCompletion.COMPLETE;
+        } else {
+            completion = PaceCompletion
+                    .UNRESOLVED_NO_GENERATED_CANDIDATE;
+        }
         lastResult = new PaceGenerationResult(
                 frontier,
                 completion,
