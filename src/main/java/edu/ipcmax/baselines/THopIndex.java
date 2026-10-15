@@ -55,6 +55,26 @@ public final class THopIndex {
         this.prunedConstruction = prunedConstruction;
     }
 
+    /** Creates a query-ready index around labels produced by an offline builder. */
+    static THopIndex fromExistingLabels(
+            TDGraph graph,
+            Domain indexDomain,
+            Map<Integer, Map<Integer, ExactTemporalProfile>> outgoingLabels,
+            Map<Integer, Map<Integer, ExactTemporalProfile>> incomingLabels,
+            List<Integer> hubOrder) {
+        long labels = countLabels(outgoingLabels) + countLabels(incomingLabels);
+        long pieces = countPieces(outgoingLabels) + countPieces(incomingLabels);
+        long breakpoints = countBreakpoints(outgoingLabels) + countBreakpoints(incomingLabels);
+        long estimatedBytes = estimateBytes(labels, pieces, breakpoints);
+        IndexStatistics stats = new IndexStatistics(
+                0, labels, pieces, breakpoints, estimatedBytes, usedHeapBytes(), 0, 0, 0, 0);
+        PreprocessingStatistics preprocessing = new PreprocessingStatistics(
+                0, hubOrder.size(), 0, 0, 0, labels, 0, 0, 0, 0,
+                pieces, estimatedBytes, usedHeapBytes(), 0, 0);
+        return new THopIndex(
+                graph, indexDomain, outgoingLabels, incomingLabels, stats, preprocessing, hubOrder, true);
+    }
+
     /** Builds an index over the union of all edge departure-function domains. */
     public static THopIndex build(TDGraph graph) {
         Objects.requireNonNull(graph, "graph");

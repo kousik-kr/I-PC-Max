@@ -101,6 +101,12 @@ public final class ExactTemporalProfile {
         return new ExactTemporalProfile(List.of(profile));
     }
 
+    /** Rebuilds an exact profile from disjoint serialized function cells. */
+    static ExactTemporalProfile fromCells(Collection<TimeProfile> cells) {
+        Objects.requireNonNull(cells, "cells");
+        return new ExactTemporalProfile(cells);
+    }
+
     /** Whether this function has no supported temporal cells. */
     public boolean isEmpty() {
         return cells.isEmpty();
