@@ -93,6 +93,21 @@ public final class PiecewiseLinearFn {
     }
 
     /**
+     * Evaluates the arrival function on the closure of this function's
+     * temporal domain. This is intended for exact boundary and FIFO checks;
+     * it does not make an excluded endpoint a valid edge-entry time.
+     */
+    public double arrivalTimeAtClosure(double minute) {
+        double time = Domain.canonicalTime(minute);
+        boolean inClosure = domain.intervals().stream()
+                .anyMatch(interval -> time >= interval.start() && time <= interval.end());
+        if (!inClosure) {
+            throw new IllegalArgumentException("time is outside function-domain closure: " + time);
+        }
+        return Domain.canonicalTime(time + evaluateUnchecked(time));
+    }
+
+    /**
      * Returns the minimum travel time attained in the domain.
      */
     public double minTravelTime() {
