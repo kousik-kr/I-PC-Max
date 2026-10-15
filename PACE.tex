@@ -1,0 +1,2855 @@
+%%
+%% Manuscript prepared for submission to Information Systems (Elsevier).
+%% Elsevier CAS double-column format.
+%%
+\documentclass[a4paper,fleqn]{cas-dc}
+
+\usepackage[numbers]{natbib}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{xcolor}
+\usepackage{microtype}
+
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{theorem}{Theorem}
+\newtheorem{corollary}{Corollary}
+\newtheorem{proposition}{Proposition}
+
+
+\begin{document}
+\let\WriteBookmarks\relax
+
+\shorttitle{PACE: A Efficient Framework for Constrained Preference Path Profiles in Large Time-Dependent Road Networks}
+\shortauthors{Dutta et al.}
+
+\title[mode=title]{PACE: A Efficient Framework for Constrained Preference Path Profiles in Large Time-Dependent Road Networks}
+
+\author[1]{Kousik Kumar Dutta}
+\cormark[1]
+\ead{kousik.21csz0004@iitrpr.ac.in}
+
+\author[2]{Venkata M. V. Gunturi}
+\ead{v.gunturi@lboro.ac.uk}
+
+\affiliation[1]{
+    organization={Department of Computer Science and Engineering, Indian Institute of Technology Ropar},
+    postcode={140001},
+    state={Punjab},
+    country={India}
+}
+
+\affiliation[2]{
+    organization={Department of Computer Science, Loughborough University},
+    postcode={LE11 3TU},
+    state={Leicestershire},
+    country={United Kingdom}
+}
+
+\cortext[cor1]{Corresponding author}
+
+\begin{abstract}
+Routing systems increasingly need to optimize time-varying user or operational preferences while respecting a travel-time budget. Existing fixed-departure methods and interval-best formulations do not provide a route decision for every possible departure within a window. We formulate the \emph{constrained preference path profile query}, which returns a compact mapping from maximal departure-time subranges to their best feasible paths. We then introduce \emph{PACE}, a profile-aware query-processing framework for time-dependent road networks. PACE constructs an interval-safe query region, ranks score-bearing edges as pivots, assembles structural candidates through pivot-free connectors, and replays the resulting paths to form a sparse temporal envelope. PACE-X exhaustively explores certifiable instances, whereas PACE-B scales candidate generation through top-\(L\) pivot selection, a deterministic single-connector policy, bounded partial-state retention, and temporal breakpoint control. We prove query-region preservation, safe residual-budget pruning, sound temporal composition and layered assembly, exact envelope construction over a fixed candidate registry, and sufficient conditions for global PACE-X certification. On a controlled tractable NY workload, PACE-X supplies certified reference profiles while PACE-B maintains nearly constant query time at an explicitly increasing preference-quality gap. On the large NY, FLA, and CAL workloads, PACE-B completes within the bounded protocol and returns higher preference scores than the time-capped iSCOPE baseline, demonstrating the practical value of profile-aware preference routing over continuous departure intervals.
+\end{abstract}
+
+\begin{keywords}
+time-dependent road networks
+\sep constrained preference routing
+\sep path profile queries
+\sep temporal graph query processing
+\sep route recommendation
+\sep constrained path optimization
+\end{keywords}
+
+\maketitle
+
+\section{Introduction}
+\label{sec:introduction}
+
+Route-planning systems often need to optimize criteria beyond travel time or distance. A preferred route may reflect safety, comfort, scenic quality, accessibility, road width, delivery suitability, or another application-specific utility, provided that the resulting trip remains within an acceptable travel-time budget. This requirement appears in constrained path optimization, orienteering, scenic and navigable routing, and safety-aware recommendation~\cite{joksch1966shortest,handler1980dual,golden1987orienteering,vansteenwegen2011orienteering,Gunawan2016OPSurvey,Lu2015Scenic,Kaur2021Navigable,Aljubayrin2015SafeZones,Islam2023PersonalizedSafe}. It is especially relevant to information systems for personalized navigation, logistics, fleet operations, and mobility decision support, where qualitative route properties must be balanced against operational feasibility.
+
+Both feasibility and preference may vary with departure time. Congestion, incidents, signal delay, and temporal restrictions alter edge travel times, while the utility of a road segment may also depend on the time at which it is traversed. Time-dependent routing therefore represents edge costs through temporal functions and propagates arrival times in traversal order~\cite{td-djk,OrdaRom1990TDSP,GeorgeS06,GeorgeKS07,tdsp-edbt08,tdsp-2019vldb}. Related scenic, two-fold time-dependent, and preference-aware models similarly allow route utility to change with temporal context~\cite{lu2017scenic,Chen2019MostBeautiful,Chen2021TwoTDPathPlanner,dutta2024tdcpo}. Consequently, a path that is feasible and attractive for one departure time may become infeasible or suboptimal for another, and its score must be evaluated at the actual entry time of each traversed edge.
+
+Most constrained preference formulations assume a fixed departure time~\cite{lu2017scenic,Chen2019MostBeautiful,Chen2021TwoTDPathPlanner,dutta2024tdcpo,YuanLianWangChenMaWang2019,WangYuanWangZhouMuWang2021}. This is appropriate when the departure instant is known in advance, but many applications provide only a departure window. Repeating a fixed-departure solver at sampled times is straightforward, yet it revisits overlapping search spaces and produces a resolution-dependent list of answers. This redundancy has motivated all-departure-time and profile methods for time-dependent shortest paths~\cite{GunturiSY15,KolovskyJezekKolingerova2019}, but those methods optimize travel time rather than preference score under a budget.
+
+Interval-based constrained preference routing partially addresses this limitation by processing a complete departure interval~\cite{td-cpo-2025-interval}. Its output, however, is one route--departure pair: it identifies when the user should ideally depart, not which route should be selected if the actual departure occurs elsewhere in the window. In practice, departure may depend on loading, vehicle or driver availability, warehouse clearance, pickup time, or other external events. Similar uncertainty arises in safety-aware and personalized navigation, where route quality changes with traffic, visibility, road condition, or exposure risk~\cite{Kaur2021SafeNavigation,Islam2023PersonalizedSafe,Das2024SunGlare,Makhdomi2023GreenerFairerSurvey}. Such settings require a compact decision map over the full departure window.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.95\linewidth]{figs/profile_example.png}
+    \caption{Motivating example of a constrained preference path profile query. An interval-best query returns one route--departure pair, whereas the profile query identifies the best feasible path for each maximal subrange of the departure window.}
+    \label{fig:profile-example}
+\end{figure}
+
+Figure~\ref{fig:profile-example} illustrates this distinction. Several candidate paths can be feasible within the same departure window, but their travel times and scores change with departure time. The desired output is therefore not a single interval-wide recommendation, but a compact profile that records when the selected path changes. Once the actual departure time becomes known, the corresponding route can be retrieved without re-solving the query.
+
+Computing this profile is substantially harder than solving a single fixed-departure query. The winning path may change several times, its feasible domain may be disconnected by budget crossings, and a path that is uncompetitive over most of the window may still be optimal on a short subrange. Moreover, concatenating two path components requires function composition: the second component must be evaluated at the arrival time induced by the first. The problem therefore combines constrained path search, orienteering-style score maximization, and time-dependent functional propagation~\cite{garroppo2010survey,pugliese2013survey,Verbeeck2014AOPCycle,lu2017scenic,YuanLianWangChenMaWang2019}.
+
+We address these challenges with \emph{PACE} (Profile-Aware Candidate Envelope), a query-processing framework for constrained preference path profiles. PACE first constructs a budget-aware query region through forward and backward temporal labeling. It then ranks score-relevant edges, treats a selected subset as pivots, and connects them through reusable or on-demand pivot-free paths. Candidate paths are assembled by pivot depth, represented through lazy descriptors, replayed using the original temporal edge functions, and inserted into a sparse departure-time envelope.
+
+PACE provides two execution policies. PACE-X retains the components required for exhaustive certification on tractable instances. PACE-B is the scalable policy: it uses top-\(L\) pivots, one deterministic connector per request, at most \(K_f\) partial states per state group, and breakpoint threshold \(M_b\). PACE-B does not claim global optimality. Instead, every returned path is validated for continuity, looplessness, temporal support, and budget feasibility, while departure subranges that remain unresolved are identified explicitly.
+
+The paper makes the following contributions.
+\begin{itemize}
+    \item We formulate the \emph{constrained preference path profile query}, whose output is a compact mapping from maximal departure-time subranges to their best budget-feasible paths.
+    \item We develop PACE, which combines interval-safe query reduction, score-relevant pivots, reusable and on-demand connectors, layered candidate assembly, exact path replay, and sparse envelope construction.
+    \item We prove the safety of query-region reduction and residual-budget pruning, the soundness of connector composition and layered assembly, and the correctness of envelope extraction over a fixed exact candidate registry. We also give sufficient conditions for global PACE-X certification and establish validity, termination, and deterministic completed execution for PACE-B.
+    \item We evaluate exact and bounded execution separately on real road-network topologies. The study compares PACE-B with certified PACE-X results on a controlled tractable NY workload and with iSCOPE on NY, FLA, and CAL, while examining stage-wise behavior, bounded-policy trade-offs, sensitivity, and parallel execution.
+\end{itemize}
+
+The remainder of the paper is organized as follows. Section~\ref{sec:problem_formulation} defines the network model and profile query. Section~\ref{sec:related_work} reviews related work. Section~\ref{sec:pace} presents PACE, and Section~\ref{sec:analysis} establishes its theoretical properties. Section~\ref{sec:experiments} reports the experimental evaluation, Section~\ref{sec:discussion} discusses implications and limitations, and Section~\ref{sec:conclusion} concludes the paper.
+
+\section{Problem Formulation}
+\label{sec:problem_formulation}
+
+This section introduces the time-dependent road-network model, lifts the edge functions to path profiles, and formalizes the constrained preference path profile query.
+
+\subsection{Time-Dependent Road Network}
+\label{subsec:td_network}
+
+\begin{definition}[Time-dependent road network]
+A time-dependent road network is a directed graph \(G=(V,E)\), where \(V\) is the set of road junctions and \(E\) is the set of directed road segments. Each edge \(e=(u,v)\in E\) is associated with a time-dependent arrival function and a time-dependent preference-score function.
+\end{definition}
+
+Time is continuous, and a departure time \(t\) is the absolute time at which an edge or path traversal begins.
+
+\begin{definition}[Time-dependent edge functions]
+For an edge \(e=(u,v)\), let \(A_e(t)\) denote the absolute arrival time at \(v\) when \(e\) is entered at \(t\). We assume that \(A_e\) is continuous, nondecreasing, and piecewise linear. Its travel-time function is
+\[
+\tau_e(t)=A_e(t)-t.
+\]
+The FIFO property is expressed as
+\[
+t_1\leq t_2 \Longrightarrow A_e(t_1)\leq A_e(t_2).
+\]
+The edge also has a piecewise-constant preference-score function \(\sigma_e(t)\), evaluated at the time at which the edge is entered.
+\end{definition}
+
+The travel-time function \(\tau_e\) is continuous and piecewise linear but need not be monotone. FIFO prevents overtaking on an edge and makes chronological path propagation well defined.
+
+\subsection{Path Arrival, Travel-Time, and Score Profiles}
+\label{subsec:path_profiles}
+
+Let \(\mathcal P_{sd}\) be the set of vertex-simple directed paths from source \(s\) to destination \(d\). For
+\[
+P=\langle e_1,e_2,\ldots,e_k\rangle,
+\]
+define the edge-entry times recursively by
+\[
+t_1=t,
+\qquad
+t_{i+1}=A_{e_i}(t_i),
+\quad 1\leq i\leq k.
+\]
+
+\begin{definition}[Path profiles]
+For path \(P\) and departure time \(t\), its arrival-time, travel-time, and score profiles are
+\[
+A_P(t)=t_{k+1},
+\qquad
+T_P(t)=A_P(t)-t,
+\]
+and
+\[
+S_P(t)=\sum_{i=1}^{k}\sigma_{e_i}(t_i),
+\]
+respectively.
+\end{definition}
+
+The score is therefore not a static edge sum: each edge is evaluated at the entry time induced by the preceding path prefix.
+
+\begin{definition}[Budget-feasible path]
+Given budget \(B\), path \(P\in\mathcal P_{sd}\) is feasible at departure time \(t\) if
+\[
+T_P(t)\leq B.
+\]
+The feasible path set and the feasible departure domain of \(P\) over interval \(I\) are
+\[
+\mathcal F_{sd}(t,B)
+=
+\{P\in\mathcal P_{sd}\mid T_P(t)\leq B\},
+\]
+and
+\[
+D_P(I,B)
+=
+\{t\in I\mid T_P(t)\leq B\},
+\]
+respectively.
+\end{definition}
+
+\subsection{Constrained Preference Path Profile Query}
+\label{subsec:profile_query}
+
+For each \(t\in I\), let the exact selected path be
+\[
+P^\star(t)
+=
+\begin{cases}
+\displaystyle
+\arg\max_{P\in\mathcal F_{sd}(t,B)} S_P(t),
+& \mathcal F_{sd}(t,B)\neq\emptyset,\\[1.2ex]
+\bot,
+& \text{otherwise.}
+\end{cases}
+\]
+Ties are resolved by smaller travel time, then fewer edges, and finally the lexicographically smaller sequence of stable arc identifiers. This total order makes \(P^\star(t)\) unique.
+
+\begin{definition}[Constrained preference path profile query]
+Given \(G=(V,E)\), source \(s\), destination \(d\), departure interval \(I=[t_s,t_e]\), and travel-time budget \(B\), the query returns
+\[
+\Pi^\star
+=
+\langle
+(I_1,P_1),\ldots,(I_m,P_m)
+\rangle,
+\]
+where each \(I_j\subseteq I\) is connected and each \(P_j\in\mathcal P_{sd}\cup\{\bot\}\). The profile satisfies:
+\begin{enumerate}
+    \item \textbf{Coverage:} the ordered intervals partition \(I\). We use half-open intervals except for the final cell.
+    \item \textbf{Optimality:} for every \(t\in I_j\), \(P_j=P^\star(t)\).
+    \item \textbf{Maximality:} adjacent cells assigned to the same path are merged.
+\end{enumerate}
+\end{definition}
+
+The profile is not a discretized list of point-query answers. Its size depends on the number of changes in the selected path, not on the duration of \(I\) or on an externally chosen sampling interval. A cell assigned to \(\bot\) certifies that no budget-feasible path exists throughout that subrange. In the remainder of the paper, \emph{profile query} refers to this constrained preference path profile query.
+
+\section{Related Work}
+\label{sec:related_work}
+
+The proposed query lies at the intersection of time-dependent routing, constrained preference optimization, and scalable road-network query processing.
+
+\subsection{Time-Dependent Routing and Path Profiles}
+\label{subsec:rw_td_profiles}
+
+Time-dependent routing models edge traversal through functions evaluated at entry time, so the arrival at one vertex determines the cost of the next edge~\cite{td-djk,OrdaRom1990TDSP}. Spatio-temporal network and database studies extend this view to large temporal graphs and query-processing settings~\cite{GeorgeS06,GeorgeKS07,tdsp-index1}. Under FIFO, earliest-arrival queries admit label-setting principles and well-defined path arrival functions~\cite{DehneOmranSack2012}.
+
+Most work optimizes a fixed-departure fastest or shortest path, using online search, hierarchical methods, indexing, or temporal discretization~\cite{tdsp-edbt08,DemiryurekKSR11,tdsp-2011itsc,tdsp-2014its,tdsp-2014bigdata}. All-departure-time and profile methods instead characterize how the travel-time-optimal path or arrival function changes over an interval~\cite{GunturiSY15,KolovskyJezekKolingerova2019}. These methods avoid repeated point queries, but their profiles express travel-time optimality. They do not identify preference-maximizing paths subject to a travel-time budget.
+
+\subsection{Constrained and Preference-Aware Path Optimization}
+\label{subsec:rw_constrained_preference}
+
+Constrained path problems optimize one criterion while bounding another. Foundational constrained and bicriterion formulations show why a single scalar label per vertex is insufficient: one partial path may offer better objective value, while another consumes less constrained resource~\cite{joksch1966shortest,handler1980dual,hansen1980bicriterion}. Exact and approximate methods therefore use nondominated labels, dynamic programming, label correction, bidirectional search, relaxation, and bounding to control the search space~\cite{skriver2000label,dumitrescu2003weight,feillet2004elementary,righini2006symmetry,lozano2013exact,barrett2019bidirectional}. Surveys emphasize that exact search becomes difficult when dominance is weak or several resources interact~\cite{garroppo2010survey,pugliese2013survey}.
+
+Preference-aware route planning attaches utility to vertices or edges and seeks high-reward routes under a travel budget. Representative models include orienteering, tourist trip design, arc orienteering, scenic routing, navigable routing, and safety-aware recommendation~\cite{golden1987orienteering,vansteenwegen2011orienteering,Gunawan2016OPSurvey,Li2005TripPlanning,Gavalas2014TTDPSurvey,Riff2024PreferenceTTDP,Verbeeck2014AOPCycle,Gavalas2015AOPApprox,Lu2015Scenic,Kaur2021Navigable,Aljubayrin2015SafeZones,Kaur2021SafeNavigation,Islam2023PersonalizedSafe,Das2024SunGlare,Li2018EnergyEfficient,Makhdomi2023GreenerFairerSurvey}. Time-dependent variants additionally allow travel costs, availability, or utility to vary with traversal time~\cite{Verbeeck2014TDOP,Gunawan2014TDOP,Gavalas2014TDTOPTW,lu2017scenic,Chen2019MostBeautiful,Gao2019TwoFoldWCNC,Chen2021TwoTDPathPlanner}. These formulations generally return one route, one itinerary, or a small set of alternatives. Recent fixed-departure and interval constrained-preference methods move closer to our setting~\cite{dutta2024tdcpo,td-cpo-2025-interval,DuttaGunturi2026PCMax}, but they do not return the best feasible path for every maximal departure subrange.
+
+\subsection{Scalable Query Processing on Road Networks}
+\label{subsec:rw_scalable_query_processing}
+
+Large road-network systems increasingly combine online search with preprocessing or reusable labels. In time-dependent networks, bidirectional search, SHARC, contraction hierarchies, temporal labeling, hop labels, and shortcut indexes reduce query cost while preserving functional travel-time behavior~\cite{NanniciniDellingLibertiSchultes2008,time-shark08,BatzGeisbergerSandersVetter2009TDCH,tdsp-index2,tdhl-fifo,tdsp-2019vldb,tdsp-icde24}. Constrained path systems similarly use specialized indexes and bounded query structures, including approximate constrained-path indexes, Forest Hop Labeling, FHL-Cube, QHL, and min--max resource-constrained methods~\cite{wang2016cola,liu2021foresthop,liu2022fhlcube,wang2023qhl,qian2025minmax}. Parallel and GPU studies further identify frontier management and workload decomposition as central bottlenecks~\cite{dutta2022multithreading,lu2020gpu}. Time-dependent constrained routing also appears in cost-optimal, weight-constrained, and multimodal route-planning queries~\cite{tdsp-2014vldb,YuanLianWangChenMaWang2019,yuan2019tdcsp,WangYuanWangZhouMuWang2021}.
+
+These techniques offer useful pruning, labeling, and decomposition principles, but their outputs target fastest paths, constrained shortest paths, or one fixed optimization instance. PACE instead computes a departure-time decision profile for preference maximization under a travel-time budget. It combines an interval-safe temporal region, score-relevant pivots, connector reuse, layered candidate assembly, and sparse envelope extraction specifically for that output semantics.
+\section{The PACE Query-Processing Framework}
+\label{sec:pace}
+
+This section presents PACE, a profile-aware framework for constrained
+preference routing over a departure-time interval. Instead of solving a
+separate constrained path problem for each departure time, PACE first reduces
+the network to a query-relevant region, identifies promising score-bearing
+edges as pivots, and constructs source--destination candidates by connecting
+these pivots through pivot-free paths. The resulting structural candidates are
+then replayed using the original temporal edge functions and combined into a
+compact path-assignment profile over the departure interval.
+
+PACE supports two execution policies. \emph{PACE-X} is the exhaustive policy
+used for certification on sufficiently small instances. \emph{PACE-B} is the
+scalable bounded policy: it retains only the top-\(L\) pivots, uses one deterministic connector selected by the lower-bound fastest-path rule for each connector request, limits intermediate-state
+retention by \(K_f\), and controls temporal-profile complexity using the
+breakpoint threshold \(M_b\). Both policies share the same query-region,
+temporal-composition, replay, validation, and envelope machinery. Their
+difference lies in candidate completeness, as formalized in
+Section~\ref{sec:analysis}.
+
+\subsection{Overview and Query-Region Construction}
+\label{subsec:pace_region}
+
+A PACE query is written as
+\[
+q=(G,s,d,I,B,\theta),
+\]
+where \(G=(V,E)\) is a time-dependent road network, \(s\) and \(d\) are the
+source and destination, \(I=[t_s,t_e]\) is the departure interval, \(B\) is
+the travel-time budget, and \(\theta\) is the maximum number of selected
+pivots that may occur explicitly in one candidate.
+
+Let \(\mathcal{T}_G\) denote the temporal support of the edge functions. A
+budget-feasible path departing within \(I\) must arrive no later than
+\(t_e+B\). The temporal horizon relevant to the query is therefore
+\[
+\mathcal{T}_q=[t_s,t_e+B].
+\]
+PACE accepts the query only if
+\[
+\mathcal{T}_q\subseteq\mathcal{T}_G.
+\]
+Otherwise, it returns \textsc{FunctionHorizonExceeded}. Temporal functions are
+never wrapped or extrapolated beyond their declared support.
+
+For a temporal set \(D\), \(\operatorname{Norm}(D)\) denotes its canonical
+representation obtained by ordering its component intervals and merging
+overlapping or adjacent intervals under the common half-open endpoint
+convention. For an edge \(e\), \(\operatorname{id}(e)\) denotes its stable arc
+identifier. For a path \(P\), \(\operatorname{id}(P)\) denotes the ordered
+sequence of its arc identifiers and is used as the final deterministic
+tie-breaker.
+
+Figure~\ref{fig:pace-framework} summarizes the pipeline from query-region
+construction to the final path-assignment envelope. The first four stages are
+primarily structural; replay and envelope extraction provide the temporal
+answer.
+
+\begin{figure*}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figs/PACE_framework.png}
+    \caption{PACE query-processing pipeline. The network is first reduced to a
+    query-relevant region, after which score-relevant pivots and reusable or
+    on-demand connector handles are prepared. Candidate paths are assembled by
+    pivot depth, replayed using the original temporal functions, and inserted
+    into the sparse path-assignment envelope.}
+    \label{fig:pace-framework}
+\end{figure*}
+
+\paragraph{Forward and backward labeling.}
+PACE adapts the forward/backward labeling mechanism of
+\cite{DuttaGunturi2026PCMax} to the complete departure interval. The
+construction is performed once for the query rather than independently for a
+set of sampled departure times.
+
+The forward procedure starts from \(s\) at the earliest permitted departure
+time \(t_s\). For each reached vertex \(v\), let
+\[
+EA(v)=EA(v,t_s)
+\]
+denote its earliest arrival time. Labels are processed in increasing arrival
+order. The search stops when the queue is empty or its minimum remaining label
+exceeds \(t_e+B\).
+
+The backward procedure starts from \(d\) with deadline \(t_e+B\). For every
+reached vertex \(v\), let
+\[
+LD(v)=LD(v,t_e+B)
+\]
+denote the latest time at which a traversal may leave \(v\) and still reach
+\(d\) by this deadline. For an incoming edge \(e=(u,v)\) and current deadline
+\(\ell(v)\), backward relaxation uses the latest feasible predecessor time
+\[
+\operatorname{pred}_e(\ell(v))
+=
+\sup\{t\in\mathcal T_q\mid A_e(t)\leq \ell(v)\}.
+\]
+This definition remains valid when \(A_e\) contains flat segments and does not
+assume a unique inverse. Backward labels are processed in decreasing
+latest-departure order. The search stops when the queue is empty or its maximum
+remaining label is smaller than \(t_s\).
+
+A vertex is retained when its earliest source arrival is compatible with its
+latest destination departure:
+\[
+V_q
+=
+\{v\in V\mid EA(v)\leq LD(v)\}.
+\]
+For an edge \(e=(u,v)\), PACE additionally requires
+\[
+A_e(EA(u))\leq LD(v).
+\]
+The retained edge set is therefore
+\[
+E_q
+=
+\left\{
+e=(u,v)\in E
+\;\middle|\;
+u,v\in V_q,\;
+A_e(EA(u))\leq LD(v)
+\right\},
+\]
+and the query region is
+\[
+G_q=(V_q,E_q).
+\]
+
+PACE retains all compatible original edges rather than only the predecessor
+or successor edges chosen by the two labeling procedures. This is necessary
+because later candidate generation may require alternative paths between
+pivot endpoints. The predecessor handles produced by the forward procedure
+and the successor handles produced by the backward procedure are retained
+separately for possible connector reuse.
+
+Under FIFO travel times and correct forward/backward labeling, every
+source--destination path that is budget-feasible for at least one departure
+time in \(I\) lies entirely in \(G_q\). This property is proved in
+Lemma~\ref{lem:region_preservation}.
+
+Figure~\ref{fig:pace-running-example}(a) illustrates the reduction
+schematically. The solid directed edges form the retained query region, while
+the faded edges lie outside it. The example also highlights two selected
+score-bearing pivots and one score-bearing edge that remains in the connector
+graph but is not selected as a pivot.
+
+\subsection{Pivot and Connector Preparation}
+\label{subsec:pace_pivots_connectors}
+
+Once \(G_q\) has been constructed, PACE identifies score-bearing edges that
+may contribute substantially to a high-quality path. Explicitly organizing
+candidate generation around every such edge can be expensive. PACE-B therefore
+retains a bounded set of promising edges as pivots, while PACE-X makes every
+score-relevant edge available when certification is attempted.
+
+\paragraph{Score-relevant edges.}
+Consider an edge
+\[
+a=(x,y)\in E_q.
+\]
+The forward and backward labels provide a conservative query-relevant
+entry-time window
+\[
+W_a
+=
+\left\{
+\tau\in\mathcal{T}_q
+\;\middle|\;
+EA(x)\leq\tau,\;
+A_a(\tau)\leq LD(y)
+\right\}.
+\]
+The window is deliberately conservative: some times in \(W_a\) may not be
+realized by an actual source-to-\(x\) traversal. Nevertheless, every feasible
+traversal of \(a\) must enter the edge at a time contained in \(W_a\).
+
+For subsequent temporal composition, \(a\) is represented by the one-edge
+profile
+\[
+R_a
+=
+\langle
+a,D_a,A_a,T_a,S_a
+\rangle,
+\]
+where
+\[
+T_a(\tau)=A_a(\tau)-\tau,
+\qquad
+S_a(\tau)=\sigma_a(\tau),
+\]
+and
+\[
+D_a
+=
+\left\{
+\tau\in W_a
+\;\middle|\;
+T_a(\tau)\leq B
+\right\}.
+\]
+The positive-score part of this domain is
+\[
+D_a^{+}
+=
+\{\tau\in D_a\mid S_a(\tau)>0\},
+\]
+and the set of score-relevant edges is
+\[
+\mathcal{E}_q^{+}
+=
+\{a\in E_q\mid D_a^{+}\neq\emptyset\}.
+\]
+
+The distinction between \(D_a\) and \(D_a^{+}\) is important. The latter is
+used to determine whether an edge is score-relevant and to rank potential
+pivots. Candidate construction, however, uses the complete domain \(D_a\). A
+selected pivot may therefore be traversed at a time when its instantaneous
+score is zero if that traversal is otherwise temporally and budget feasible.
+
+\paragraph{Pivot ranking.}
+PACE-B ranks the edges in \(\mathcal{E}_q^{+}\) using three quantities. The
+score potential of \(a\) is
+\[
+\Psi_a
+=
+\int_{D_a^{+}}\sigma_a(\tau)\,d\tau,
+\]
+and its positive-score duration is
+\[
+\Gamma_a
+=
+\operatorname{meas}(D_a^{+}).
+\]
+
+To penalize pivots that require a large structural detour, let
+\[
+\underline{\tau}_e
+=
+\min_{t\in\mathcal{T}_q}\tau_e(t)
+\]
+be the minimum travel time of edge \(e\) over the query horizon, and let
+\(\underline d(u,v)\) be the static shortest-path distance under these
+lower-bound edge weights. For \(a=(x,y)\), define
+\[
+\Delta_a
+=
+\underline d(s,x)
++
+\underline{\tau}_a
++
+\underline d(y,d)
+-
+\underline d(s,d).
+\]
+
+PACE-B uses the deterministic lexicographic order
+\[
+\operatorname{rank}_{\mathrm{piv}}(a)
+=
+\left(
+-\Psi_a,\;
+-\Gamma_a,\;
+\Delta_a,\;
+\operatorname{id}(a)
+\right),
+\]
+where smaller tuples are preferred. Thus, larger score potential is preferred
+first, followed by longer positive-score duration and smaller lower-bound
+detour. The stable arc identifier resolves any remaining tie.
+
+PACE-B retains
+\[
+\mathcal{A}_q
+=
+\operatorname{TopL}
+\left(
+\mathcal{E}_q^{+},
+\operatorname{rank}_{\mathrm{piv}}
+\right),
+\qquad
+|\mathcal A_q|\leq L.
+\]
+The parameters \(L\) and \(\theta\) serve different purposes:
+\(L\) controls how many selected pivots are available to the query, whereas
+\(\theta\) controls how many selected pivots may occur explicitly in one
+candidate.
+
+PACE-X sets
+\[
+\mathcal A_q=\mathcal E_q^{+}
+\]
+when global certification is attempted.
+
+\paragraph{Connector graph.}
+Only the selected pivots are removed from connector generation:
+\[
+G_q^{-}
+=
+(V_q,E_q\setminus\mathcal A_q).
+\]
+Consequently, a connector cannot contain a selected pivot implicitly.
+However, an edge in
+\[
+\mathcal E_q^{+}\setminus\mathcal A_q
+\]
+remains available in \(G_q^{-}\). Such an edge may occur inside a connector,
+and its score is still evaluated at its induced traversal time.
+
+A candidate using pivots
+\[
+a_i=(x_i,y_i)
+\]
+may require connectors of the forms
+\[
+s\leadsto d,\qquad
+s\leadsto x_i,\qquad
+y_i\leadsto d,\qquad
+y_i\leadsto x_j.
+\]
+The last form is required when more than one pivot is used.
+
+\paragraph{Identity connector.}
+Two consecutive structural components may share the same endpoint. For a
+request with identical terminals,
+\[
+\operatorname{Connect}(u,u,D),
+\]
+PACE returns the identity connector
+\[
+\varepsilon_u:u\leadsto u
+\]
+with
+\[
+D_{\varepsilon_u}=D,
+\qquad
+A_{\varepsilon_u}(t)=t,
+\qquad
+T_{\varepsilon_u}(t)=0,
+\qquad
+S_{\varepsilon_u}(t)=0.
+\]
+Its path handle contains no edge and its visited-vertex set contains only
+\(u\).
+
+The identity connector avoids introducing a separate special case in the
+layered assembly. In the running example of
+Figure~\ref{fig:pace-running-example}(b),
+\[
+a_1=(v_2,v_5),
+\qquad
+a_2=(v_5,v_8),
+\]
+so the connector between the two pivots is simply
+\[
+C_1=\varepsilon_{v_5}.
+\]
+
+\paragraph{Reusable and on-demand connectors.}
+The forward and backward labeling stage already provides canonical
+source-prefix and destination-suffix handles for many vertices. A handle is
+reused only if its reconstructed edge sequence lies in \(G_q^{-}\) and its
+replayed profile is valid over the requested domain.
+
+Missing connectors are computed on demand in \(G_q^{-}\) by a loop-aware
+label-setting procedure. Each label stores an immutable predecessor handle and
+the vertices already used by the partial connector; an extension to a visited
+vertex is rejected. For a request from \(u\) to \(v\) over domain \(D\), let
+\[
+\mathcal C_q^{\mu}(u,v,D),
+\qquad
+\mu\in\{\mathrm X,\mathrm B\},
+\]
+be the returned connector collection. Identity requests return
+\(\varepsilon_u\). For distinct terminals,
+\[
+\mathcal C_q^{\mu}(u,v,D)
+=
+\begin{cases}
+\mathcal C_q^{\mathrm{all}}(u,v,D), & \mu=\mathrm X,\\[0.6ex]
+\{C_{uv}^{\mathrm{fast}}(D)\}, & \mu=\mathrm B,
+\end{cases}
+\]
+whenever the corresponding connector exists.
+
+PACE-X enumerates the feasible vertex-simple alternatives needed by exhaustive
+candidate construction. PACE-B retains one deterministic structural connector.
+Specifically, \(C_{uv}^{\mathrm{fast}}(D)\) is selected by label setting under
+the lower-bound edge weights \(\underline{\tau}_e\); equal lower-bound distances
+are resolved by the lexicographically smaller arc-ID sequence. The selected
+edge sequence is then replayed with the original temporal functions over
+\(D\). This definition gives a single reproducible connector even when the
+pointwise fastest path varies within the request domain.
+
+Connector generation is independent of the vertices occupied by the requesting
+partial candidate. Candidate-specific conflicts are checked after retrieval,
+which permits query-local reuse. If the PACE-B connector conflicts with the
+partial candidate, the extension is omitted; PACE-B does not generate a
+replacement connector. PACE-X may retain another feasible alternative.
+
+Figure~\ref{fig:pace-running-example}(b) shows the decomposition
+\[
+P=C_0\circ a_1\circ C_1\circ a_2\circ C_2,
+\]
+where \(C_0\) and \(C_2\) are pivot-free connectors and
+\(C_1=\varepsilon_{v_5}\).
+
+\begin{figure*}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figs/Running_example.png}
+    \caption{Running example of structural candidate construction.
+    (a) Forward/backward compatibility reduces the original graph to the
+    query-relevant region \(G_q\); selected pivots are highlighted, while a
+    non-selected score-bearing edge remains available inside connectors.
+    (b) A candidate is decomposed into pivot-free connectors and selected
+    pivots; because the head of \(a_1\) equals the tail of \(a_2\),
+    \(C_1=\varepsilon_{v_5}\) is an identity connector.
+    (c) Candidate states are organized by pivot depth. Destination completion
+    is attempted at every layer, so valid candidates may use any number of
+    pivots from \(0\) to \(\theta\). The illustration follows the PACE-B
+    single lower-bound-fastest-connector policy for clarity; PACE-X uses the same layered
+    structure while considering all required connector alternatives.}
+    \label{fig:pace-running-example}
+\end{figure*}
+
+\subsection{Layered Candidate Assembly}
+\label{subsec:pace_assembly}
+
+PACE combines connector handles and selected pivots through a layered
+expansion. Layer \(r\) contains partial candidates that have already traversed
+exactly \(r\) selected pivots. A complete candidate therefore has the general
+form
+\[
+P
+=
+C_0\circ a_1\circ C_1
+\circ\cdots\circ
+a_r\circ C_r,
+\qquad
+0\leq r\leq\theta.
+\]
+When \(r=0\), the candidate consists only of a direct connector from \(s\) to
+\(d\). Hence, \(\theta\) is an upper bound rather than a required number of
+pivots.
+
+Figure~\ref{fig:pace-running-example}(c) illustrates this organization for
+\(\theta=2\). The initial state lies in \(\mathcal H_0\). One-pivot
+extensions form \(\mathcal H_1\), and structurally compatible two-pivot
+extensions form \(\mathcal H_2\). Importantly, destination completion is
+attempted from every layer rather than only from the deepest one.
+
+\paragraph{Partial candidate state.}
+A partial candidate ending at vertex \(z\) is represented as
+\[
+X
+=
+\langle
+z,r,D_X,\delta_X,\Omega_X,U_X
+\rangle,
+\]
+where \(r\) is the pivot depth, \(D_X\subseteq I\) is its valid
+root-departure domain, \(\delta_X\) is a lazy path descriptor,
+\(\Omega_X\) is the set of visited vertices, and
+\(U_X\subseteq\mathcal A_q\) is the set of selected pivots already used.
+
+The state additionally carries the temporal summaries
+\[
+A_X,\qquad T_X,\qquad S_X
+\]
+required for feasibility checks and temporal composition.
+
+The initial state is
+\[
+X_0
+=
+\langle
+s,0,I,\varepsilon_s,\{s\},\emptyset
+\rangle,
+\]
+with
+\[
+A_{X_0}(t)=t,
+\qquad
+T_{X_0}(t)=0,
+\qquad
+S_{X_0}(t)=0.
+\]
+States are maintained in
+\[
+\mathcal H_0,\mathcal H_1,\ldots,\mathcal H_\theta.
+\]
+
+\paragraph{Temporal join.}
+Structural concatenation alone is insufficient in a time-dependent network.
+If a state \(X\) is followed by a connector or pivot profile \(Q\), then \(Q\)
+must be evaluated at the time at which traversal of \(X\) reaches its
+endpoint. Define the induced entry time
+\[
+\eta(t)=A_X(t).
+\]
+
+The joined arrival profile is
+\[
+A_{X\oplus Q}(t)
+=
+A_Q(A_X(t)),
+\]
+and the joined travel-time profile is
+\[
+T_{X\oplus Q}(t)
+=
+A_{X\oplus Q}(t)-t.
+\]
+The score collected by \(Q\) is likewise evaluated at the induced entry time:
+\[
+S_{X\oplus Q}(t)
+=
+S_X(t)+S_Q(A_X(t)).
+\]
+
+The valid departure domain is
+\[
+\begin{aligned}
+D_{X\oplus Q}
+=
+\operatorname{Norm}\bigl\{t\in D_X\;\bigm|\;&
+A_X(t)\in D_Q,\\[-0.2ex]
+& T_{X\oplus Q}(t)\leq B
+\bigr\}.
+\end{aligned}
+\]
+A temporal join whose resulting domain is empty is discarded.
+
+Figure~\ref{fig:pace-temporal-profile}(a) illustrates the key point: the
+downstream component \(Q\) is evaluated at \(A_X(t)\), not at the original
+source departure time \(t\). The same induced-time rule is used for both
+connector and pivot composition.
+
+\paragraph{Destination completion.}
+For every state \(X\in\mathcal H_r\), including the initial layer \(r=0\),
+PACE requests connectors from the current endpoint \(z\) to \(d\):
+\[
+\mathcal C_q^\mu(z,d,D_X).
+\]
+Each connector that passes the path-conflict test is temporally joined with
+\(X\). If
+\[
+D_{X\oplus C}\neq\emptyset,
+\]
+the resulting source--destination descriptor is inserted into the complete
+candidate set.
+
+Attempting destination completion at every layer ensures that a candidate is
+not forced to use exactly \(\theta\) pivots. Direct paths, one-pivot paths, and
+deeper candidates can all contribute to the final profile.
+
+\paragraph{Pivot extension.}
+If \(r<\theta\), PACE may extend \(X\) through an unused selected pivot
+\[
+a=(x,y)\in\mathcal A_q\setminus U_X.
+\]
+Before requesting a connector from the current endpoint \(z\) to \(x\), PACE
+computes the lower-bound feasible root-departure domain
+\[
+\begin{aligned}
+D_{X,a}^{\mathrm{lb}}
+=
+\operatorname{Norm}\bigl\{t\in D_X\;\bigm|\;&
+B-T_X(t)\\[-0.2ex]
+&\geq \underline d(z,x)+\underline{\tau}_a+\underline d(y,d)
+\bigr\}.
+\end{aligned}
+\]
+If this domain is empty, no completion through \(a\) can satisfy the budget
+and the connector request is skipped.
+
+Otherwise, PACE obtains
+\[
+C\in
+\mathcal C_q^\mu(z,x,D_{X,a}^{\mathrm{lb}}),
+\]
+joins \(X\) with \(C\), and subsequently joins the resulting state with the
+one-edge pivot profile \(R_a\). The resulting state belongs to
+\(\mathcal H_{r+1}\) only if its valid domain remains nonempty.
+
+\paragraph{Path consistency.}
+A connector can be vertex-simple in isolation while still creating a repeated
+vertex when attached to a partial candidate. For a connector
+\(C:z\leadsto x\), an extension through pivot \(a=(x,y)\) is accepted only if
+\[
+\bigl(V(C)\setminus\{z\}\bigr)\cap\Omega_X=\emptyset
+\]
+and
+\[
+y\notin\Omega_X\cup V(C).
+\]
+The pivot must also be unused:
+\[
+a\notin U_X.
+\]
+
+For an accepted extension,
+\[
+\Omega_{X'}
+=
+\Omega_X\cup V(C)\cup\{y\},
+\]
+and
+\[
+U_{X'}
+=
+U_X\cup\{a\}.
+\]
+Destination completion uses the analogous connector-conflict check. Complete
+continuity and vertex simplicity are verified again after materialization.
+
+\paragraph{Lazy descriptors.}
+PACE avoids copying a complete edge sequence after every extension. Let
+\(h_C\) denote the immutable handle of connector \(C\). A pivot extension
+updates the structural descriptor as
+\[
+\delta_{X'}
+=
+\delta_X\circ h_C\circ a.
+\]
+A complete candidate using \(r\) pivots is represented as
+\[
+\delta_P
+=
+\langle
+h_0,a_1,h_1,\ldots,a_r,h_r
+\rangle.
+\]
+The edge sequence itself is materialized only during candidate replay.
+
+Exact duplicate descriptors are removed using a canonical key derived from the
+ordered connector and pivot identifiers.
+
+\paragraph{Bounded state retention.}
+PACE-X applies no heuristic partial-state truncation. PACE-B limits
+intermediate growth by retaining at most \(K_f\) states for the same endpoint,
+pivot depth, and temporal cell.
+
+The temporal cells are induced by the boundaries of the competing state
+domains and the breakpoints of their partial score profiles. For each
+positive-length cell \(J\), PACE uses the representative time
+\[
+t_J
+=
+\frac{\inf J+\sup J}{2}.
+\]
+States are ranked by
+\[
+\operatorname{rank}_{\mathrm{part}}(X,J)
+=
+\left(
+-S_X(t_J),\;
+A_X(t_J),\;
+|\Omega_X|,\;
+\operatorname{key}(\delta_X)
+\right).
+\]
+PACE-B retains the first \(K_f\) states under this deterministic order.
+
+This is a bounded retention heuristic rather than a dominance rule. A removed
+state may in principle admit a better future completion. The use of \(K_f\)
+therefore affects completeness and solution quality, but not the validity of a
+retained candidate.
+
+Algorithm~\ref{alg:pace_assembly} summarizes the layered procedure for both
+execution policies.
+
+\begin{algorithm}[t]
+\caption{\textsc{AssembleCandidates}}
+\label{alg:pace_assembly}
+\begin{algorithmic}[1]
+\Require Pivot set \(\mathcal A_q\), interval \(I\), budget \(B\),
+depth \(\theta\), execution policy \(\mu\), state limit \(K_f\)
+\Ensure Canonical complete-candidate descriptors \(\mathcal D_q\)
+
+\State \(\mathcal H_0\gets
+       \{\textsc{IdentityState}(s,I)\}\)
+\State \(\mathcal D_q\gets\emptyset\)
+
+\For{\(r\gets0\) \textbf{to} \(\theta\)}
+
+    \State
+    \(\mathcal H_r\gets
+    \textsc{RetainStates}(\mathcal H_r,\mu,K_f)\)
+
+    \ForAll{\(X\in\mathcal H_r\)}
+
+        \Comment{Attempt destination completion at every layer}
+        \ForAll{\(C\in
+        \mathcal C_q^\mu(X.z,d,D_X)\)}
+
+            \If{\textsc{PathConflict}\((X,C)\)}
+                \State \textbf{continue}
+            \EndIf
+
+            \State
+            \(P\gets\textsc{TemporalJoin}(X,C)\)
+
+            \If{\(D_P\neq\emptyset\)}
+                \State
+                \(\mathcal D_q
+                \gets
+                \mathcal D_q\cup\{\delta_P\}\)
+            \EndIf
+
+        \EndFor
+
+        \If{\(r=\theta\)}
+            \State \textbf{continue}
+        \EndIf
+
+        \Comment{Extend through an unused selected pivot}
+        \ForAll{\(a=(x,y)\in
+        \mathcal A_q\setminus U_X\)}
+
+            \State
+            \(D^{\mathrm{lb}}
+            \gets
+            \textsc{ResidualDomain}(X,a,B)\)
+
+            \If{\(D^{\mathrm{lb}}=\emptyset\)}
+                \State \textbf{continue}
+            \EndIf
+
+            \ForAll{\(C\in
+            \mathcal C_q^\mu(X.z,x,D^{\mathrm{lb}})\)}
+
+                \If{\textsc{PathConflict}\((X,C,a)\)}
+                    \State \textbf{continue}
+                \EndIf
+
+                \State
+                \(Y\gets
+                \textsc{TemporalJoin}(X,C)\)
+
+                \If{\(D_Y=\emptyset\)}
+                    \State \textbf{continue}
+                \EndIf
+
+                \State
+                \(X'\gets
+                \textsc{TemporalJoin}(Y,R_a)\)
+
+                \If{\(D_{X'}\neq\emptyset\)}
+                    \State
+                    \(\mathcal H_{r+1}
+                    \gets
+                    \mathcal H_{r+1}\cup\{X'\}\)
+                \EndIf
+
+            \EndFor
+        \EndFor
+    \EndFor
+\EndFor
+
+\State
+\Return
+\(\textsc{CanonicalDeduplicate}(\mathcal D_q)\)
+
+\end{algorithmic}
+\end{algorithm}
+
+The algorithm returns canonical lazy source--destination descriptors. Their
+authoritative temporal profiles are recomputed from the original edge functions
+during replay.
+
+\subsection{Candidate Replay and Envelope Construction}
+\label{subsec:pace_replay_envelope}
+
+Candidate assembly is primarily structural. Before a descriptor can contribute
+to the final answer, PACE reconstructs its complete edge sequence and evaluates
+the corresponding temporal path functions from the original input data.
+
+Figure~\ref{fig:pace-temporal-profile} summarizes this transition. Panel~(a)
+shows induced-time temporal composition, exact replay, and the optional
+breakpoint-control step used by PACE-B. Panel~(b) shows that the final output is
+not a numerical score curve but a path-assignment profile: every departure-time
+cell is associated with the selected path.
+
+\begin{figure*}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figs/Temporal_profile.png}
+    \caption{Temporal evaluation and final profile construction.
+    (a) A downstream component is evaluated at the arrival time induced by the
+    preceding partial path. Replaying a complete candidate produces its exact
+    temporal profiles; PACE-B may reduce breakpoint complexity while retaining
+    the original replayed profile for validation.
+    (b) Candidate score profiles are compared over the departure interval and
+    converted into a path-assignment profile. The schematic example has no
+    score ties; in general, equal scores are resolved by travel time, path
+    length, and the stable path identifier.}
+    \label{fig:pace-temporal-profile}
+\end{figure*}
+
+\paragraph{Candidate replay.}
+Let \(\mathcal D_q\) be the descriptor collection returned by
+Algorithm~\ref{alg:pace_assembly}. Descriptors are first ordered by their
+canonical keys and exact duplicates are removed.
+
+A descriptor
+\[
+\delta_P
+=
+\langle
+h_0,a_1,h_1,\ldots,a_r,h_r
+\rangle
+\]
+is materialized into a directed edge sequence
+\[
+P
+=
+\langle
+e_1,e_2,\ldots,e_k
+\rangle.
+\]
+PACE verifies that the sequence starts at \(s\), ends at \(d\), is
+topologically continuous, and contains no repeated vertex. A descriptor that
+fails any of these checks is discarded.
+
+The valid path is replayed over the complete departure interval \(I\) using
+the original edge functions. Every edge score, including that of a
+non-selected score-bearing edge contained inside a connector, is evaluated at
+its induced entry time.
+
+The valid root-departure domain of \(P\) is
+\[
+\begin{aligned}
+D_P
+=
+\operatorname{Norm}\bigl\{t\in I\;\bigm|\;&
+\text{all induced entry times lie in }\mathcal T_G,\\[-0.2ex]
+& T_P(t)\leq B
+\bigr\}.
+\end{aligned}
+\]
+A candidate with
+\[
+D_P=\emptyset
+\]
+is discarded. Otherwise replay produces the exact candidate profile
+\[
+R_P
+=
+\langle
+P,D_P,A_P,T_P,S_P
+\rangle.
+\]
+
+Candidate descriptors are independent and may be replayed in parallel. Each
+worker returns an immutable replayed profile. The profiles are then reduced in
+canonical candidate order, ensuring that the final result does not depend on
+worker completion order.
+
+\paragraph{Breakpoint control.}
+Repeated temporal composition can introduce many breakpoints even for a
+single structural path. Let
+\[
+\beta(P)
+\]
+denote the number of breakpoints required to represent
+\[
+D_P,\quad A_P,\quad T_P,\quad S_P.
+\]
+
+PACE-X preserves the complete replayed representation. PACE-B also keeps the
+complete representation whenever
+\[
+\beta(P)\leq M_b.
+\]
+If
+\[
+\beta(P)>M_b,
+\]
+PACE-B applies deterministic breakpoint merging based on the clustering
+principle of \cite{td-cpo-2025-interval}.
+
+Consider a merged cluster whose retained boundary times are
+\[
+b_\ell<b_r.
+\]
+The arrival profile over this cluster is represented by
+\[
+\begin{aligned}
+\widehat A_P(t)
+&=A_P(b_\ell)
++\frac{t-b_\ell}{b_r-b_\ell}
+\bigl(A_P(b_r)-A_P(b_\ell)\bigr),\\[-0.2ex]
+&\hspace{8em} t\in[b_\ell,b_r].
+\end{aligned}
+\]
+The corresponding travel-time representation is
+\[
+\widehat T_P(t)
+=
+\widehat A_P(t)-t.
+\]
+
+For a merged score segment \(J\), PACE uses the deterministic conservative
+representative value
+\[
+\widehat S_P(J)
+=
+\min_{t\in J}S_P(t).
+\]
+Thus, PACE retains the breakpoint-clustering principle of the earlier
+interval-based method but uses a deterministic representative score for the
+bounded profile.
+
+The compressed profile is used only for provisional comparison during
+PACE-B envelope construction. The original replayed path and its exact
+profiles remain available for final feasibility validation. Breakpoint
+compression therefore controls temporal-profile complexity but does not create
+a global optimality guarantee for PACE-B.
+
+\paragraph{Sparse envelope construction.}
+PACE stores the current answer as an ordered temporal cell map
+\[
+\mathcal E
+=
+\langle
+(J_1,W_1),\ldots,(J_m,W_m)
+\rangle,
+\]
+where the cells partition \(I\) and \(W_i\) is the currently selected path on
+\(J_i\). Before any candidate is inserted,
+\[
+\mathcal E
+=
+\langle
+(I,\varnothing)
+\rangle,
+\]
+where \(\varnothing\) is an internal unassigned symbol.
+
+For an exact replayed profile, the deterministic ranking at departure time
+\(t\) is
+\[
+\rho_t(P)
+=
+\left(
+-S_P(t),\;
+T_P(t),\;
+|P|,\;
+\operatorname{id}(P)
+\right).
+\]
+Hence, PACE first maximizes preference score, then minimizes travel time, then
+prefers fewer edges, and finally uses the stable path identifier.
+
+If PACE-B is provisionally comparing a breakpoint-compressed profile, it uses
+\[
+\widehat\rho_t(P)
+=
+\left(
+-\widehat S_P(t),\;
+\widehat T_P(t),\;
+|P|,\;
+\operatorname{id}(P)
+\right).
+\]
+
+When candidate \(P\) is inserted, PACE examines only current envelope cells
+that intersect \(D_P\). Such a cell is refined at the candidate-domain
+boundaries and at every event at which the ordering between the candidate and
+the current winner may change. These events include score-profile breakpoints
+and, on subranges where the two scores are equal, roots of
+\[
+T_P(t)=T_W(t),
+\]
+where \(W\) denotes the current winner.
+
+Inside every resulting subcell, the ranking is fixed. PACE changes the stored
+winner only where the newly inserted candidate has the smaller ranking tuple.
+Cells not intersecting \(D_P\) are left unchanged.
+
+The result is a sparse path-assignment envelope rather than a score-valued
+curve. As illustrated in Figure~\ref{fig:pace-temporal-profile}(b), a schematic
+candidate registry may yield
+\[
+[t_0,t_1)\mapsto P_1,
+\qquad
+[t_1,t_2)\mapsto P_2,
+\qquad
+[t_2,t_f]\mapsto P_3.
+\]
+The stored output records the winning path on each cell, not merely its score.
+
+\paragraph{Final validation and local repair.}
+Breakpoint merging may shift a provisional feasibility boundary or alter a
+bounded comparison. PACE therefore validates every final path-valued
+assignment using the original, unmerged replayed profile.
+
+For a cell \(J\) provisionally assigned to path \(P\), define
+\[
+J_P^{\mathrm{valid}}
+=
+\operatorname{Norm}
+\left(
+\{t\in J\mid T_P(t)\leq B\}
+\right).
+\]
+If
+\[
+J_P^{\mathrm{valid}}=J,
+\]
+the path remains valid over the complete assigned cell.
+
+Otherwise, \(J\) is split. For every invalid portion \(J'\), PACE reconstructs
+a local envelope from the original replayed profiles of all generated
+candidates whose valid domains intersect \(J'\). The same deterministic
+ranking and the same score- and travel-time-order change events are used for
+this repair.
+
+If no generated feasible candidate exists on a repaired subrange, its meaning
+depends on the execution policy. In a globally certified PACE-X execution,
+exhaustive generation allows the subrange to be reported as
+\[
+\bot,
+\]
+denoting certified infeasibility. In PACE-B, failure to generate a feasible
+candidate does not imply that none exists globally. Such a subrange is
+therefore reported as
+\[
+\mathsf U,
+\]
+denoting an unresolved bounded cell, unless infeasibility has been established
+independently.
+
+Adjacent cells assigned to the same path are merged. Adjacent
+\(\bot\)-cells and adjacent \(\mathsf U\)-cells are merged analogously.
+
+A globally certified PACE-X execution therefore returns
+\[
+\Pi^\star
+=
+\langle
+(I_1,P_1),\ldots,(I_\ell,P_\ell)
+\rangle,
+\qquad
+P_i\in\mathcal P_{sd}\cup\{\bot\},
+\]
+whereas PACE-B returns the annotated bounded profile
+\[
+\widehat\Pi_B
+=
+\langle
+(\widehat I_1,\widehat P_1),\ldots,
+(\widehat I_r,\widehat P_r)
+\rangle,
+\]
+with
+\[
+\widehat P_i
+\in
+\mathcal P_{sd}\cup\{\bot,\mathsf U\}.
+\]
+
+Thus, PACE separates structural candidate construction from temporal answer
+construction: candidate descriptors determine which paths are considered,
+whereas replay and envelope extraction determine where each generated path is
+selected over the departure interval.
+
+\subsection{Execution Policies}
+\label{subsec:pace_policies}
+
+The algorithmic stages above are shared by PACE-X and PACE-B. Their
+differences concern only the completeness of candidate generation and the use
+of bounded controls, as summarized in Table~\ref{tab:pace_policies}.
+
+\begin{table}[t]
+\centering
+\caption{PACE execution policies.}
+\label{tab:pace_policies}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}lXX@{}}
+\toprule
+\textbf{Property}
+&
+\textbf{PACE-X}
+&
+\textbf{PACE-B}
+\\
+\midrule
+
+Purpose
+&
+Certification on small instances
+&
+Scalable large-network execution
+\\
+
+Pivot selection
+&
+All score-relevant edges
+&
+Top-\(L\) pivots
+\\
+
+Pivot depth
+&
+Sufficient for completeness
+&
+Configured \(\theta\)
+\\
+
+Connector policy
+&
+All required feasible alternatives
+&
+Single lower-bound-fastest connector
+\\
+
+Intermediate states
+&
+No heuristic truncation
+&
+At most \(K_f\) per state group
+\\
+
+Breakpoint representation
+&
+Exact and uncompressed
+&
+Merged when \(\beta(P)>M_b\)
+\\
+
+Optimality status
+&
+Conditionally globally certified
+&
+Not certified
+\\
+
+\bottomrule
+\end{tabularx}
+\end{table}
+
+PACE-X is intended primarily as a certification policy rather than as the
+large-network execution mode. A PACE-X result is labeled
+\textsc{GlobalCertified} only when the query-region preservation conditions
+hold, every score-relevant edge is available as a pivot, \(\theta\) is
+sufficient, all required feasible connector alternatives are generated, no
+heuristic partial-state truncation or breakpoint merging is used, and
+execution completes without an external resource truncation. These conditions
+are stated formally in Theorem~\ref{thm:pace_x_exactness}.
+
+PACE-B uses the compact bounded configuration
+\[
+(L,\theta,K_f,M_b).
+\]
+Its scalability is obtained by restricting the pivot set, using one lower-bound-fastest connector per request, bounding intermediate state retention, and
+reducing the representation of temporally complex profiles. These restrictions
+can prevent a globally optimal candidate from reaching the replay stage.
+PACE-B therefore does not claim global optimality or a worst-case
+approximation ratio.
+
+The absence of an optimality certificate does not weaken path validity. Every
+path-valued assignment returned by either policy is materialized, replayed,
+and checked against the original temporal edge functions before being
+reported.
+
+A certified PACE-X execution returns
+\[
+(\Pi^\star,\eta_X),
+\]
+whereas PACE-B returns
+\[
+(\widehat\Pi_B,\eta_B).
+\]
+The execution metadata record the active policy, effective parameter values,
+breakpoint-merging information, completion status, and deterministic output
+checksum.
+
+\section{Theoretical Analysis and Guarantees}
+\label{sec:analysis}
+
+This section establishes the correctness properties of the PACE framework.
+We first show that the query-region and residual-budget tests preserve every
+path that may satisfy the query. We then establish the soundness of connector
+generation, temporal joining, layered candidate assembly, and envelope
+construction. Finally, we state the conditions under which PACE-X provides a
+global certificate and clarify the guarantees of bounded PACE-B execution.
+
+\subsection{Assumptions and Soundness}
+\label{subsec:analysis_preliminaries}
+
+The analysis follows the network and path-profile model introduced in
+Section~\ref{sec:problem_formulation}. For every edge \(e\), its arrival
+function \(A_e\) is assumed to be continuous, nondecreasing, and piecewise
+linear. Consequently, the network satisfies the FIFO property. Edge travel
+times are nonnegative, and the score function \(\sigma_e\) is nonnegative and
+piecewise constant. Over the query-relevant horizon, every edge arrival and
+score function has a finite breakpoint representation. Consequently, every
+path profile generated by a finite path also has a finite piecewise
+representation. All paths considered by PACE are vertex-simple, while parallel
+directed edges remain distinguishable through their stable arc identifiers.
+
+For each edge, define its minimum travel time over the query-relevant horizon
+as
+\[
+\underline{\tau}_e
+=
+\min_{t\in\mathcal{T}_q}
+\bigl(A_e(t)-t\bigr).
+\]
+The lower-bound distance \(\underline d(u,v)\) is the shortest-path distance
+from \(u\) to \(v\) under the static weights \(\underline{\tau}_e\). Hence,
+for every time-dependent \(u\)--\(v\) path \(P\) whose traversal lies within
+\(\mathcal{T}_q\),
+\[
+\underline d(u,v)
+\leq
+T_P(t).
+\]
+The query is assumed to satisfy
+\[
+\mathcal{T}_q=[t_s,t_e+B]
+\subseteq
+\mathcal{T}_G,
+\]
+so every temporal function required by a budget-feasible traversal is defined
+over the relevant horizon.
+
+Consider a candidate profile
+\[
+C=
+\langle
+P_C,D_C,A_C,T_C,S_C
+\rangle
+\]
+representing a path from a vertex \(u\) to a vertex \(v\). We call \(C\)
+\emph{sound} if, for every \(t\in D_C\),
+
+\begin{enumerate}
+    \item \(P_C\) is a continuous vertex-simple directed path from \(u\) to
+    \(v\);
+
+    \item \(A_C(t)\) equals the arrival time obtained by traversing \(P_C\)
+    from departure time \(t\);
+
+    \item
+    \[
+    T_C(t)=A_C(t)-t;
+    \]
+
+    \item \(S_C(t)\) equals the accumulated score obtained by evaluating each
+    edge of \(P_C\) at its induced entry time;
+
+    \item every induced edge-entry time belongs to \(\mathcal{T}_G\); and
+
+    \item
+    \[
+    T_C(t)\leq B.
+    \]
+\end{enumerate}
+
+Soundness is a validity property rather than an optimality property. A bounded
+search may omit a better candidate, but every original profile produced by
+candidate replay satisfies the conditions above. A breakpoint-compressed
+profile is an auxiliary representation used for bounded comparison and is not
+itself claimed to be sound under this exact definition. Final path assignments
+are therefore validated against the original replayed profiles. In particular,
+the top-\(L\) pivot policy, the single lower-bound-fastest-connector policy, and bounded
+partial-state retention used by PACE-B may affect candidate completeness, but
+they do not change the temporal meaning of a retained profile.
+
+The mathematical results below assume exact temporal composition, breakpoint
+construction, domain intersection, and comparison. The implementation stores
+breakpoint times using double precision and applies the fixed numerical
+tolerance described in Section~\ref{subsec:pace_replay_envelope}. Therefore,
+an implementation-level \textsc{GlobalCertified} result is interpreted with
+respect to that declared numerical representation and comparison semantics.
+
+\subsection{Safety of Query Reduction}
+\label{subsec:analysis_reduction}
+
+PACE reduces the search space in two stages. It first restricts the graph to
+the query region \(G_q\) constructed by forward and backward labeling. During
+candidate assembly, it further removes pivot extensions whose lower-bound
+completion cost exceeds the remaining budget. The following results show that
+neither operation removes a path that can satisfy the query.
+
+\begin{lemma}[Query-region preservation]
+\label{lem:region_preservation}
+Let \(P\) be an \(s\)--\(d\) path that satisfies the travel-time budget for
+some departure time \(t\in I\). Under FIFO travel times and correct forward
+and backward label computation, every vertex and edge of \(P\) belongs to
+\(G_q\).
+\end{lemma}
+
+\begin{proof}
+Let \(v\) be a vertex of \(P\), and let \(t_v\) denote the time at which the
+traversal of \(P\), departing from \(s\) at \(t\), reaches \(v\).
+
+Consider the prefix of \(P\) from \(s\) to \(v\). Since
+\[
+t_s\leq t
+\]
+and the network satisfies FIFO, traversing the same prefix from the earlier
+time \(t_s\) cannot arrive at \(v\) later than \(t_v\). The forward label
+\(EA(v)\) is the earliest arrival among all paths departing from \(s\) at
+\(t_s\). Therefore,
+\[
+EA(v)\leq t_v.
+\]
+
+The suffix of \(P\) from \(v\) to \(d\) reaches the destination no later than
+\[
+t+B\leq t_e+B.
+\]
+Hence, departure from \(v\) at time \(t_v\) permits arrival at \(d\) by the
+backward-labeling deadline \(t_e+B\). Since \(LD(v)\) is the latest such
+departure time,
+\[
+t_v\leq LD(v).
+\]
+Combining the two inequalities gives
+\[
+EA(v)\leq t_v\leq LD(v),
+\]
+and thus \(v\in V_q\).
+
+Now consider an edge \(e=(u,v)\) of \(P\). Let \(t_u\) be its actual entry
+time on \(P\). From the preceding argument,
+\[
+EA(u)\leq t_u.
+\]
+Since \(A_e\) is nondecreasing,
+\[
+A_e(EA(u))
+\leq
+A_e(t_u)
+=
+t_v.
+\]
+Moreover, \(t_v\leq LD(v)\). Therefore,
+\[
+A_e(EA(u))\leq LD(v),
+\]
+which is exactly the edge-retention condition defining \(E_q\). Hence,
+\(e\in E_q\). The argument applies to every vertex and edge of \(P\), so
+\(P\) is contained in \(G_q\).
+\end{proof}
+
+Lemma~\ref{lem:region_preservation} shows that restricting the subsequent
+search to \(G_q\) preserves every path that is feasible for at least one
+departure time in \(I\). It does not imply that every path in \(G_q\) is
+feasible; additional temporal and budget checks are still required during
+candidate construction.
+
+\begin{lemma}[Safety of residual-budget pruning]
+\label{lem:residual_pruning}
+Let \(X\) be a partial candidate ending at vertex \(z\), and let
+\(a=(x,y)\) be a selected pivot. For a departure time \(t\in D_X\), suppose
+that
+\[
+B-T_X(t)
+<
+\underline d(z,x)
++
+\underline{\tau}_a
++
+\underline d(y,d).
+\]
+Then no completion of \(X\) that next traverses pivot \(a\) can satisfy the
+travel-time budget at \(t\).
+\end{lemma}
+
+\begin{proof}
+Any completion of \(X\) through \(a\) consists of a connector from \(z\) to
+\(x\), traversal of \(a\), and a suffix from \(y\) to \(d\). By admissibility
+of the lower-bound distances, every \(z\)--\(x\) connector requires travel
+time at least
+\[
+\underline d(z,x),
+\]
+while every \(y\)--\(d\) suffix requires at least
+\[
+\underline d(y,d).
+\]
+The traversal time of \(a\) is at least
+\[
+\underline{\tau}_a.
+\]
+Every such completion therefore requires additional travel time of at least
+\[
+\underline d(z,x)
++
+\underline{\tau}_a
++
+\underline d(y,d).
+\]
+
+The remaining budget after traversing \(X\) is
+\[
+B-T_X(t).
+\]
+Under the condition of the lemma, this remaining budget is strictly smaller
+than the lower bound on every possible completion through \(a\). Hence, no
+such completion can satisfy the budget at departure time \(t\).
+\end{proof}
+
+It follows that the residual domain
+\[
+\begin{aligned}
+D_{X,a}^{\mathrm{lb}}
+=
+\operatorname{Norm}\bigl\{t\in D_X\;\bigm|\;&
+B-T_X(t)\\[-0.2ex]
+&\geq \underline d(z,x)+\underline{\tau}_a+\underline d(y,d)
+\bigr\}
+\end{aligned}
+\]
+removes only departure times for which completion through \(a\) is impossible.
+The lower-bound test can therefore reduce connector requests and temporal
+domains without eliminating a budget-feasible extension.
+
+\subsection{Soundness of Candidate Construction}
+\label{subsec:analysis_construction}
+
+Candidate construction combines connector profiles with selected pivot edges.
+The following results show that connector construction and temporal joining
+preserve structural and temporal validity.
+
+\begin{lemma}[Connector-profile soundness]
+\label{lem:connector_soundness}
+Every connector profile used by PACE, whether obtained from a reusable
+forward/backward handle, the identity connector, or an on-demand connector
+search, represents a continuous vertex-simple path in \(G_q^{-}\), and its
+replayed temporal profiles agree with edge-by-edge traversal over its reported
+domain.
+\end{lemma}
+
+\begin{proof}
+The identity connector is sound because
+\[
+A_{\varepsilon}(t)=t,
+\qquad
+T_{\varepsilon}(t)=0,
+\qquad
+S_{\varepsilon}(t)=0.
+\]
+
+A connector inherited from forward or backward labeling is reconstructed from
+its predecessor or successor handle after verifying that its edge sequence
+contains no selected pivot. It is therefore a path in \(G_q^{-}\). The path
+is replayed using the original edge functions, and its domain is restricted to
+the times for which the traversal is temporally defined and budget-feasible.
+Hence, its replayed profile is sound.
+
+For an on-demand connector, consider the label-setting construction. The
+initial label is the identity path at the connector source and is therefore
+sound. Suppose that a sound label ending at vertex \(z\) is extended through
+\(e=(z,z')\). The extension is permitted only when \(z'\) has not previously
+been visited. Appending \(e\) therefore preserves vertex simplicity and path
+continuity.
+
+If the connector is entered at time \(t\), then \(e\) is entered at
+\(A_{\lambda}(t)\). The extended profiles are
+\[
+A_{\lambda\oplus e}(t)
+=
+A_e\!\left(A_{\lambda}(t)\right)
+\]
+and
+\[
+S_{\lambda\oplus e}(t)
+=
+S_{\lambda}(t)
++
+\sigma_e\!\left(A_{\lambda}(t)\right),
+\]
+while
+\[
+T_{\lambda\oplus e}(t)
+=
+A_{\lambda\oplus e}(t)-t.
+\]
+These expressions agree with the edge-by-edge traversal of the extended path.
+
+The extension domain is restricted to times for which the existing label and
+the appended edge are temporally defined and satisfy the domain and budget
+conditions of the connector request. Hence, the extended label is sound over
+its reported domain. Induction over the number of extensions proves the claim
+for every on-demand connector.
+\end{proof}
+
+Connector generation is performed in
+\[
+G_q^{-}
+=
+(V_q,E_q\setminus\mathcal A_q).
+\]
+Thus, a connector contains no selected pivot implicitly. It may nevertheless
+contain non-selected score-bearing edges, whose scores are included through
+the temporal update in Lemma~\ref{lem:connector_soundness}.
+
+A selected pivot also defines a sound one-edge profile
+\[
+R_a
+=
+\langle
+a,D_a,A_a,T_a,S_a
+\rangle.
+\]
+For every \(\tau\in D_a\), the represented path consists of the single edge
+\(a\), its arrival time is \(A_a(\tau)\), its travel time is
+\[
+T_a(\tau)=A_a(\tau)-\tau,
+\]
+and its score is
+\[
+S_a(\tau)=\sigma_a(\tau).
+\]
+By the definition of \(D_a\), the edge functions are temporally valid and
+\[
+T_a(\tau)\leq B.
+\]
+Hence, pivot profiles and connector profiles satisfy the same soundness
+contract required by the temporal-join operation.
+
+\begin{lemma}[Temporal-join soundness]
+\label{lem:temporal_join_soundness}
+Let \(X\) be a sound partial candidate from \(u\) to \(z\), and let \(Q\) be
+a sound connector or pivot profile beginning at \(z\). Suppose that their
+concatenation passes the path-consistency test. Then the joined profile
+\(X\oplus Q\) is sound over
+\[
+\begin{aligned}
+D_{X\oplus Q}
+=
+\operatorname{Norm}\bigl\{t\in D_X\;\bigm|\;&
+A_X(t)\in D_Q,\\[-0.2ex]
+& T_{X\oplus Q}(t)\leq B
+\bigr\}.
+\end{aligned}
+\]
+\end{lemma}
+
+\begin{proof}
+Fix \(t\in D_{X\oplus Q}\). Since \(t\in D_X\), soundness of \(X\) implies
+that its represented path reaches \(z\) at
+\[
+\eta(t)=A_X(t).
+\]
+The joined-domain condition requires
+\[
+\eta(t)\in D_Q,
+\]
+so \(Q\) is temporally valid when entered at the arrival time produced by
+\(X\).
+
+By soundness of \(Q\), traversing it from \(\eta(t)\) produces final arrival
+time
+\[
+A_Q(\eta(t)).
+\]
+Therefore,
+\[
+A_{X\oplus Q}(t)
+=
+A_Q(A_X(t)),
+\]
+and
+\[
+T_{X\oplus Q}(t)
+=
+A_{X\oplus Q}(t)-t.
+\]
+
+The score accumulated before reaching \(z\) is \(S_X(t)\), whereas the score
+collected by \(Q\) is evaluated at its actual entry time \(A_X(t)\). Hence,
+\[
+S_{X\oplus Q}(t)
+=
+S_X(t)+S_Q(A_X(t)),
+\]
+which is the score of the concatenated traversal.
+
+The path-consistency test ensures that the two components share no unintended
+vertex, so their concatenation is vertex-simple. Finally, the definition of
+\(D_{X\oplus Q}\) ensures that the complete travel time does not exceed \(B\).
+Thus, every condition of soundness holds over the joined domain.
+\end{proof}
+
+The composition also preserves the temporal profile forms used by PACE.
+Compositions of continuous nondecreasing piecewise-linear arrival functions
+remain continuous, nondecreasing, and piecewise linear. The corresponding
+travel-time profile is continuous and piecewise linear, while the accumulated
+score remains piecewise constant after introducing the preimages of the
+component score breakpoints.
+
+\begin{proposition}[Layered-assembly soundness]
+\label{prop:assembly_soundness}
+Every complete descriptor produced by
+\textsc{AssembleCandidates} represents a continuous vertex-simple
+\(s\)--\(d\) path containing at most \(\theta\) explicitly selected pivots.
+After materialization and replay, every retained candidate profile is sound
+over its reported departure domain.
+\end{proposition}
+
+\begin{proof}
+We proceed by induction on the pivot depth.
+
+The initial state \(X_0\) represents the identity path at \(s\) and is sound
+over \(I\). A zero-pivot completion joins \(X_0\) with a sound
+\(s\)--\(d\) connector. By
+Lemma~\ref{lem:temporal_join_soundness}, every accepted zero-pivot completion
+is sound.
+
+Assume that every state in layer \(\mathcal H_r\) represents a sound
+vertex-simple partial path containing exactly \(r\) selected pivots. Let
+\(X\in\mathcal H_r\) be extended through an unused pivot \(a=(x,y)\). The
+connector from the endpoint of \(X\) to \(x\) is sound by
+Lemma~\ref{lem:connector_soundness}. The path-conflict test ensures that its
+internal vertices do not intersect the vertices already used by \(X\), and
+the additional test on \(y\) prevents the pivot head from revisiting an
+existing vertex.
+
+Joining \(X\) with the connector and then with the pivot preserves temporal
+soundness by repeated application of
+Lemma~\ref{lem:temporal_join_soundness}. The resulting state is
+vertex-simple, ends at \(y\), and contains exactly \(r+1\) selected pivots.
+Because extension is permitted only when \(r<\theta\), no state contains more
+than \(\theta\) selected pivots.
+
+Destination completion applies the same argument with a connector from the
+current endpoint to \(d\). Since completion is attempted at every layer, the
+resulting descriptors may contain any number of selected pivots between zero
+and \(\theta\).
+
+Finally, replay reconstructs the complete edge sequence and verifies its
+continuity, endpoints, looplessness, temporal support, and budget-feasible
+domain using the original edge functions. Hence, every replayed profile that
+survives these checks is sound over its reported domain.
+\end{proof}
+
+Top-\(L\) pivot selection, the single lower-bound-fastest-connector policy, and bounded
+partial-state retention may prevent some feasible candidates from being
+generated. These operations remove or omit candidate possibilities, but they
+do not alter the path or temporal interpretation of any candidate that is
+retained. They therefore affect completeness and solution quality, but not the
+soundness established above.
+
+\subsection{Envelope and Output Correctness}
+\label{subsec:analysis_envelope}
+
+After candidate replay, PACE maintains an ordered envelope over the departure
+interval. This subsection first establishes the correctness of sparse envelope
+construction for a fixed set of exact candidate profiles. It then distinguishes
+this result from the validity guarantee provided when PACE-B uses breakpoint
+merging or bounded candidate generation.
+
+Let
+\[
+\mathcal{R}
+=
+\{R_{P_1},R_{P_2},\ldots,R_{P_m}\}
+\]
+be a finite registry of sound replayed profiles, where
+\[
+R_P=\langle P,D_P,A_P,T_P,S_P\rangle.
+\]
+For a departure time \(t\in D_P\), recall the deterministic ranking
+\[
+\rho_t(P)
+=
+\left(
+-S_P(t),\;
+T_P(t),\;
+|P|,\;
+\operatorname{id}(P)
+\right).
+\]
+For every \(t\in I\), define the active candidate set
+\[
+\mathcal{R}(t)
+=
+\{R_P\in\mathcal{R}\mid t\in D_P\}.
+\]
+
+\begin{theorem}[Correctness of sparse envelope construction]
+\label{thm:envelope_correctness}
+Assume that all profiles in \(\mathcal{R}\) are represented exactly and that
+the envelope refinement includes every candidate-domain boundary, every
+score-profile breakpoint of an active candidate, and every root
+\[
+T_{P_i}(t)=T_{P_j}(t)
+\]
+on a subrange where
+\[
+S_{P_i}(t)=S_{P_j}(t).
+\]
+Then candidate activity and the complete ranking induced by \(\rho_t\) are
+fixed inside every temporal cell. Sparse envelope construction returns, for
+every \(t\in I\),
+\[
+P_{\mathcal{E}}(t)
+=
+\arg\min_{R_P\in\mathcal{R}(t)}
+\rho_t(P),
+\]
+whenever \(\mathcal{R}(t)\neq\emptyset\). If
+\(\mathcal{R}(t)=\emptyset\), the corresponding envelope cell remains
+unassigned.
+\end{theorem}
+
+\begin{proof}
+Consider the candidates in the canonical insertion order
+\[
+R_{P_1},R_{P_2},\ldots,R_{P_m}.
+\]
+We prove by induction on the number of inserted candidates that, after
+processing the first \(j\) candidates, every envelope cell stores the
+highest-ranked active candidate among
+\[
+\{R_{P_1},\ldots,R_{P_j}\}.
+\]
+
+Before any insertion, every cell is unassigned, so the invariant holds
+trivially. Assume that it holds after processing the first \(j-1\) candidates,
+and consider \(R_{P_j}\). PACE examines only cells intersecting \(D_{P_j}\).
+It refines such cells at the boundaries and order-change points required to
+make the comparison between \(P_j\) and the current winner stable inside every
+resulting subcell.
+
+On each refined subcell, either \(P_j\) is inactive, in which case the
+existing winner is unchanged, or both candidates are active and their ordering
+under \(\rho_t\) is constant. PACE replaces the current winner exactly when
+\[
+\rho_t(P_j)
+<
+\rho_t(P_{\mathrm{current}}).
+\]
+Therefore, after insertion, the stored candidate is the highest-ranked
+candidate among the first \(j\) profiles. The invariant follows by induction.
+
+After all \(m\) candidates have been processed, the envelope winner at every
+departure time is the minimizer of \(\rho_t\) over \(\mathcal{R}(t)\).
+Merging adjacent cells assigned to the same path does not change this
+pointwise selection.
+\end{proof}
+
+\begin{corollary}[Exactness over the generated registry]
+\label{cor:registry_exactness}
+If no breakpoint merging is used and every replayed candidate is represented
+exactly, PACE returns the exact profile over its generated candidate registry
+\(\mathcal{R}\).
+\end{corollary}
+
+Corollary~\ref{cor:registry_exactness} does not imply global optimality.
+A globally relevant path may be absent from \(\mathcal{R}\) because PACE-B
+retains only the top-\(L\) pivots, uses one lower-bound-fastest connector for each connector request, retains only \(K_f\) partial states per state group, or
+restricts candidate assembly to pivot depth \(\theta\).
+
+\begin{proposition}[Validity of bounded output]
+\label{prop:bounded_output_validity}
+After final replay, feasibility validation, and local envelope repair, every
+path assignment returned by PACE-B is a continuous vertex-simple
+\(s\)--\(d\) path whose temporal functions are defined and whose travel time
+satisfies the budget over its reported departure-time cell.
+\end{proposition}
+
+\begin{proof}
+Every complete candidate admitted to the replay stage materializes to a
+continuous vertex-simple path by
+Proposition~\ref{prop:assembly_soundness}. Replay evaluates the path using the
+original edge functions and restricts its domain to departure times for which
+all induced edge-entry times are defined and
+\[
+T_P(t)\leq B.
+\]
+
+Breakpoint merging may affect the candidate selected during bounded envelope
+construction. Therefore, every final path-valued assignment is validated again
+using the original unmerged edge functions. If a path is invalid over part of
+its assigned cell, that cell is split and a local envelope is reconstructed
+from the original profiles of the replayed candidates intersecting the invalid
+subrange.
+
+A path consequently remains assigned only where its original replayed profile
+is temporally defined and budget-feasible. Any subrange on which no generated
+candidate passes these checks remains without a path assignment. Hence, every
+reported path-valued assignment satisfies the stated validity conditions.
+\end{proof}
+
+The meaning of an unassigned subrange depends on the execution policy. In a
+globally certified PACE-X run, absence of a feasible candidate implies
+certified infeasibility, and the subrange is reported as
+\[
+\bot.
+\]
+In PACE-B, bounded candidate generation may omit an existing feasible path.
+Such a subrange is therefore reported as
+\[
+\mathsf{U},
+\]
+rather than \(\bot\). The symbol \(\mathsf{U}\) indicates that no generated
+feasible candidate was available, but global infeasibility was not
+established.
+
+The exact query answer and the bounded output are therefore distinguished
+notationally. A globally certified PACE-X execution returns
+\[
+\Pi^{\star}
+=
+\langle
+(I_1,P_1),\ldots,(I_\ell,P_\ell)
+\rangle,
+\qquad
+P_i\in\mathcal{P}_{sd}\cup\{\bot\}.
+\]
+PACE-B returns an annotated bounded profile
+\[
+\widehat{\Pi}_{B}
+=
+\langle
+(\widehat I_1,\widehat P_1),\ldots,
+(\widehat I_r,\widehat P_r)
+\rangle,
+\qquad
+\widehat P_i\in
+\mathcal{P}_{sd}\cup\{\bot,\mathsf{U}\},
+\]
+where \(\bot\) is used only when infeasibility is independently certified,
+whereas \(\mathsf{U}\) denotes an unresolved bounded cell. Every path-valued
+assignment is valid over its reported cell.
+
+\subsection{Exact and Bounded Execution Guarantees}
+\label{subsec:analysis_modes}
+
+The preceding results establish the safety of query reduction, the soundness of
+candidate construction, and the correctness of envelope extraction over a
+fixed candidate registry. We now connect these properties to the two PACE
+execution policies.
+
+For a certified PACE-X execution, the selected-pivot set is
+\[
+\mathcal A_q=\mathcal E_q^{+}.
+\]
+Hence, its connector graph is
+\[
+G_q^{-}
+=
+(V_q,E_q\setminus\mathcal E_q^{+}).
+\]
+
+For a vertex-simple path \(P\), define its score-relevant pivot count as
+\[
+\alpha(P)
+=
+\left|
+E(P)\cap\mathcal{E}_q^{+}
+\right|,
+\]
+where parallel edges are distinguished by their stable arc identifiers. An
+edge in \(\mathcal{E}_q^{+}\) is counted even if it is traversed at a time at
+which its instantaneous score is zero, because PACE-X removes every such edge
+from its connector graph and introduces it explicitly as a pivot.
+
+Let \(P^{*}(t)\) denote the globally selected feasible path at departure time
+\(t\) under the deterministic ranking \(\rho_t\). Define
+\[
+\theta^{*}
+=
+\max_{\substack{
+t\in I\\
+P^{*}(t)\neq\bot
+}}
+\alpha(P^{*}(t)),
+\]
+with \(\theta^{*}=0\) when no feasible path exists anywhere in \(I\). Thus,
+\(\theta^{*}\) is the largest number of score-relevant edges appearing in any
+path selected by the globally exact profile.
+
+\begin{theorem}[Global certification of PACE-X]
+\label{thm:pace_x_exactness}
+PACE-X returns the globally exact constrained preference path profile over
+\(I\) if all of the following conditions hold:
+
+\begin{enumerate}
+    \item the forward/backward query region satisfies the preservation
+    property of Lemma~\ref{lem:region_preservation};
+
+    \item every score-relevant edge in \(\mathcal{E}_q^{+}\) is available
+    as a pivot;
+
+    \item the pivot-depth limit satisfies
+    \[
+    \theta\geq\theta^{*};
+    \]
+
+    \item connector generation exhaustively returns every required
+    vertex-simple path in
+    \[
+    G_q^{-}
+    =
+    \left(
+    V_q,E_q\setminus\mathcal{E}_q^{+}
+    \right)
+    \]
+    together with its exact temporal profile and valid domain;
+
+    \item no heuristic partial-state retention is applied;
+
+    \item no timeout, memory limit, or other external resource constraint
+    truncates execution;
+
+    \item breakpoint merging is disabled; and
+
+    \item temporal composition, domain construction, candidate replay, and
+    envelope refinement are performed exactly.
+\end{enumerate}
+
+Under these conditions, the returned profile satisfies coverage, global
+optimality, deterministic tie-breaking, and maximality over the complete
+departure interval.
+\end{theorem}
+
+\begin{proof}
+Fix a departure time \(t\in I\).
+
+First suppose that a feasible path exists at \(t\), and let \(P^{*}(t)\) be
+the unique globally selected path under \(\rho_t\). By
+Lemma~\ref{lem:region_preservation}, every vertex and edge of \(P^{*}(t)\)
+belongs to \(G_q\).
+
+List the score-relevant edges of \(P^{*}(t)\) in their traversal order:
+\[
+a_1,a_2,\ldots,a_r,
+\qquad
+r=\alpha(P^{*}(t)).
+\]
+Because
+\[
+r\leq\theta^{*}\leq\theta,
+\]
+all of these pivots can be represented within the configured layered search.
+
+Removing the pivot edges partitions the path uniquely into maximal
+pivot-free connector portions:
+\[
+P^{*}(t)
+=
+C_0
+\circ a_1
+\circ C_1
+\circ\cdots\circ
+a_r
+\circ C_r.
+\]
+Here, \(C_0\) connects \(s\) to the tail of \(a_1\), each \(C_i\) connects
+the head of \(a_i\) to the tail of \(a_{i+1}\), and \(C_r\) connects the
+head of \(a_r\) to \(d\). Every \(C_i\) is a vertex-simple path in
+\(G_q^{-}\). A connector portion may be an identity connector when two
+consecutive components share the same endpoint.
+
+By exhaustive connector generation, each required connector \(C_i\) is
+available with its exact temporal profile. Layered assembly begins with the
+identity state at \(s\), considers \(C_0\), and successively extends the
+partial candidate through
+\[
+a_1,C_1,a_2,\ldots,a_r.
+\]
+The residual-budget test cannot remove this sequence because
+Lemma~\ref{lem:residual_pruning} removes only extensions that cannot admit a
+budget-feasible completion. The path-consistency test also accepts the
+sequence because \(P^{*}(t)\) is vertex-simple.
+
+Repeated application of
+Lemma~\ref{lem:temporal_join_soundness} constructs a sound partial candidate
+after every connector and pivot. Destination completion at depth \(r\)
+produces a complete descriptor representing \(P^{*}(t)\). Since no heuristic
+partial-state truncation is applied and the execution completes without
+external truncation, this descriptor reaches the replay stage and produces the
+exact profile of \(P^{*}(t)\) over every departure-time subrange on which the
+path is valid and budget-feasible.
+
+The exact candidate registry therefore contains a globally highest-ranked
+feasible path for departure time \(t\). By
+Theorem~\ref{thm:envelope_correctness}, envelope construction selects that
+path.
+
+Now suppose that no feasible path exists at \(t\). If the exact registry
+contained an active candidate at \(t\), soundness would imply the existence of
+a budget-feasible path, contradicting the assumption. Hence, the registry is
+empty at \(t\), and the certified envelope assigns \(\bot\).
+
+The argument holds for every \(t\in I\). Finally, merging adjacent cells
+assigned to the same path preserves pointwise optimality and makes every
+reported interval maximal. Therefore, PACE-X returns the globally exact
+constrained preference path profile.
+\end{proof}
+
+The value \(\theta^{*}\) is generally unknown before the query is solved. For
+certification on a sufficiently small instance, the conservative setting
+\[
+\theta
+\geq
+\min
+\left\{
+|\mathcal{E}_q^{+}|,\,
+|V_q|-1
+\right\}
+\]
+is sufficient because a vertex-simple path contains at most \(|V_q|-1\)
+edges and cannot contain the same score-relevant edge more than once. This
+setting may be computationally impractical and is therefore intended only for
+oracle-scale executions.
+
+\begin{proposition}[Termination of PACE-B]
+\label{prop:pace_b_termination}
+Assume that \(G_q\) is finite and that all temporal edge functions have finite
+piecewise representations. For finite values of
+\[
+L,\theta,K_f,M_b,
+\]
+PACE-B terminates.
+\end{proposition}
+
+\begin{proof}
+PACE-B selects at most \(L\) pivots and explores pivot depth only up to
+\(\theta\). For each connector request, PACE-B retains the single vertex-simple connector selected under the deterministic lower-bound fastest-path rule. Since \(G_q\) is finite and a connector label does
+not revisit a vertex, the number of vertex-simple partial paths that can be
+examined by a connector search is finite. Hence, every connector request
+terminates, although its worst-case cost may be exponential.
+
+At each pivot depth, PACE-B retains at most \(K_f\) partial states for each
+endpoint and temporal-cell group. The number of temporal cells is finite
+because every constituent temporal function has a finite breakpoint
+representation. Since both the selected pivot set and pivot depth are finite,
+candidate assembly generates a finite set of complete descriptors.
+
+Every materialized descriptor represents a finite path, and every edge
+function has a finite piecewise representation. Candidate replay therefore
+produces finite piecewise profiles. If a replayed profile exceeds the
+breakpoint threshold \(M_b\), the deterministic breakpoint-merging procedure
+reduces its representation; otherwise, the original finite representation is
+retained. Envelope construction, final validation, and local repair operate on
+finite candidate and event sets.
+
+Thus, every stage of PACE-B terminates.
+\end{proof}
+
+Proposition~\ref{prop:pace_b_termination} establishes termination, not a
+polynomial worst-case bound. In particular, connector search and candidate
+generation may still be expensive in the worst case, and the proposition does
+not imply an approximation ratio for PACE-B.
+
+For fixed \(L\) and \(\theta\), the number of ordered pivot sequences is at
+most
+\[
+\sum_{r=0}^{\theta}\frac{L!}{(L-r)!},
+\]
+but constructing a vertex-simple connector can still require exponential work
+in the worst case. The bounded policy is therefore a practical search contract,
+not a polynomial-time solution to the underlying constrained path problem.
+
+\begin{theorem}[Schedule-independent determinism]
+\label{thm:pace_determinism}
+Fix the graph, query, execution policy, parameter configuration, numerical
+tolerance, and software version. Consider executions that are not terminated
+by a wall-clock timeout, out-of-memory event, or external interruption. If
+pivot ranking, lower-bound-fastest-connector tie-breaking, exhaustive connector ordering,
+state retention, breakpoint merging, and envelope comparisons use the
+deterministic rules defined in Section~\ref{sec:pace}, then PACE returns the
+same profile and output checksum independently of worker scheduling.
+\end{theorem}
+
+\begin{proof}
+Pivot selection is determined by a total lexicographic order. In PACE-B, ties
+between equal lower-bound-fastest connectors are resolved using the declared stable connector
+key. In PACE-X, connector alternatives are enumerated in a canonical order.
+Partial states and complete descriptors are normalized and deduplicated using
+canonical keys.
+
+Parallel replay changes only the order in which workers finish. Every worker
+returns an immutable candidate profile, and the profiles are subsequently
+reduced in canonical candidate order. Breakpoint merging, envelope insertion,
+final validation, and local repair also use deterministic event sets and
+ranking rules.
+
+Therefore, for every normally completed execution, thread scheduling cannot
+change the generated candidate registry, the outcome of any candidate
+comparison, or the final cell assignments. Timeout-, memory-, and externally
+interrupted executions are reported as incomplete and are not covered by the
+theorem.
+\end{proof}
+
+\paragraph{Guarantee summary.}
+PACE-X is globally certified only when the completeness conditions of
+Theorem~\ref{thm:pace_x_exactness} hold. PACE-B relaxes those conditions through
+top-\(L\) pivot selection, a single lower-bound-fastest connector, bounded
+partial-state retention, and breakpoint control. Its guarantees are therefore
+valid path-valued assignments, explicit \(\mathsf U\)-cells for unresolved
+subranges, termination on finite inputs, and deterministic normally completed
+execution. It does not claim global optimality or a worst-case approximation
+ratio.
+
+
+\section{Experimental Evaluation}
+\label{sec:experiments}
+
+The evaluation first uses PACE-X on a controlled tractable NY workload to establish a certified reference for PACE-B. It then compares PACE-B with iSCOPE on NY, FLA, and CAL, and analyzes the mechanisms responsible for bounded-mode cost and quality. All values below are frozen from the validated publication ledger.
+
+\subsection{Experimental Setup}
+\label{subsec:exp_setup}
+
+\subsubsection{Implementation, platform, and datasets}
+
+PACE and iSCOPE are implemented in Java~21 and executed through a common Maven-based experimental framework. All methods share the graph loader, temporal-function representation, numerical tolerances, query manifests, and result-collection code. The experiments run on an Intel Xeon Gold 6242 server with 16 physical cores (32 hardware threads) and 300~GB RAM. Unless otherwise stated, PACE uses at most 24 worker threads and a per-process memory limit of 256000~MB.
+
+Query time is measured after graph loading. Loading and reusable preprocessing costs are recorded separately. Each configuration is preceded by an untimed warm-up and then executed in three process-level trials; the query-level median is used for aggregation. We report medians, interquartile ranges, completion rates, and paired statistics on common query instances. Timeouts and memory-limit terminations remain in the experimental record.
+
+The three directed DIMACS Challenge~9 networks used in the final synthetic evaluation are summarized in Table~\ref{tab:exp_datasets}. Parallel arcs are preserved and assigned stable identifiers used for reconstruction and deterministic tie-breaking.
+
+\begin{table}[t]
+\centering
+\caption{Road-network datasets.}
+\label{tab:exp_datasets}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Dataset} & \textbf{Vertices} & \textbf{Directed edges} \\
+\midrule
+NY  & 264,346    & 733,846 \\
+FLA & 1,070,376  & 2,712,798 \\
+CAL & 1,890,815  & 4,657,742 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The DIMACS travel-time value \(w_e\) is converted to minutes as
+\[
+c_e=\frac{w_e}{6000}.
+\]
+The loader validates graph counts, temporal metadata, and input checksums before execution.
+
+\subsubsection{Temporal attributes and query workloads}
+
+Each generated network has temporal support
+\[
+\mathcal T_G=[0,10080]\ \text{minutes}.
+\]
+Temporal variation is modeled during the first day; travel times are static and scores are zero after minute 1440. No daily repetition, wrapping, or extrapolation is applied, and every query must satisfy
+\[
+[t_s,t_e+B]\subseteq\mathcal T_G.
+\]
+
+Arrival functions are continuous, piecewise linear, and FIFO. Morning and evening congestion intervals are \([420,600]\) and \([1020,1200]\) minutes, respectively. Their peak multipliers are drawn from \(U(1.10,2.00)\) and \(U(1.15,2.50)\). Preference scores are nonnegative piecewise-constant integers in \([1,15]\). The default score-bearing edge density is \(20\%\); nested \(5\%\), \(20\%\), and \(40\%\) variants are used in sensitivity analysis.
+
+The exact-reference workload is drawn from NY with absolute budgets
+\[
+B\in\{5,10,15\}\ \text{minutes}.
+\]
+For each budget, the final manifest contains 10 fixed source--destination pairs and uses the two fixed departure intervals \([450,570]\) and \([1050,1170]\) minutes. Each interval is paired with the same 10 pairs, giving 20 logical queries per budget. Pair and query selection was frozen before any PACE-B quality was examined and used only fixed-source, static travel-time, hop-count, and node-identifier tractability criteria. PACE-X and PACE-B run on identical instances. A PACE-X result is used as a reference only when it terminates normally and is labeled \textsc{GlobalCertified}.
+
+The exact-study provenance describes these executions as a deterministic connected tractable NY execution subset. It does not provide a theorem-safe proof that this induced execution graph is equivalent to the full NY network. Accordingly, the \textsc{GlobalCertified} label below certifies the PACE-X computation on the frozen execution graph; the paper does not claim full-network NY certification from this study.
+
+The scalability workload covers NY, FLA, and CAL. Departure intervals are centered at 510 and 1110 minutes. Available window lengths are
+\[
+w\in\{120,180,240,300,360\}\ \text{minutes},
+\]
+with default \(w=120\) minutes. Budgets are constructed from the workload generator's reference travel time \(\widehat T_{\mathrm{ref}}\):
+\[
+B=(1+\rho)\widehat T_{\mathrm{ref}},
+\qquad
+\rho\in\{0.10,0.20,0.30,0.40,0.50\},
+\]
+with default \(\rho=0.30\). The one-minute grid is used only to construct manifests and selected evaluation summaries; PACE processes continuous temporal functions.
+
+PACE-B and iSCOPE receive the same 5~s query limit in the bounded comparison. A time-capped run is distinguished from a normally completed run. Quality summaries use only validated profiles available at termination and retain the associated capped status and coverage, so capped outputs are not presented as complete exact answers.
+
+Unless varied explicitly, PACE-B uses
+\[
+(L,\theta,K_f,M_b)
+=(1,2,1,100000).
+\]
+The values are fixed before the main comparison. No connector-portfolio or global query-work parameter is part of the final policy.
+
+\subsection{Compared Methods and Evaluation Measures}
+\label{subsec:exp_methods_metrics}
+
+\paragraph{PACE-X.}
+PACE-X is the exhaustive policy used on the small-budget NY workload. It exposes all score-relevant pivots, uses sufficient pivot depth, enumerates the required connector alternatives, disables heuristic state retention, and preserves uncompressed replayed profiles. It is an exact reference only when the certification conditions of Theorem~\ref{thm:pace_x_exactness} are satisfied.
+
+\paragraph{PACE-B.}
+PACE-B is the scalable proposed policy. It uses top-\(L\) pivots, depth \(\theta\), one lower-bound-fastest connector per request, at most \(K_f\) states per state group, and breakpoint threshold \(M_b\). Its output is bounded rather than globally certified, but every path-valued assignment is replayed and validated with the original edge functions.
+
+\paragraph{iSCOPE.}
+iSCOPE is the interval constrained-preference baseline adapted to the profile comparison. It receives the same graph, departure interval, travel-time budget, score functions, and 5~s limit as PACE-B. The implementation maintains an envelope only from fully generated and replayed destination paths completed within the available execution time; an in-progress path is never committed. A capped iSCOPE profile is therefore valid over its reported coverage but is not treated as globally complete.
+
+\begin{table}[t]
+\centering
+\caption{Methods and experimental roles.}
+\label{tab:compared_methods}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}XX@{}}
+\toprule
+\textbf{Method} & \textbf{Execution policy} & \textbf{Role} \\
+\midrule
+PACE-X & Exhaustive, uncompressed, no heuristic state truncation & Certified reference on tractable NY queries \\
+PACE-B & Top-\(L\), depth \(\theta\), one connector, \(K_f\), \(M_b\) & Main scalable method \\
+iSCOPE & Time-bounded interval preference search & External profile-oriented baseline \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The principal efficiency measures are wall-clock query time, peak resident memory, and normal-completion rate. Profile structure is summarized by the number of maximal cells, the number of distinct selected paths, and resolved coverage. For PACE-B,
+\[
+\mathrm{ResolvedCoverage}
+=
+\frac{
+\operatorname{meas}\bigl(\{t\in I\mid\widehat P_B(t)\neq\mathsf U\}\bigr)
+}{\operatorname{meas}(I)}.
+\]
+The unresolved rate is
+\[
+\mathrm{UnresolvedRate}=1-\mathrm{ResolvedCoverage}.
+\]
+
+For profile \(\Pi\), average and best score are
+\[
+\overline S(\Pi)
+=
+\frac{1}{\operatorname{meas}(I)}
+\int_I S_{P_\Pi(t)}(t)\,dt.
+\]
+The best score is
+\[
+S_{\max}(\Pi)=\max_{t\in I}S_{P_\Pi(t)}(t).
+\]
+with score zero assigned where no path is reported. Average travel time is computed over the resolved feasible portion.
+
+Whenever PACE-X supplies a certified reference, path agreement is
+\[
+\mathrm{PathAgreement}
+=
+\frac{\operatorname{meas}\{t\in I:\widehat P_B(t)=P_X^\star(t)\}}
+{\operatorname{meas}(I)}.
+\]
+We also report
+\[
+\mathrm{AbsRegret}
+=
+\overline S(\Pi_X^\star)-\overline S(\widehat\Pi_B),
+\]
+and, when \(\overline S(\Pi_X^\star)>0\),
+\[
+\mathrm{RelGap}
+=
+100\,
+\frac{\overline S(\Pi_X^\star)-\overline S(\widehat\Pi_B)}
+{\overline S(\Pi_X^\star)}.
+\]
+The comparison uses the joint interval partition induced by the two profiles, rather than only the workload-generation grid.
+
+\subsection{Exactness and Bounded-Mode Quality}
+\label{subsec:exp_exactness}
+
+Table~\ref{tab:exact_quality} compares PACE-B with the GLOBAL\_CERTIFIED PACE-X references on the frozen NY execution workload. The aggregation is two-level: the median is first taken over the three process trials for each logical query, and the reported median and IQR are then computed over the 20 query-level medians at each budget. As the budget increases, PACE-X runtime grows from \(0.035536488\)~s at 5 minutes to \(13.754814216\)~s at 15 minutes, while PACE-B remains near \(0.024\)~s.
+
+\begin{table*}[t]
+\centering
+\caption{PACE-B relative to GLOBAL\_CERTIFIED PACE-X on the controlled NY execution workload. Values are query-level medians over 20 certified paired queries at each budget; runtime IQRs are shown in parentheses.}
+\label{tab:exact_quality}
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}crrrrrrr@{}}
+\toprule
+\textbf{Budget} & \textbf{Certified queries} & \textbf{PACE-X time (s)} & \textbf{PACE-B time (s)} & \textbf{Path agreement} & \textbf{Resolved coverage} & \textbf{Abs. regret} & \textbf{Rel. gap} \\
+\midrule
+5 min  & 20 & 0.035536488 (0.009831335) & 0.023438241 (0.010771276) & 0.00\% & 100.0\% & 5.990917607 & 36.8557\% \\
+10 min & 20 & 0.534778554 (0.338113203) & 0.024825583 (0.006828781) & 0.00\% & 100.0\% & 23.744477434 & 62.8364\% \\
+15 min & 20 & 13.754814216 (21.580783357) & 0.023859959 (0.007399738) & 0.00\% & 100.0\% & 42.859038473 & 72.3026\% \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Resolved coverage is 100\% at every budget, but the median path agreement is 0\% at every budget. This is a median statement, not a claim that every query has zero agreement: the fraction of query-level medians with perfect agreement is 40\% at \(B=5\), 10\% at \(B=10\), and 10\% at \(B=15\). The median relative gap increases from 36.8557\% to 62.8364\% and 72.3026\% as the budget grows. Thus, exhaustive certification becomes rapidly more expensive, whereas the bounded policy maintains nearly constant query time at an explicit cost in exact preference quality.
+
+Figure~\ref{fig:exact_quality} makes both parts of this trade-off visible. The log-scaled runtime panel shows PACE-X increasing from \(0.0355\) to \(0.5348\) to \(13.7548\)~s, while PACE-B remains at \(0.0234\), \(0.0248\), and \(0.0239\)~s. The quality panel retains the zero-agreement points rather than hiding them.
+
+\begin{figure*}[H]
+\centering
+\includegraphics[width=\textwidth]{experiments/results/Final-result/manuscript_artifacts/figures/exact_quality_runtime.pdf}
+\caption{Exact-reference evaluation on NY. (a) Log-scaled median runtime of PACE-X and PACE-B for 5-, 10-, and 15-minute budgets; error bars show the frozen half-IQR display. (b) Median path agreement and relative score gap of PACE-B against the GLOBAL\_CERTIFIED PACE-X profile. Each point aggregates 20 certified logical queries.}
+\label{fig:exact_quality}
+\end{figure*}
+
+\subsection{Scalability on Large Road Networks}
+\label{subsec:exp_scalability}
+
+The main comparison evaluates PACE-B and iSCOPE on NY, FLA, and CAL under the common bounded protocol. Table~\ref{tab:scalability_main} reports runtime, completion, and returned preference score. iSCOPE is explicitly marked as time-capped; its rows are not completed exact solutions.
+
+\begin{table*}[t]
+\centering
+\caption{End-to-end scalability under the common bounded protocol. PACE-B completes the final 200-query workload on each network. iSCOPE is time-capped at the 5~s limit, so its returned scores are capped-profile outputs rather than completed exact solutions.}
+\label{tab:scalability_main}
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+\textbf{Dataset} & \textbf{Method} & \textbf{Runtime (s)} & \textbf{Completion/status} & \textbf{Mean returned score} \\
+\midrule
+NY  & PACE-B & 3.285385 & 100\% / completed & 376.891667 \\
+    & iSCOPE & 4.505964 & time-capped & 295.496799 \\
+\midrule
+FLA & PACE-B & 0.887426 & 100\% / completed & 222.229167 \\
+    & iSCOPE & 4.504821 & time-capped & 173.896300 \\
+\midrule
+CAL & PACE-B & 0.967245 & 100\% / completed & 306.616667 \\
+    & iSCOPE & 4.508016 & time-capped & 82.625855 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+PACE-B is faster than iSCOPE and returns a higher mean preference score on all three tested networks. Its completion rate is 100\% on each 200-query workload, whereas iSCOPE is time-capped under the common 5~s protocol. Figure~\ref{fig:scalability_main} presents runtime and score jointly; the cap status in Table~\ref{tab:scalability_main} prevents the comparison from presenting iSCOPE as a completed exact method.
+
+\begin{figure*}[H]
+\centering
+\includegraphics[width=\textwidth]{experiments/results/Final-result/manuscript_artifacts/figures/scalability_runtime_score.pdf}
+\caption{Large-network comparison of PACE-B and iSCOPE on NY, FLA, and CAL. (a) Query runtime. (b) Mean returned preference score under the common bounded protocol; iSCOPE is time-capped.}
+\label{fig:scalability_main}
+\end{figure*}
+
+\subsection{Profile Characteristics and Stage-Wise Behavior}
+\label{subsec:exp_stage_behavior}
+
+To explain the end-to-end results, we follow the pipeline
+\[
+\begin{aligned}
+G&\rightarrow G_q\rightarrow\mathcal E_q^+\rightarrow\mathcal A_q\\[-0.2ex]
+&\rightarrow\text{partial states}\rightarrow\text{replayed candidates}
+\rightarrow\widehat\Pi_B.
+\end{aligned}
+\]
+The frozen NY stage ledger reports median wall time for each named component without renormalizing away control overhead: Region \(0.498655\)~s, Pivot \(0.854183\)~s, Connector \(0.127130\)~s, Assembly \(0.069387\)~s, Replay \(0.040155\)~s, Envelope \(0.000215\)~s, and Other/control \(1.548923\)~s. Pivot processing and control/overhead are therefore material components of the measured query cost, while envelope extraction itself is very small. The accompanying structural-count panel reports the frozen counters without inventing unrecorded before/after quantities.
+
+\begin{figure*}[H]
+\centering
+\includegraphics[width=\textwidth]{experiments/results/Final-result/manuscript_artifacts/figures/stage_behavior.pdf}
+\caption{Internal behavior of PACE-B on NY. (a) Frozen structural workload counters. (b) Median timing decomposition, including the explicitly retained Other/control component; named stages are not renormalized after its inclusion.}
+\label{fig:stage_behavior}
+\end{figure*}
+
+The profile output records maximal path-assignment cells rather than every internal temporal breakpoint. Structural counts and timing are reported separately so that compactness is not confused with a claim that any omitted counter was measured.
+
+\subsection{Effect of the Bounded Policy}
+\label{subsec:exp_bounded_policy}
+
+We progressively transform PACE-X into PACE-B on the controlled certified \(B=5\) NY subset:
+\[
+\begin{aligned}
+\text{PACE-X}
+&\rightarrow +\theta\rightarrow +L\rightarrow +\textsc{FastConnector}\\[-0.2ex]
+&\rightarrow +K_f\rightarrow +M_b.
+\end{aligned}
+\]
+The sequence separates bounded pivot depth, top-\(L\) selection, one-connector generation, partial-state retention, and breakpoint control. Figure~\ref{fig:bounded_policy_tradeoff} and Table~\ref{tab:bounded_policy} report the resulting stage comparison. The stage timings are within-study medians; PACE-X is shown only as the exact-quality baseline and is not treated as one point in a perfectly monotonic execution pipeline. The transition from \(+\theta\) to \(+L\) gives a substantial runtime reduction with no observed median quality loss. Switching to \(+\textsc{FastConnector}\) gives a further reduction accompanied by the dominant observed quality loss on this subset. \(+K_f\) introduces no further median quality degradation, and \(+M_b\) has similar runtime with a slight overhead and the same median quality.
+
+\begin{table}[t]
+\centering
+\caption{Controlled bounded-policy transition on the certified \(B=5\) NY subset. All quality values are medians relative to the same PACE-X reference; runtime IQRs are shown in parentheses.}
+\label{tab:bounded_policy}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Stage} & \textbf{Queries} & \textbf{Runtime (s)} & \textbf{Completion} & \textbf{Agreement} & \textbf{Rel. gap} \\
+\midrule
+PACE-X & 20 & 0.035536 (0.009831) & 100\% & 100\% & 0.0000\% \\
++\(\theta\) & 20 & 0.073198 (0.043862) & 100\% & 100\% & 0.0000\% \\
++L & 20 & 0.042555 (0.019924) & 100\% & 100\% & 0.0000\% \\
++\textsc{FastConnector} & 20 & 0.028041 (0.014598) & 100\% & 0\% & 36.8557\% \\
++K_f & 20 & 0.026943 (0.013567) & 100\% & 0\% & 36.8557\% \\
++M_b & 20 & 0.029019 (0.013994) & 100\% & 0\% & 36.8557\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[H]
+\centering
+\includegraphics[width=\textwidth]{experiments/results/Final-result/manuscript_artifacts/figures/bounded_policy_tradeoff.pdf}
+\caption{Controlled stage comparison on the certified \(B=5\) NY subset. PACE-X is the exact-quality baseline; the bounded-stage timings are measured within the policy study. The quality transition at \(+\textsc{FastConnector}\) is visible in panel (b).}
+\label{fig:bounded_policy_tradeoff}
+\end{figure*}
+
+\subsection{Sensitivity Analysis}
+\label{subsec:exp_sensitivity}
+
+Algorithmic sensitivity is evaluated for
+\[
+L\in\{1,2,4\},
+\quad
+\theta\in\{0,1,2,3\},
+\]
+\[
+K_f\in\{1,2,4\},
+\quad
+M_b\in\{10000,100000,1000000\}.
+\]
+Figure~\ref{fig:algorithm_parameter_sensitivity} reports median runtime with IQR bars together with logical-query completion. The frozen completion rates are 100\%, 25\%, and 25\% for \(L=1,2,4\), respectively, and 20\%, 100\%, 100\%, and 100\% for \(\theta=0,1,2,3\). All tested \(K_f\) and \(M_b\) values complete. These results support \(L=1\) and \(\theta=2\) as defensible defaults for the tested workload, but do not establish global parameter optimality. Resolved-only coverage is reported conditionally where a setting does not complete all logical queries.
+
+For reproducibility, the parameter-sensitivity medians (runtime in seconds, followed by IQR) are: \(L=1: 0.600055\;(0.479371)\), \(L=2: 0.719998\;(0.504919)\), \(L=4: 0.753570\;(0.681744)\); \(\theta=0: 0.503482\;(0.451701)\), \(\theta=1: 0.603833\;(0.439950)\), \(\theta=2: 0.600055\;(0.479371)\), \(\theta=3: 0.607569\;(0.526862)\); \(K_f=1: 0.600055\;(0.479371)\), \(K_f=2: 0.545398\;(0.425077)\), \(K_f=4: 0.585846\;(0.413753)\); and \(M_b=10000: 0.526422\;(0.391495)\), \(M_b=100000: 0.600055\;(0.479371)\), \(M_b=1000000: 0.587262\;(0.320426)\).
+
+\begin{figure*}[H]
+\centering
+\includegraphics[width=\textwidth]{experiments/results/Final-result/manuscript_artifacts/figures/algorithm_parameter_sensitivity.pdf}
+\caption{Sensitivity of PACE-B to \(L\), \(\theta\), \(K_f\), and \(M_b\). The remaining settings are held at their defaults.}
+\label{fig:algorithm_parameter_sensitivity}
+\end{figure*}
+
+Query sensitivity varies
+\[
+w\in\{120,240,360\}\ \text{minutes},
+\qquad
+\rho\in\{0.10,0.30,0.50\},
+\]
+and score density in \(\{5\%,20\%,40\%\}\). Longer windows change runtime moderately in the frozen ledger, and larger \(\rho\) values increase search opportunity and returned preference score. The score-bearing-edge-density results are workload-dependent: runtime is 1.232062, 3.285385, and 1.693838~s at 5\%, 20\%, and 40\%, respectively, so it is not monotonic in density. Returned score increases from 107.270833 to 376.891667 to 756.479167. The appropriate interpretation is that search cost depends on the spatial and temporal arrangement of score-bearing edges rather than density alone. Figure~\ref{fig:query_parameter_sensitivity} summarizes these changes.
+
+\begin{figure*}[H]
+\centering
+\includegraphics[width=\textwidth]{experiments/results/Final-result/manuscript_artifacts/figures/query_parameter_sensitivity.pdf}
+\caption{Sensitivity of PACE-B to departure-window length, budget overhead, and score-bearing edge density.}
+\label{fig:query_parameter_sensitivity}
+\end{figure*}
+
+\subsection{Optimization Ablation and Parallel Execution}
+\label{subsec:exp_ablation_parallel}
+
+The final diagnostic controls use only the executed variant labels \texttt{fast-only-connector}, \texttt{no-score-upper-bound}, and \texttt{no-safe-corridor}. The latter two controls are reported with their logical-query completion because some queries are time-capped; their runtime summaries are conditional on completed queries. No theoretical ablation name is substituted for an implemented switch.
+
+Parallel speedup with \(p\) workers is
+\[
+\mathrm{Speedup}_p(q)=\frac{T_1(q)}{T_p(q)}.
+\]
+The experiment uses \(p\in\{1,4,8,16,24\}\) and verifies
+\[
+\operatorname{checksum}_1(q)=\operatorname{checksum}_p(q)
+\]
+for normally completed runs.
+
+\begin{table}[t]
+\centering
+\caption{Optimization ablation and deterministic parallel execution.}
+\label{tab:parallel_ablation}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{Runtime (s)} & \textbf{Logical completion} & \textbf{Checksum match} \\
+\midrule
+\texttt{fast-only-connector} & 0.593169 (0.429087) & 100\% & -- \\
+\texttt{no-score-upper-bound} & 1.498033 (1.845225) & 85\% & -- \\
+\texttt{no-safe-corridor} & 3.413204 (2.070504) & 70\% & -- \\
+\midrule
+1 worker  & 0.534559 (0.414652) & 100\% & 100\% \\
+4 workers & 0.500043 (0.401066) & 100\% & 100\% \\
+8 workers & 0.542797 (0.488324) & 100\% & 100\% \\
+16 workers & 0.617004 (0.454397) & 100\% & 100\% \\
+24 workers & 0.593169 (0.429087) & 100\% & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The worker experiment preserves deterministic output across all five worker counts: paired query--trial checksums agree in 60/60 comparisons. The observed speedup is therefore a determinism result rather than evidence of useful latency scaling. Parallel execution preserves deterministic output, while this relatively small bounded per-query workload does not provide enough work to amortize thread-management overhead; increasing workers does not materially improve single-query latency in this experiment.
+
+\subsection{NYC Data-Calibrated Shuttle-Routing Case Study}
+\label{subsec:nyc_case_study}
+
+To complement the controlled experiments, we consider a data-calibrated
+shuttle-routing case on the NY road network using official New York City
+traffic and public-transit data. The purpose of this experiment is not to
+provide an additional scalability benchmark, but to illustrate how the
+constrained preference path profile can be instantiated in an operational
+setting where the actual vehicle-dispatch time is known only within a
+departure window.
+
+Time-dependent road travel is calibrated from NYC DOT traffic-speed
+observations.\footnote{\url{https://data.cityofnewyork.us/Transportation/DOT-Traffic-Speeds/i4gi-tjb9}}
+For road segments without direct sensor coverage, the observed temporal
+variation is transferred using borough- and road-class-level statistics,
+followed by a citywide observed temporal factor when a more local estimate is
+unavailable. Road attributes are obtained from the NYC Street Centerline
+dataset.\footnote{\url{https://data.cityofnewyork.us/City-Government/Centerline/3mf9-qshr}}
+
+Public-transit preference is derived from MTA bus schedules and official GTFS
+static shape geometry. The schedule information is obtained from the MTA Bus
+Schedules 2026 dataset,\footnote{\url{https://data.ny.gov/Transportation/MTA-Bus-Schedules-2026/4fnn-qsea}}
+and the corresponding static shape feeds are archived from the official MTA
+GTFS source,\footnote{\url{https://data.ny.gov/Transportation/MTA-General-Transit-Feed-Specification-GTFS-Static/fgm6-ccue}}
+with exact \(\texttt{shape\_id}\mapsto\texttt{shapes.txt}\) geometry mapping.
+For each directed road edge \(e\) and 15-minute time bin \(t\), let
+\(N_e(t)\) denote the number of distinct active MTA \(\texttt{route\_id}\)
+values whose exact mapped shape uses \(e\). We define
+\[
+\sigma_e(t)=\min\{15,N_e(t)\}.
+\]
+This score serves as a \emph{transit-corridor affinity} proxy rather than a
+ground-truth MTA preference measure.
+
+Table~\ref{tab:nyc_data_construction} summarizes the resulting case-study
+instance. The underlying NY graph contains approximately \(0.73\) million
+directed road arcs. The MTA-derived score is nonzero on 24,655 arcs. The final
+exact-shape inventory contains 4,253 active shape IDs, 1,421 exact shape
+geometries available in the archived GTFS feeds, 1,418 exact geometries
+mapped to DIMACS, and 2,835 unmatched active shapes. The active
+route--shape--time-bin exact-match percentage is 58.953944\%. No route-ID
+geometry fallback is used.
+
+\begin{table}[t]
+\centering
+\caption{Construction of the NYC data-calibrated shuttle-routing case study.}
+\label{tab:nyc_data_construction}
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Construction item} & \textbf{Value} \\
+\midrule
+NY road vertices & 264,346 \\
+NY directed road arcs & 733,846 \\
+NYC DOT traffic observations & 29,088 \\
+Active MTA route IDs & 367 \\
+Active shape IDs & 4,253 \\
+Exact shape geometries available & 1,421 \\
+Exact shape geometries mapped to DIMACS & 1,418 \\
+Unmatched active shapes & 2,835 \\
+Active route--shape--bin exact match & 58.953944\% \\
+Score-bearing road arcs & 24,655 \\
+Terminal pairs & 25 \\
+Generated query intervals & 100 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Figure~\ref{fig:nyc_case_study} illustrates one representative shuttle query
+over the 07:00--09:00 departure window. The travel-time budget is fixed at
+\(B=8.383\) minutes throughout the query. Panel~(a) shows the five distinct
+road paths that contribute to the resulting profile, while Panel~(b) shows
+their feasible score profiles together with the final path assignment. The
+selected path changes seven times over the two-hour interval. For example,
+\(P_3\) is selected from 07:42 to 07:57, where it attains an average affinity
+score of \(86\) with an average travel time of \(8.119\) minutes, remaining
+within the same fixed budget. At other departure times, different paths become
+preferable as their feasible domains and scores change.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figs/nyc-case-study.pdf}
+    \caption{NYC data-calibrated shuttle-routing example.
+    (a) Selected road paths between the fixed source and destination.
+    (b) Feasible candidate score profiles and the resulting departure-time
+    path profile under the fixed travel-time budget \(B=8.383\) minutes.
+    The interval-best solution identifies a single departure--path pair,
+    whereas the profile preserves the preferred budget-feasible route over
+    the complete 07:00--09:00 departure window.}
+    \label{fig:nyc_case_study}
+\end{figure*}
+
+The example also highlights the distinction between an interval-best answer
+and a profile. Within the generated candidate registry, the interval-best
+solution occurs at 07:53 on \(P_3\); however, \(P_3\) is selected for only
+16 of the 121 evaluated departure instants. A single interval-best
+route--departure pair therefore does not describe the route decision over most
+of this departure window. In contrast, the profile records the appropriate
+budget-feasible high-score path for each maximal departure-time subrange.
+
+This case study is intended as a qualitative validation of the query
+semantics. PACE operates here as a road-level routing layer after the shuttle
+leg endpoints have been fixed; it does not model passenger assignment, stop
+sequencing, or vehicle scheduling. The visualized query was obtained from a
+normally completed diagnostic execution using the same bounded PACE-B
+parameters as the main configuration and is not used in the five-second
+scalability statistics. The large-network experiments in the preceding
+subsections remain the basis for the scalability evaluation.
+
+\section{Discussion}
+\label{sec:discussion}
+
+PACE addresses a different decision problem from interval-best routing. The latter identifies one favorable route--departure pair, whereas a profile query must preserve candidates that become preferable only on part of the departure window. The separation between structural candidate generation and temporal replay is central to this distinction: pivots and connectors determine which paths are considered, while the envelope determines where each generated path is selected. The resulting answer can remain compact even when the internal temporal functions contain many breakpoints.
+
+PACE-X and PACE-B intentionally serve different roles. PACE-X provides a certification mechanism where exhaustive generation remains feasible. PACE-B trades candidate completeness for predictable practical behavior through bounded pivots and states, one deterministic connector, and breakpoint control. The use of \(\mathsf U\) makes this trade-off explicit: failure to generate a path is not presented as proof of infeasibility. At the same time, structural and temporal validity are separated from optimality. Every reported path is reconstructed and replayed with the original functions, so a bounded result may be suboptimal but cannot violate the reported temporal support or travel-time budget.
+
+The study has four principal limitations. First, temporal travel times and preferences are synthetic although the underlying road topologies are real. Second, the one-connector policy can miss a slower but more rewarding or conflict-free alternative. Third, direct PACE-X comparison is restricted to tractable query regions. Fourth, the most suitable values of \(L\), \(\theta\), \(K_f\), and \(M_b\) can depend on the network, score density, and latency target. These limitations should be considered when interpreting the bounded-mode results.
+
+Future work will investigate adaptive connector sets and data-dependent parameter selection, ideally guided by the structure of the query region and the observed marginal value of additional candidates. The profile formulation can also be extended to multiple preference dimensions or resource constraints, provided that temporal composition and the path-ordering relation remain well defined.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We introduced the constrained preference path profile query, which maps each maximal portion of a departure interval to its best budget-feasible path. PACE processes this query through interval-safe graph reduction, score-relevant pivots, pivot-free connectors, layered candidate construction, exact temporal replay, and sparse envelope extraction. The accompanying analysis proves safe reduction and pruning, sound candidate construction, exact envelope selection over a fixed registry, and sufficient conditions for global PACE-X certification. For PACE-B, it establishes valid path assignments, explicit unresolved-cell semantics, termination on finite inputs, and deterministic normally completed execution.
+
+The experiments separate certification from scale. On the controlled NY execution workload, PACE-X supplies certified reference profiles, but its median runtime grows from \(0.0355\)~s at \(B=5\) to \(13.7548\)~s at \(B=15\). PACE-B keeps median query time near \(0.024\)~s and complete resolved coverage on this workload, at an explicitly increasing median preference-quality gap. On NY, FLA, and CAL, PACE-B completes the 200-query workloads faster than the time-capped iSCOPE baseline and returns higher mean preference scores. The stage and sensitivity analyses explain the cost and failure modes of bounded execution, while parallel runs verify deterministic output without material single-query latency scaling. These results support profile-aware candidate construction as a practical basis for time-dependent preference routing when the actual departure time is known only within a window. Future work will consider adaptive connector alternatives, data-dependent bounded policies, and multidimensional constrained profile queries.
+
+\bibliographystyle{cas-model2-names}
+\bibliography{cas-refs}
+
+\end{document}

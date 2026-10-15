@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import heapq
 import json
 from pathlib import Path
 from collections import defaultdict, deque
@@ -64,8 +65,8 @@ def _load_graph(source: Path) -> tuple[dict[int, set[int]], list[dict[str, str]]
 
 
 def _select_nodes(adjacency: dict[int, set[int]], target: int) -> set[int]:
-    if target < 10_000 or target > 50_000:
-        raise ValueError("NY-Exact target must be between 10,000 and 50,000 nodes")
+    if target < 1_000 or target > 50_000:
+        raise ValueError("NY-Exact target must be between 1,000 and 50,000 nodes")
     selected: set[int] = set()
     for start in sorted(adjacency):
         if start in selected:
@@ -83,6 +84,32 @@ def _select_nodes(adjacency: dict[int, set[int]], target: int) -> set[int]:
         if len(selected) == target:
             return selected
     raise ValueError(f"source graph has fewer than {target} reachable vertices")
+
+
+def _select_radius(adjacency: dict[int, set[int]], edges: list[dict[str, str]], source: int, radius_minutes: float) -> set[int]:
+    weighted: dict[int, list[tuple[int, float]]] = defaultdict(list)
+    for row in edges:
+        u, v = int(row["u"]), int(row["v"])
+        weight = float(row["base_travel_time"])
+        weighted[u].append((v, weight))
+        weighted[v].append((u, weight))
+    if source not in adjacency:
+        raise ValueError(f"source node is absent from the source graph: {source}")
+    distances = {source: 0.0}
+    queue = [(0.0, source)]
+    while queue:
+        distance, vertex = heapq.heappop(queue)
+        if distance != distances[vertex] or distance > radius_minutes:
+            continue
+        for neighbor, weight in weighted[vertex]:
+            candidate = distance + weight
+            if candidate <= radius_minutes and candidate < distances.get(neighbor, float("inf")):
+                distances[neighbor] = candidate
+                heapq.heappush(queue, (candidate, neighbor))
+    selected = set(distances)
+    if len(selected) < 20:
+        raise ValueError(f"source-centered radius has too few vertices: {len(selected)}")
+    return selected
 
 
 def _filter_jsonl(
@@ -109,7 +136,7 @@ def _filter_jsonl(
     return count
 
 
-def create(source: Path, output: Path, target_nodes: int, overwrite: bool) -> dict:
+def create(source: Path, output: Path, target_nodes: int, overwrite: bool, source_node: int | None = None, radius_minutes: float | None = None) -> dict:
     source = source.resolve()
     output = output.resolve()
     missing = [name for name in REQUIRED if not (source / name).is_file()]
@@ -119,7 +146,10 @@ def create(source: Path, output: Path, target_nodes: int, overwrite: bool) -> di
         raise FileExistsError(f"output exists; use --overwrite: {output}")
     output.mkdir(parents=True, exist_ok=True)
     adjacency, edges, _ = _load_graph(source)
-    selected_nodes = _select_nodes(adjacency, target_nodes)
+    if radius_minutes is not None:
+        selected_nodes = _select_radius(adjacency, edges, source_node if source_node is not None else min(adjacency), radius_minutes)
+    else:
+        selected_nodes = _select_nodes(adjacency, target_nodes)
     selected_edges = [row for row in edges if int(row["u"]) in selected_nodes and int(row["v"]) in selected_nodes]
     if not selected_edges:
         raise ValueError("induced subgraph contains no directed arcs")
@@ -171,8 +201,10 @@ def create(source: Path, output: Path, target_nodes: int, overwrite: bool) -> di
         "temporal_attribute_checksum": temporal_attribute_checksum(output),
         "derived_from": "NY",
         "induced_subgraph": {
-            "selection": "deterministic_connected_bfs_from_smallest_node",
+            "selection": "deterministic_source_centered_static_radius" if radius_minutes is not None else "deterministic_connected_bfs_from_smallest_node",
             "target_nodes": target_nodes,
+            "source_node": source_node,
+            "radius_minutes": radius_minutes,
             "selected_nodes": len(selected_nodes),
             "source_dataset_checksum": dataset_checksum(source),
             "source_temporal_attribute_checksum": temporal_attribute_checksum(source),
@@ -204,10 +236,12 @@ def main() -> int:
     parser.add_argument("--source", type=Path, default=Path("data/input/NY"))
     parser.add_argument("--output", type=Path, default=Path("data/input/NY-Exact"))
     parser.add_argument("--nodes", type=int, default=10000)
+    parser.add_argument("--source-node", type=int)
+    parser.add_argument("--radius-minutes", type=float)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     try:
-        print(json.dumps(create(repo_path(args.source), repo_path(args.output), args.nodes, args.overwrite), sort_keys=True, indent=2))
+        print(json.dumps(create(repo_path(args.source), repo_path(args.output), args.nodes, args.overwrite, args.source_node, args.radius_minutes), sort_keys=True, indent=2))
         return 0
     except (OSError, ValueError, json.JSONDecodeError) as failure:
         print(f"create_ny_exact: {failure}")

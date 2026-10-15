@@ -270,7 +270,8 @@ def _command(
         "--query-file", str(query_file),
         "--output-jsonl", str(java_output),
         "--experiment-name", f"{job['study_id']}:{job['job_id']}",
-        "--repetitions", "1", "--warmup-runs", "0",
+        "--repetitions", "1", "--warmup-runs",
+        str(int(design.get("protocol", {}).get("warmup_passes", 0))),
         "--threads", str(parameters.pop("threads", 1)),
         "--timeout-seconds", str(_job_timeout_seconds(job, design)),
         "--preprocessing-timeout-seconds", str(preprocessing_timeout),
@@ -544,7 +545,14 @@ def _materialize_batch_records(
             java_record = json.loads(encoded.decode("utf-8"))
             offset = stream.tell()
             query_id = str((java_record.get("query") or {}).get("query_id", ""))
-            repetition = int((java_record.get("run") or {}).get("repetition", -1))
+            run_info = java_record.get("run") or {}
+            # PaceBench reports the untimed warmup using repetition 0, the
+            # same index later used by measured trial 0.  Warmups are
+            # intentionally executed for cache/JIT stabilization but never
+            # enter the measured raw-record ledger.
+            if bool(run_info.get("warmup")):
+                continue
+            repetition = int(run_info.get("repetition", -1))
             key = (query_id, repetition)
             if key in seen:
                 raise ValueError(
