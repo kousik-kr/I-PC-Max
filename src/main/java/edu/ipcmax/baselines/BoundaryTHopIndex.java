@@ -532,6 +532,19 @@ public final class BoundaryTHopIndex {
         return labels.query(sourceBoundary, destinationBoundary, queryInterval);
     }
 
+    ExactTemporalProfile queryArrivalProfile(
+            int sourceBoundary, int destinationBoundary, Domain queryInterval) {
+        requireBoundary(sourceBoundary);
+        requireBoundary(destinationBoundary);
+        return labels.queryArrivalProfile(sourceBoundary, destinationBoundary, queryInterval);
+    }
+
+    int commonHubCount(int sourceBoundary, int destinationBoundary) {
+        requireBoundary(sourceBoundary);
+        requireBoundary(destinationBoundary);
+        return labels.commonHubCount(sourceBoundary, destinationBoundary);
+    }
+
     private void requireBoundary(int vertex) {
         if (!partitionMetadata.boundaryVertexIds().contains(vertex)) {
             throw new IllegalArgumentException("query endpoint is not a boundary vertex: " + vertex);

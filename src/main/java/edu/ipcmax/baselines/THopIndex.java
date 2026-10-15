@@ -484,6 +484,37 @@ public final class THopIndex {
                         Math.max(sampledPeak[0], usedHeapBytes())));
     }
 
+    /** Arrival-time profile for internal composition by partitioned indexes. */
+    ExactTemporalProfile queryArrivalProfile(
+            int source, int destination, Domain queryInterval) {
+        graph.node(source);
+        graph.node(destination);
+        if (queryInterval == null || queryInterval.isEmpty()) {
+            throw new IllegalArgumentException("a nonempty query interval is required");
+        }
+        if (!queryInterval.difference(indexDomain).isEmpty()) {
+            throw new IllegalArgumentException("query interval lies outside the index temporal domain");
+        }
+        ExactTemporalProfile arrivals = ExactTemporalProfile.empty();
+        TreeSet<Integer> intersection = new TreeSet<>(outgoingLabels.get(source).keySet());
+        intersection.retainAll(incomingLabels.get(destination).keySet());
+        for (int hub : intersection) {
+            ExactTemporalProfile candidate = outgoingLabels.get(source).get(hub)
+                    .composeAfter(incomingLabels.get(destination).get(hub))
+                    .restrict(queryInterval);
+            arrivals = arrivals.pointwiseMinimum(candidate);
+        }
+        return arrivals;
+    }
+
+    int commonHubCount(int source, int destination) {
+        graph.node(source);
+        graph.node(destination);
+        TreeSet<Integer> intersection = new TreeSet<>(outgoingLabels.get(source).keySet());
+        intersection.retainAll(incomingLabels.get(destination).keySet());
+        return intersection.size();
+    }
+
     private static Map<Integer, Map<Integer, ExactTemporalProfile>> freeze(
             Map<Integer, Map<Integer, ExactTemporalProfile>> source) {
         Map<Integer, Map<Integer, ExactTemporalProfile>> result = new HashMap<>();
