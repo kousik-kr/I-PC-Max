@@ -331,6 +331,62 @@ public final class ExactTemporalProfile {
         return true;
     }
 
+    /**
+     * Returns whether this profile is no worse than {@code other} everywhere
+     * where {@code other} is defined. Support is part of the comparison: a
+     * profile cannot dominate departures at which it is unavailable.
+     *
+     * <p>Both profiles are piecewise linear. Comparing their values at every
+     * owned singleton and at both limits of each open slab split by all
+     * breakpoints is therefore an exact full-domain test; no temporal samples
+     * are used.</p>
+     */
+    public boolean dominates(ExactTemporalProfile other) {
+        Objects.requireNonNull(other, "other");
+        if (!other.domain().difference(domain()).isEmpty()) {
+            return false;
+        }
+        if (other.isEmpty()) {
+            return true;
+        }
+
+        TreeSet<Double> cuts = new TreeSet<>();
+        addCuts(cuts, cells);
+        addCuts(cuts, other.cells);
+        List<Double> ordered = List.copyOf(cuts);
+
+        for (double cut : ordered) {
+            if (!other.domain().contains(cut)) {
+                continue;
+            }
+            if (Domain.canonicalTime(valueAt(cut))
+                    > Domain.canonicalTime(other.valueAt(cut))) {
+                return false;
+            }
+        }
+
+        for (int index = 1; index < ordered.size(); index++) {
+            double start = ordered.get(index - 1);
+            double end = ordered.get(index);
+            if (start == end) {
+                continue;
+            }
+            TimeProfile candidate = firstCellCoveringOpenInterval(other.cells, start, end);
+            if (candidate == null) {
+                continue;
+            }
+            TimeProfile dominator = firstCellCoveringOpenInterval(cells, start, end);
+            if (dominator == null
+                    || Domain.canonicalTime(dominator.valueAtClosure(start))
+                            > Domain.canonicalTime(candidate.valueAtClosure(start))
+                    || Domain.canonicalTime(dominator.valueAtClosure(end))
+                            > Domain.canonicalTime(candidate.valueAtClosure(end))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static void addCuts(TreeSet<Double> cuts, List<TimeProfile> profiles) {
         for (TimeProfile profile : profiles) {
             for (Domain.Interval interval : profile.domain().intervals()) {

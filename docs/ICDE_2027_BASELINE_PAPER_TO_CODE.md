@@ -3,9 +3,9 @@
 ## Scope and repository state
 
 This note records the paper specifications and maps them to the shared
-baseline foundation and the M2A exact-profile/unpruned-THop implementation.
-It does not claim that SICSP or the later THop pruning, partitioning, and
-approximation stages have been implemented.
+baseline foundation, the M2A exact-profile/unpruned THop implementation, and
+the M2B incremental pruned THop implementation. It does not claim that SICSP,
+partitioning, or the later THop approximation stages have been implemented.
 
 The two source PDFs in `Baseline papar/` were readable with `pdftotext`:
 
@@ -225,8 +225,8 @@ approximations, not changes to its objective.
 | Profile composition `⊕` | §III-A-B, §IV-C | `ExactTemporalProfile.composeAfter` composes absolute-arrival mappings; converting the result to travel time subtracts the root departure, equivalent to the paper's `t + f(t)` entry-time formula. |
 | Pointwise `Min` envelope | §III-B, §IV-C | `ExactTemporalProfile.pointwiseMinimum` computes exact affine crossings and endpoint ownership, including jumps at support boundaries that one `TimeProfile` cannot represent. |
 | Out-label / in-label | §III-B | `THopIndex` stores `Lout(v)` by hub `h` as `F(v,h)` and `Lin(v)` by hub `h` as `F(h,v)`. |
-| Unpruned 2-hop labels | §IV-A | `THopIndex.build` runs one forward all-destination profile search per source and places each ordered-pair profile in both directed label sets. This is equivalent to the all-pairs labels; it avoids a separate reverse-profile operator. |
-| Pruned labels and hub order | §IV-A, §IV-D | Future builder uses an all-time profile-dominance test against earlier labels and the documented hub order. No PACE pivots/connectors are involved. |
+| Unpruned 2-hop labels | §IV-A | `THopIndex.build` remains the all-pairs differential reference, running one forward all-destination profile search per source. |
+| Pruned labels and hub order | §IV-A, §IV-D | `THopIndex.buildPruned` performs incremental forward and reverse-backward searches in an explicit distance-to-barycenter order. It checks exact full-domain dominance against labels of earlier hubs before expanding each settled vertex. |
 | Label-intersection query | §IV-C | `THopIndex.query` intersects hub IDs, composes each source-to-hub and hub-to-destination arrival profile, restricts to the query interval, and returns the minimum travel-time envelope. |
 | Partition and boundary labels | §V-A–E | Future partition metadata/index/query layers; existing `GraphPartitionMetadata` is PACE metadata and must not be assumed to implement THop's partition scheme without conformance checks. |
 | AT-Dijkstra | §VI-A | Future optional approximate profile-search mode with the paper's multiplicative error budget. It does not add scores or a PACE budget. |
@@ -243,12 +243,18 @@ approximations, not changes to its objective.
    fallback for direct searches with different support domains. The unpruned
    THop index requires shared edge support so a faster prefix cannot be
    unavailable to a downstream edge while a slower prefix remains feasible.
-2. “Dominates for all `t`” is used for pruning, but the paper does not define
-   whether weak equality, endpoint-only equality, or domain gaps affect label
-   retention. The precise domain on which each profile comparison is made
-   must be fixed.
-3. The barycenter-distance hub order is a heuristic; treatment of disconnected
-   components, absent coordinates, and equal distances is not specified.
+2. The paper does not spell out profile-domain ownership for “dominates for
+   all `t`.” M2B uses weak pointwise `<=` over the candidate's entire support;
+   the existing profile must also be defined at every such departure. Open
+   slabs are compared at both affine limits and owned singleton points are
+   compared separately. A profile unavailable at a candidate departure never
+   dominates it.
+3. The paper gives no coordinate metric or tie rule for its barycenter
+   heuristic. M2B uses Euclidean distance to the arithmetic mean of node
+   coordinates, then ascending node ID. The graph model has no explicit
+   “coordinates missing” marker; when all coordinates coincide, ascending node
+   ID is the deterministic fallback. Disconnected vertices use the same
+   global barycenter.
 4. Partitioning permits an existing partitioner and the reported experiment
    uses Natural Cut. Reproducing reported construction performance requires
    the same partition inputs and configuration; correctness does not depend
@@ -308,15 +314,15 @@ Since all candidates share the same root departure `t`, minimizing arrival
 time and minimizing travel time have the same lower envelope.
 
 `THopIndex.build` runs a forward all-destinations profile search from every
-vertex. For every reachable ordered pair `(u,v)`, it stores the same immutable
-profile as `(v,F(u,v))` in `Lout(u)` and `(u,F(u,v))` in `Lin(v)`. This fills
-the full unpruned label sets. It uses all-source forward search rather than a
-separate inverse-profile search; the latter is not available in the current
-function API. `THopIndex.query` intersects the directed label maps, composes
-each source-to-hub arrival mapping with its hub-to-destination mapping,
-restricts the resulting functions to the complete query interval, and takes
-their exact lower envelope. Empty support represents unreachable departures;
-source-to-self uses the identity mapping.
+vertex as an unpruned differential reference. For every reachable ordered pair
+`(u,v)`, it stores the same immutable profile as `(v,F(u,v))` in `Lout(u)` and
+`(u,F(u,v))` in `Lin(v)`. `THopIndex.buildPruned` retains the same reference
+builder unchanged and adds the M2B incremental construction. `THopIndex.query`
+intersects the directed label maps, composes each source-to-hub arrival
+mapping with its hub-to-destination mapping, restricts the resulting
+functions to the complete query interval, and takes their exact lower
+envelope. Empty support represents unreachable departures; each processed hub
+stores a diagonal identity label so source-to-self remains queryable.
 
 The index rejects graphs whose edge functions have different support domains.
 That restriction is needed for the paper's single fastest-profile label at a
@@ -326,6 +332,15 @@ domain. The original THop paper does not define labels for that case. Direct
 profile search still handles it exactly, but the paper's one-profile-per-hub
 query theorem does not cover it. No route witness is returned by the profile
 API; route pieces are not inferred from merged functions.
+
+The M2B reverse-backward search traverses original incoming arcs. For an edge
+`u->v`, it composes the edge arrival map with the already-computed `v->h`
+suffix, yielding the `u->h` profile. It does not reverse the edge and reuse its
+travel-time function unchanged. Because a final arc can arrive after the edge
+departure horizon while the query result remains defined at that departure,
+the backward root identity is supported over the min-to-max image of all
+one-edge arrival profiles. Subsequent reverse relaxations restrict incoming
+edge departures to their actual function support.
 
 The independent test oracle in `SimplePathProfileOracle` recursively
 enumerates vertex-simple routes, composes each route's edge functions, and
@@ -356,5 +371,44 @@ common-hub, composition, envelope, size-estimate, and sampled-heap fields are
 populated.
 
 M2A does not add pruning, partitioning, approximation, compression, SICSP, or
-large-network experiments. The next paper stage is M2B; its scope is not
-started here.
+large-network experiments.
+
+## M2B implementation delivered
+
+The default `THopIndex.buildPruned` order sorts vertices by Euclidean distance
+to the arithmetic mean of the stored coordinates, breaking ties by node ID.
+If every coordinate is identical, it uses ascending node ID. The selected
+order is exposed by `hubOrder()`; callers can pass another complete permutation
+to the explicit-order overload for reproducible order comparisons.
+
+For each hub, the pruned builder executes one forward and one reverse-backward
+function-valued search. At each settled vertex it composes only labels whose
+hubs were processed before the current hub and checks whether their exact
+lower envelope dominates the complete new profile. A dominated label is
+removed and its frontier is not expanded. Partially dominated profiles remain
+available as labels and are expanded. The test suite checks full, partial, and
+crossing dominance, endpoint ownership, singleton cells, support gaps, and
+FIFO plateaus. `ExactTemporalProfile.dominates` uses only piecewise-linear slab
+endpoints and owned points, not departure-time sampling.
+
+The current temporal-function API supports this reverse operation by exact
+composition over the original incoming arcs. The primary THop index still
+requires a common edge-function support domain, as in M2A. The paper does not
+specify heterogeneous edge support; that remains outside the claimed THop
+reproduction.
+
+`PreprocessingStatistics` reports construction time, processed hubs, forward
+and backward search calls and expansions, constructed profiles, retained and
+pruned labels, skipped expansions, temporal pieces and operators, a payload
+size estimate, and sampled peak heap use. Query-level `QueryStatistics` stays
+separate and reports common hubs, compositions, envelope operations, query
+time, result pieces, and sampled heap use. The index-size value is a documented
+payload estimate rather than measured JVM object size; heap use is sampled,
+not allocation-profiler output. The small-graph tests compare pruned and
+unpruned outputs against `SimplePathProfileOracle` in more than one hub order.
+
+The implementation-plan document was reconciled without changing local
+history: `docs/PACE_FINAL_ALGORITHM_IMPLEMENTATION_PLAN.md` already exists in
+the worktree and its Git blob matches GitHub `main` at
+`840cbc699b3a391f6129e7b25fee5fb6dd3de72f`. No reset, merge, or copy was
+needed.
