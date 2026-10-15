@@ -2,11 +2,10 @@
 
 ## Scope and repository state
 
-This note records the paper specifications and maps their components to the
-existing PACE code and the shared baseline foundation. It does not claim that
-either complete baseline has been implemented. The current code adds only
-fixed-departure FIFO earliest-arrival search, deadline-based latest-departure
-search, and exact path replay.
+This note records the paper specifications and maps them to the shared
+baseline foundation and the M2A exact-profile/unpruned-THop implementation.
+It does not claim that SICSP or the later THop pruning, partitioning, and
+approximation stages have been implemented.
 
 The two source PDFs in `Baseline papar/` were readable with `pdftotext`:
 
@@ -14,6 +13,11 @@ The two source PDFs in `Baseline papar/` were readable with `pdftotext`:
   Graph,” PVLDB 12(10), 2019, 1058–1071, 13 pages.
 * Li et al., “Time-Dependent Hop Labeling on Road Network,” ICDE 2019,
   903–914, 12 pages.
+
+The citation trail for the profile search also includes Li et al.'s MORT paper
+and Ding et al.'s interval-starting-time shortest-path paper. The MORT paper is
+available from [PVLDB](https://www.vldb.org/pvldb/vol10/p1274-zhou.pdf), and
+Ding et al. from [Microsoft Research](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/edbt08tdsp.pdf).
 
 `docs/ICDE_2027_BASELINE_IMPLEMENTATION_PLAN.md` is absent from the worktree
 and from `HEAD`; no file with that name was found under `docs/`. Therefore,
@@ -217,23 +221,28 @@ approximations, not changes to its objective.
 
 | Paper component | Paper location | Existing or new code relationship |
 |---|---|---|
-| Single departure fastest path / FPP | §III-A, Definitions 1–2 | `FifoTimeDependentDijkstra` supplies a scalar fixed-departure primitive. The all-departure profile is not implemented in this phase. |
-| Profile composition `⊕` | §III-A-B, §IV-C | `TimeProfile.compose` already composes exact piecewise-linear arrival profiles; future THop code should adapt/reuse it for travel-time profiles with the correct `t + f(t)` entry mapping. |
-| Pointwise `Min` envelope | §III-B, §IV-C | `TimeProfile.pointwiseMinimum` supplies an existing exact profile envelope where domains and continuity contracts fit. |
-| Out-label / in-label | §III-B | Future THop index types must store complete hub IDs and profiles; no label index is implemented. |
-| Unpruned 2-hop labels | §IV-A | Future builder uses forward and reverse profile searches; scalar baseline search is only a foundation and is not an index. |
+| Single departure fastest path / FPP | §III-A, Definitions 1–2 | `FifoTimeDependentDijkstra` is the scalar primitive; `FifoFastestPathProfileSearch` computes all-destination profiles over continuous time with function-valued relaxation when edge supports match. |
+| Profile composition `⊕` | §III-A-B, §IV-C | `ExactTemporalProfile.composeAfter` composes absolute-arrival mappings; converting the result to travel time subtracts the root departure, equivalent to the paper's `t + f(t)` entry-time formula. |
+| Pointwise `Min` envelope | §III-B, §IV-C | `ExactTemporalProfile.pointwiseMinimum` computes exact affine crossings and endpoint ownership, including jumps at support boundaries that one `TimeProfile` cannot represent. |
+| Out-label / in-label | §III-B | `THopIndex` stores `Lout(v)` by hub `h` as `F(v,h)` and `Lin(v)` by hub `h` as `F(h,v)`. |
+| Unpruned 2-hop labels | §IV-A | `THopIndex.build` runs one forward all-destination profile search per source and places each ordered-pair profile in both directed label sets. This is equivalent to the all-pairs labels; it avoids a separate reverse-profile operator. |
 | Pruned labels and hub order | §IV-A, §IV-D | Future builder uses an all-time profile-dominance test against earlier labels and the documented hub order. No PACE pivots/connectors are involved. |
-| Label-intersection query | §IV-C | Future query intersects hub IDs, composes profiles, and takes their minimum envelope. |
+| Label-intersection query | §IV-C | `THopIndex.query` intersects hub IDs, composes each source-to-hub and hub-to-destination arrival profile, restricts to the query interval, and returns the minimum travel-time envelope. |
 | Partition and boundary labels | §V-A–E | Future partition metadata/index/query layers; existing `GraphPartitionMetadata` is PACE metadata and must not be assumed to implement THop's partition scheme without conformance checks. |
 | AT-Dijkstra | §VI-A | Future optional approximate profile-search mode with the paper's multiplicative error budget. It does not add scores or a PACE budget. |
 | Bottom-up compression | §VI-B Algorithm 1 | Future optional turning-point simplifier with paper error thresholds. It must be evaluated separately from exact profile composition. |
 
 ### Ambiguities to resolve before implementing THop
 
-1. The paper cites a fastest-path profile search but does not fully specify
-   the exact profile-Dijkstra relaxation and inverse operations in this paper.
-   Its profile search should be matched to the cited method and repository
-   `TimeProfile` domain/continuity contracts before coding.
+1. The THop paper's reference [23] is Li et al.'s MORT paper. That paper's
+   related-work discussion points to Ding et al. [7] for interval-starting-time
+   shortest paths, but that method is described around selecting a best
+   departure and does not specify THop's all-destinations, complete-profile
+   API or partial edge-support semantics. M2A uses whole-function relaxation
+   under a shared edge-function support domain and an exact simple-route
+   fallback for direct searches with different support domains. The unpruned
+   THop index requires shared edge support so a faster prefix cannot be
+   unavailable to a downstream edge while a slower prefix remains feasible.
 2. “Dominates for all `t`” is used for pruning, but the paper does not define
    whether weak equality, endpoint-only equality, or domain gaps affect label
    retention. The precise domain on which each profile comparison is made
@@ -257,7 +266,7 @@ approximations, not changes to its objective.
    sup-norm error, ties between equal-error removals, and half-open domains are
    handled. The tie order and error norm must be made explicit.
 
-## Shared foundation delivered in this phase
+## Shared foundation delivered in M1
 
 `edu.ipcmax.baselines.FifoTimeDependentDijkstra` performs FIFO earliest-arrival
 and reverse latest-departure searches over `TDGraph`. It evaluates each edge
@@ -274,5 +283,78 @@ outside function domains. The existing `PiecewiseLinearFn` and
 `TimeProfile` remain the function/envelope implementations.
 `edu.ipcmax.baselines.TemporalArrivalProfiles` adapts edge travel-time
 functions to arrival-time profiles and exactly composes complete paths; an
-empty profile domain is reported explicitly. No THop or SICSP candidate
-generation, index, or experiment runner is added in this phase.
+empty profile domain is reported explicitly.
+
+## M2A implementation delivered
+
+`FifoFastestPathProfileSearch` computes full functions over a continuous root
+departure domain. For the common road-network case where every edge function
+uses the same temporal support domain, it keeps one profile label per node,
+composes that label with each outgoing edge arrival mapping, and enqueues a
+node whenever the exact lower envelope changes. In a graph with differing
+edge support domains, it uses finite vertex-simple route labels so that a
+fastest prefix cannot hide a slower, supported prefix. Both branches operate
+on whole piecewise-linear functions. No departure sampling, arbitrary
+breakpoint limit, score, or PACE budget is used. The differing-support branch
+has an exponential worst case; it is intended for exact small-graph use.
+
+`ExactTemporalProfile` stores the underlying piecewise-linear mapping as
+disjoint open-interval cells and singleton endpoint cells. This preserves
+exact endpoint ownership and allows a route envelope to jump at a support
+boundary. Within a cell it delegates affine composition and breakpoint
+handling to the existing `TimeProfile`. Search and index labels store absolute
+arrival time `A(t)`; the reported fastest travel-time function is `A(t)-t`.
+Since all candidates share the same root departure `t`, minimizing arrival
+time and minimizing travel time have the same lower envelope.
+
+`THopIndex.build` runs a forward all-destinations profile search from every
+vertex. For every reachable ordered pair `(u,v)`, it stores the same immutable
+profile as `(v,F(u,v))` in `Lout(u)` and `(u,F(u,v))` in `Lin(v)`. This fills
+the full unpruned label sets. It uses all-source forward search rather than a
+separate inverse-profile search; the latter is not available in the current
+function API. `THopIndex.query` intersects the directed label maps, composes
+each source-to-hub arrival mapping with its hub-to-destination mapping,
+restricts the resulting functions to the complete query interval, and takes
+their exact lower envelope. Empty support represents unreachable departures;
+source-to-self uses the identity mapping.
+
+The index rejects graphs whose edge functions have different support domains.
+That restriction is needed for the paper's single fastest-profile label at a
+hub to remain composable: with heterogeneous availability windows, a slower
+prefix may be the only prefix whose arrival lies in a downstream edge's
+domain. The original THop paper does not define labels for that case. Direct
+profile search still handles it exactly, but the paper's one-profile-per-hub
+query theorem does not cover it. No route witness is returned by the profile
+API; route pieces are not inferred from merged functions.
+
+The independent test oracle in `SimplePathProfileOracle` recursively
+enumerates vertex-simple routes, composes each route's edge functions, and
+builds their envelope. Tests compare the functional search and THop query
+against this oracle for every source-destination pair over the union of
+breakpoints and open temporal cells. The test suite also covers switching
+profiles, equal routes, multiple common hubs, support gaps and ownership,
+FIFO plateaus, self paths, disconnected nodes, score changes, and different
+`QuerySpec` travel-time budgets. THop's query API accepts only source,
+destination, and temporal interval.
+
+Index statistics report construction time, both directed label counts,
+logical temporal-profile piece and breakpoint totals, a payload-based byte
+estimate, search state and temporal operator counts, and sampled peak JVM heap
+usage. Query statistics report duration, common hubs, temporal compositions,
+envelope operations, result pieces, and sampled heap usage. The byte figure
+is an estimate, and sampled heap is not a JVM allocation profiler.
+
+M2A validation ran `mvn -q -Dtest=THopIndexTest test` successfully and the
+final `mvn test -q` run passed all 259 tests. Two earlier full-suite attempts
+hit the known intermittent PACE overlap assertion at
+`PacePublicApiOracleIntegrationTest.java:173`; the isolated assertion passed,
+and the final full run passed. No PACE or iSCOPE source files were changed.
+No large-network benchmark was run. The tiny-graph construction/query metrics
+are available from `THopIndex.IndexStatistics` and
+`THopIndex.QueryStatistics`; tests verify that their timing, label, piece,
+common-hub, composition, envelope, size-estimate, and sampled-heap fields are
+populated.
+
+M2A does not add pruning, partitioning, approximation, compression, SICSP, or
+large-network experiments. The next paper stage is M2B; its scope is not
+started here.
