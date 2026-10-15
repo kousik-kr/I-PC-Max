@@ -19,6 +19,7 @@ import edu.ipcmax.experiments.algorithms.KspProfileAlgorithm;
 import edu.ipcmax.experiments.algorithms.PaceExperimentAlgorithm;
 import edu.ipcmax.experiments.algorithms.ProfileLabelingAlgorithm;
 import edu.ipcmax.experiments.algorithms.RpqAlgorithm;
+import edu.ipcmax.experiments.AlgorithmRegistry;
 import edu.ipcmax.experiments.framework.Ablation;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
@@ -117,6 +118,40 @@ class ExperimentAlgorithmsTest {
                 ExperimentDatasets.demo(), QUERY,
                 config("ksp-profile", Ablation.NONE, 4, 8, 8, 1, 0, 2, 1, 100, 100),
                 new ExperimentInstrumentation()));
+    }
+
+    @Test
+    void sicspPrefIsRegisteredAndReportsRetainedFrontierMetrics() {
+        ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
+        var algorithm = AlgorithmRegistry.create("sicsp-pref");
+        var result = algorithm.run(
+                ExperimentDatasets.demo(), QUERY, config("sicsp-pref"), instrumentation);
+
+        assertEquals("sicsp-pref", algorithm.id());
+        assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
+        assertTrue(result.profile().segments().stream().anyMatch(segment -> segment.found()));
+        assertTrue(((Number) result.scalars().get("query_execution_nanos")).longValue() > 0);
+        assertTrue(((Number) result.scalars().get("forward_search_calls")).longValue() > 0);
+        assertTrue(((Number) result.scalars().get("profile_cell_count")).longValue() > 0);
+        assertEquals("computed_exhaustive_vertex_simple_paths",
+                result.scalars().get("oracle_quality_gap_status"));
+        assertTrue(((Number) result.scalars().get("oracle_quality_gap")).doubleValue() >= 0);
+        assertTrue(instrumentation.timings().containsKey("query_execution"));
+        assertTrue(instrumentation.counters().containsKey("retained_distinct_candidates"));
+    }
+
+    @Test
+    void sicspPrefMarksAnEmptyFeasibleRegistryUnresolved() {
+        var result = AlgorithmRegistry.create("sicsp-pref").run(
+                ExperimentDatasets.demo(),
+                new QuerySpec(1, 4, 420, 430, 0, 1),
+                config("sicsp-pref"),
+                new ExperimentInstrumentation());
+
+        assertEquals(ExperimentStatus.UNRESOLVED_NO_GENERATED_CANDIDATE, result.status());
+        assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
+        assertFalse(result.completeProfile());
+        assertTrue(result.profile().segments().stream().allMatch(segment -> !segment.found()));
     }
 
     @Test

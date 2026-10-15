@@ -7,6 +7,7 @@ import edu.ipcmax.experiments.algorithms.IntervalBestAlgorithm;
 import edu.ipcmax.experiments.algorithms.KspProfileAlgorithm;
 import edu.ipcmax.experiments.algorithms.PaceExperimentAlgorithm;
 import edu.ipcmax.experiments.algorithms.ProfileLabelingAlgorithm;
+import edu.ipcmax.experiments.algorithms.SicspPrefExperimentAlgorithm;
 import edu.ipcmax.experiments.algorithms.RpqAlgorithm;
 import edu.ipcmax.experiments.framework.ExperimentAlgorithm;
 
@@ -25,6 +26,7 @@ public final class AlgorithmRegistry {
             case "interval-best" -> new IntervalBestAlgorithm();
             case "iscope" -> new IScopeAlgorithm();
             case "allfp" -> new AllFpAlgorithm();
+            case "sicsp-pref" -> new SicspPrefExperimentAlgorithm();
             default -> throw new IllegalArgumentException("unknown --algorithm: " + id);
         };
     }

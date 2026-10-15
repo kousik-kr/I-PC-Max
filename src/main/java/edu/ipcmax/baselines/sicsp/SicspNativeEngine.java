@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.IntFunction;
 
 /** Native sequential SICSP (original ICSP_Arr plus a documented ICSP_Wgh inference). */
 public final class SicspNativeEngine {
@@ -60,9 +61,23 @@ public final class SicspNativeEngine {
     private final SicspNativeGraph nativeGraph;
     private final TDGraph graph;
     private final SicspTemporalDijkstra dijkstra;
+    private final IntFunction<List<Double>> weightBreakpointProvider;
 
     public SicspNativeEngine(SicspNativeGraph nativeGraph) {
+        this(nativeGraph, arcId -> nativeGraph.weightFunction(arcId).breakpoints());
+    }
+
+    /**
+     * Builds the unchanged SICSP candidate generator with a caller-supplied
+     * secondary-attribute event source.  The native constructor continues to
+     * enumerate the native edge-weight breakpoints.
+     */
+    SicspNativeEngine(
+            SicspNativeGraph nativeGraph,
+            IntFunction<List<Double>> weightBreakpointProvider) {
         this.nativeGraph = Objects.requireNonNull(nativeGraph, "nativeGraph");
+        this.weightBreakpointProvider = Objects.requireNonNull(
+                weightBreakpointProvider, "weightBreakpointProvider");
         this.graph = nativeGraph.temporalGraph();
         validateFifoClosedGraph(graph);
         this.dijkstra = new SicspTemporalDijkstra(graph);
@@ -77,38 +92,22 @@ public final class SicspNativeEngine {
         counters.queryStartNanos = System.nanoTime();
         counters.sampleHeap();
 
-        long phaseStart = System.nanoTime();
-        List<SicspBreakpointCandidate> generatedO = new ArrayList<>();
-        List<SicspBreakpointCandidate> diagnosticO = new ArrayList<>();
-        List<SicspBreakpointCandidate> generatedW = new ArrayList<>();
-        List<SicspBreakpointCandidate> diagnosticW = new ArrayList<>();
-        Set<CandidateKey> seenO = new HashSet<>();
-        Set<CandidateKey> seenW = new HashSet<>();
-
-        for (Edge edge : graph.edges()) {
-            counters.edgesConsidered++;
-            TreeSet<Double> timeEvents = new TreeSet<>();
-            edge.travelTimeFunction().breakpoints().forEach(point -> timeEvents.add(point.minute()));
-            for (double eventTime : timeEvents) {
-                counters.timeBreakpointsExamined++;
-                SicspBreakpointCandidate attempt = generateBreakpointCandidate(
-                        query, edge, eventTime,
-                        SicspBreakpointCandidate.Type.ARRIVAL_BREAKPOINT, counters);
-                addUniqueCandidate(attempt, generatedO, diagnosticO, seenO, counters);
-            }
-
-            TreeSet<Double> weightEvents = new TreeSet<>(nativeGraph.weightFunction(edge.arcId()).breakpoints());
-            for (double eventTime : weightEvents) {
-                counters.weightBreakpointsExamined++;
-                SicspBreakpointCandidate attempt = generateBreakpointCandidate(
-                        query, edge, eventTime,
-                        SicspBreakpointCandidate.Type.WEIGHT_BREAKPOINT, counters);
-                addUniqueCandidate(attempt, generatedW, diagnosticW, seenW, counters);
-            }
-            counters.sampleHeap();
-        }
-        counters.candidateGenerationNanos = System.nanoTime() - phaseStart;
+        SicspCandidateGenerationResult generation = generateCandidates(query);
+        counters.edgesConsidered = generation.edgesConsidered();
+        counters.timeBreakpointsExamined = generation.timeBreakpointsExamined();
+        counters.weightBreakpointsExamined = generation.weightBreakpointsExamined();
+        counters.reverseDijkstraCalls = generation.reverseDijkstraCalls();
+        counters.forwardDijkstraCalls = generation.forwardDijkstraCalls();
+        counters.duplicateCandidates = generation.duplicateCandidates();
+        counters.candidateGenerationNanos = generation.candidateGenerationNanos();
+        counters.peakSampledHeapBytes = generation.peakSampledHeapBytes();
+        List<SicspBreakpointCandidate> generatedO = generation.arrivalPoints();
+        List<SicspBreakpointCandidate> diagnosticO = generation.arrivalDiagnostics();
+        List<SicspBreakpointCandidate> generatedW = generation.weightPoints();
+        List<SicspBreakpointCandidate> diagnosticW = generation.weightDiagnostics();
         counters.sampleHeap();
+
+        long phaseStart;
 
         phaseStart = System.nanoTime();
         List<SicspBreakpointCandidate> retainedO = filterArrivalCandidates(
@@ -230,6 +229,64 @@ public final class SicspNativeEngine {
                 retainedProfiles,
                 discrepancies,
                 statistics);
+    }
+
+    /**
+     * Runs only the paper's per-breakpoint LST/EAT candidate generation.
+     * Native SICSP and SICSP-Pref call this same implementation; only the
+     * secondary-attribute event provider differs for the preference adapter.
+     */
+    public SicspCandidateGenerationResult generateCandidates(SicspNativeQuery query) {
+        Objects.requireNonNull(query, "query");
+        graph.node(query.source());
+        graph.node(query.destination());
+        Counters counters = new Counters();
+        long started = System.nanoTime();
+        counters.sampleHeap();
+        List<SicspBreakpointCandidate> generatedO = new ArrayList<>();
+        List<SicspBreakpointCandidate> diagnosticO = new ArrayList<>();
+        List<SicspBreakpointCandidate> generatedW = new ArrayList<>();
+        List<SicspBreakpointCandidate> diagnosticW = new ArrayList<>();
+        Set<CandidateKey> seenO = new HashSet<>();
+        Set<CandidateKey> seenW = new HashSet<>();
+
+        for (Edge edge : graph.edges()) {
+            counters.edgesConsidered++;
+            TreeSet<Double> timeEvents = new TreeSet<>();
+            edge.travelTimeFunction().breakpoints().forEach(point -> timeEvents.add(point.minute()));
+            for (double eventTime : timeEvents) {
+                counters.timeBreakpointsExamined++;
+                SicspBreakpointCandidate attempt = generateBreakpointCandidate(
+                        query, edge, eventTime,
+                        SicspBreakpointCandidate.Type.ARRIVAL_BREAKPOINT, counters);
+                addUniqueCandidate(attempt, generatedO, diagnosticO, seenO, counters);
+            }
+
+            TreeSet<Double> weightEvents = new TreeSet<>(weightBreakpointProvider.apply(edge.arcId()));
+            for (double eventTime : weightEvents) {
+                counters.weightBreakpointsExamined++;
+                SicspBreakpointCandidate attempt = generateBreakpointCandidate(
+                        query, edge, eventTime,
+                        SicspBreakpointCandidate.Type.WEIGHT_BREAKPOINT, counters);
+                addUniqueCandidate(attempt, generatedW, diagnosticW, seenW, counters);
+            }
+            counters.sampleHeap();
+        }
+        counters.candidateGenerationNanos = System.nanoTime() - started;
+        counters.sampleHeap();
+        return new SicspCandidateGenerationResult(
+                generatedO,
+                diagnosticO,
+                generatedW,
+                diagnosticW,
+                counters.edgesConsidered,
+                counters.timeBreakpointsExamined,
+                counters.weightBreakpointsExamined,
+                counters.reverseDijkstraCalls,
+                counters.forwardDijkstraCalls,
+                counters.duplicateCandidates,
+                counters.candidateGenerationNanos,
+                counters.peakSampledHeapBytes);
     }
 
     private SicspBreakpointCandidate generateBreakpointCandidate(
@@ -389,7 +446,7 @@ public final class SicspNativeEngine {
             int source,
             int destination,
             Counters counters) {
-        Map<Path, List<SicspBreakpointCandidate>> groups = groupByPath(candidates);
+        Map<Path, List<SicspBreakpointCandidate>> groups = SicspCandidateGroups.byPath(candidates);
         List<SicspBreakpointCandidate> retained = new ArrayList<>();
         for (SicspBreakpointCandidate candidate : candidates) {
             boolean dominated = false;
@@ -456,15 +513,6 @@ public final class SicspNativeEngine {
         }
         retained.sort(candidateOrder());
         return List.copyOf(retained);
-    }
-
-    private static Map<Path, List<SicspBreakpointCandidate>> groupByPath(
-            List<SicspBreakpointCandidate> candidates) {
-        Map<Path, List<SicspBreakpointCandidate>> groups = new LinkedHashMap<>();
-        for (SicspBreakpointCandidate candidate : candidates) {
-            groups.computeIfAbsent(candidate.path().orElseThrow(), ignored -> new ArrayList<>()).add(candidate);
-        }
-        return groups;
     }
 
     private static Comparator<SicspBreakpointCandidate> candidateOrder() {

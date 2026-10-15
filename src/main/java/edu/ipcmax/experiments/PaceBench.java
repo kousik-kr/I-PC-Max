@@ -1031,6 +1031,7 @@ public final class PaceBench {
                     case "pace-b" -> "DETERMINISTIC_RETAINED_FRONTIER";
                     case "iscope" -> "ANYTIME_VALIDATED_ENVELOPE";
                     case "allfp" -> "FASTEST_FUNCTIONAL_ENVELOPE";
+                    case "sicsp-pref" -> "RETAINED_FRONTIER_UNRESOLVED";
                     default -> null;
                 });
         status.put(
@@ -1099,6 +1100,7 @@ public final class PaceBench {
             case "ksp-profile" -> "EXACT_OVER_RETAINED_K_PATHS";
             case "iscope" -> "ANYTIME_STREAMING_INTERVAL_PROFILE";
             case "allfp" -> "CONTINUOUS_FUNCTIONAL_ALL_FASTEST_PATHS";
+            case "sicsp-pref" -> "SEQUENTIAL_SICSP_PREFERENCE_PROFILE";
             default -> "REDUCED_OUTPUT_EVALUATION_PROFILE";
         });
         result.put("preprocessing_accounting", "EXCLUDED");
@@ -1136,7 +1138,8 @@ public final class PaceBench {
         result.put("timeout_seconds", options.timeoutSeconds);
         result.put("memory_limit_bytes", options.memoryLimitMb == 0 ? null : options.memoryLimitMb * 1024L * 1024L);
         result.put("max_enumerated_paths", switch (options.algorithm) {
-            case "exh-profile", "ksp-profile", "interval-best", "iscope" -> options.maxEnumeratedPaths;
+            case "exh-profile", "ksp-profile", "interval-best", "iscope", "sicsp-pref" ->
+                    options.maxEnumeratedPaths;
             default -> null;
         });
         result.put("max_labels", options.algorithm.equals("pl-exact")
@@ -1242,6 +1245,7 @@ public final class PaceBench {
             case "pace-b" -> "PACE_B";
             case "iscope" -> "ISCOPE_ANYTIME";
             case "allfp" -> "ALLFP_FUNCTIONAL";
+            case "sicsp-pref" -> "SICSP_PREF_RETAINED_FRONTIER";
             default -> null;
         };
     }
