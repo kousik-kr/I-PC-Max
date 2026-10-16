@@ -36,5 +36,13 @@ public record PaceGenerationResult(
             throw new IllegalArgumentException(
                     "NO_FEASIBLE_PATH requires independent global certification");
         }
+        if ((completion == PaceCompletion.NO_FEASIBLE_PATH
+                || completion == PaceCompletion.UNRESOLVED_NO_GENERATED_CANDIDATE)
+                && !frontier.isEmpty()) {
+            throw new IllegalArgumentException("empty-frontier status requires an empty frontier");
+        }
+        if (completion == PaceCompletion.COMPLETE && frontier.isEmpty()) {
+            throw new IllegalArgumentException("complete generation requires a non-empty frontier");
+        }
     }
 }

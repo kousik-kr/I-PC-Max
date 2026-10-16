@@ -409,10 +409,11 @@ public final class ForwardLayeredFrontierGenerator {
         completed.releaseCaches();
         current.values().forEach(
                 IncrementalFrontier::releaseCaches);
-        PaceCompletion completion = completion(
-                rootFrontier, caps, options.policy());
-        PaceExactnessScope exactness = exactness(
-                completion, caps, pivots);
+        boolean exhaustiveCoverage = pivots.selected().size() == pivots.scoreRelevantArcIds().size()
+                && options.theta() >= pivots.selected().size();
+        PaceGenerationOutcome outcome = PaceGenerationOutcome.resolve(
+                options.policy(), !rootFrontier.isEmpty(), caps, exhaustiveCoverage,
+                !options.singleMidpointFastestConnectorEnabled());
         String outputChecksum = outputChecksum(rootFrontier);
         PaceGenerationStats snapshot;
         try (PaceExecutionMetrics.Timer ignored = metrics.phase(
@@ -436,8 +437,8 @@ public final class ForwardLayeredFrontierGenerator {
         observeMemory("memory_after_query_used_heap_bytes");
         lastResult = new PaceGenerationResult(
                 rootFrontier,
-                completion,
-                exactness,
+                outcome.completion(),
+                outcome.exactness(),
                 caps,
                 snapshot,
                 corridor.checksum(),
@@ -884,45 +885,6 @@ public final class ForwardLayeredFrontierGenerator {
                                 + queryHorizon);
             }
         }
-    }
-
-    private static PaceCompletion completion(
-            CandidateSet frontier,
-            PaceCapStatus caps,
-            PaceExecutionPolicy policy) {
-        if (caps.any()) {
-            return policy == PaceExecutionPolicy.PACE_X
-                    ? PaceCompletion.ABORTED
-                    : PaceCompletion.RESOURCE_TRUNCATED;
-        }
-        if (!frontier.isEmpty()) {
-            return PaceCompletion.COMPLETE;
-        }
-        return policy == PaceExecutionPolicy.PACE_X
-                ? PaceCompletion.NO_FEASIBLE_PATH
-                : PaceCompletion.UNRESOLVED_NO_GENERATED_CANDIDATE;
-    }
-
-    private PaceExactnessScope exactness(
-            PaceCompletion completion,
-            PaceCapStatus caps,
-            PivotIndex pivots) {
-        if (completion == PaceCompletion.ABORTED) {
-            return PaceExactnessScope.NOT_CERTIFIED;
-        }
-        if (options.policy() == PaceExecutionPolicy.PACE_B) {
-            return options.singleMidpointFastestConnectorEnabled()
-                    ? PaceExactnessScope.NOT_CERTIFIED
-                    : PaceExactnessScope.RETAINED_FRONTIER;
-        }
-        boolean exhaustiveConditions =
-                !caps.any()
-                && pivots.selected().size()
-                    == pivots.scoreRelevantArcIds().size()
-                && options.theta() >= pivots.selected().size();
-        return exhaustiveConditions
-                ? PaceExactnessScope.GLOBAL_CERTIFIED
-                : PaceExactnessScope.RETAINED_FRONTIER;
     }
 
     private static String workItem(
