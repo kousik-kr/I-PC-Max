@@ -7,11 +7,11 @@ Date: 2026-10-16. This document records identity only. **Both freezes have `read
 | Item | Frozen value |
 |---|---|
 | Branch | `feature/icde27-baseline-implementation` |
-| Clean source commit | `cb9d1bfe8e9734b2ce57cab786168ddb216bd18b` |
-| Git tree | `9376f4783606c54eec885112a7daf135b0b93fcd` |
+| Clean source commit | `e1912754a9d9356e019f1f3899e120ccc339c227` |
+| Git tree | `6bf1af229f28b2f294cb175172b5b1a2766351e7` |
 | Source status | Clean release checkout; `source.clean=true` |
 | Build command | `mvn -B -ntp -DskipTests package` |
-| Build result | `BUILD SUCCESS`, 8.641 s; Maven Shade reported overlapping dependency metadata/resources |
+| Build result | `BUILD SUCCESS`, 8.607 s from a clean worktree at the frozen source commit; Maven Shade reported overlapping dependency metadata/resources |
 | JAR | `target/pace-bench-icde2027-v1.jar`, 3,909,320 bytes, SHA-256 `d947f8f9ed44a2d3dcb7772992c4dbc50c447099c5aa4c9cc58c9970386ae96d` |
 | Java / Maven / Python | OpenJDK 21.0.7 / Maven 3.6.3 / Python 3.10.12 |
 | OS | Linux 6.8.0-138-generic, x86_64 |
