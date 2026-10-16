@@ -42,6 +42,101 @@ public final class TinyContinuousEnvelopeOracle {
         }
     }
 
+    /** Exact value on one cell; arrival(t) = arrivalSlope*t + arrivalIntercept. */
+    public record CellValue(
+            int score, ExactFraction arrivalSlope, ExactFraction arrivalIntercept) {
+    }
+
+    /**
+     * An unmerged temporal cell, including every event, budget root, and tie root.
+     * Point cells own event endpoints; nonpoint cells are open at both ends.
+     * Empty path/value denotes NO_PATH. This exposes the complete function, not
+     * only the path identity retained by {@link Segment}.
+     */
+    public record TemporalCell(
+            ExactFraction start,
+            ExactFraction end,
+            boolean startInclusive,
+            boolean endInclusive,
+            Optional<List<Integer>> path,
+            Optional<CellValue> value) {
+        public TemporalCell {
+            path = path.map(List::copyOf);
+            if (path.isPresent() != value.isPresent()) {
+                throw new IllegalArgumentException("path and value must agree");
+            }
+        }
+    }
+
+    /** Complete rational cells over every independently enumerated simple path. */
+    public static List<TemporalCell> solveCells(TDGraph graph, QuerySpec query) {
+        return solveCellsForPaths(graph, query,
+                enumerateSimplePaths(graph, query.source(), query.destination()));
+    }
+
+    /**
+     * Independent envelope for an explicitly supplied candidate registry. Used
+     * to validate capped output without asserting global path completeness.
+     */
+    public static List<TemporalCell> solveCellsForPaths(
+            TDGraph graph, QuerySpec query, List<List<Integer>> paths) {
+        Objects.requireNonNull(graph, "graph");
+        Objects.requireNonNull(query, "query");
+        graph.node(query.source());
+        graph.node(query.destination());
+        for (List<Integer> path : paths) {
+            int node = query.source();
+            Set<Integer> visited = new HashSet<>();
+            visited.add(node);
+            for (int arcId : path) {
+                Edge edge = graph.edges().get(arcId);
+                if (edge.source() != node || !visited.add(edge.target())) {
+                    throw new IllegalArgumentException("not a vertex-simple query path");
+                }
+                node = edge.target();
+            }
+            if (node != query.destination()) {
+                throw new IllegalArgumentException("path does not reach query destination");
+            }
+        }
+        ExactFraction start = ExactFraction.of(query.departureStart());
+        ExactFraction end = ExactFraction.of(query.departureEnd());
+        ExactFraction budget = ExactFraction.fromDouble(query.maxTravelTime());
+        requireGraphHorizon(graph, start, end.add(budget));
+        TreeSet<ExactFraction> cuts = new TreeSet<>();
+        cuts.add(start);
+        cuts.add(end);
+        for (List<Integer> path : paths) {
+            cuts.addAll(buildPathCuts(graph, path, start, end, budget));
+        }
+        addTravelTieCuts(graph, paths, budget, cuts);
+        List<ExactFraction> ordered = List.copyOf(cuts);
+        List<TemporalCell> result = new ArrayList<>();
+        for (int i = 0; i < ordered.size(); i++) {
+            ExactFraction point = ordered.get(i);
+            result.add(temporalCell(graph, paths, budget, point, point));
+            if (i + 1 < ordered.size()) {
+                result.add(temporalCell(graph, paths, budget, point, ordered.get(i + 1)));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static TemporalCell temporalCell(
+            TDGraph graph, List<List<Integer>> paths, ExactFraction budget,
+            ExactFraction start, ExactFraction end) {
+        boolean point = start.equals(end);
+        ExactFraction sample = point ? start : midpoint(start, end);
+        Optional<List<Integer>> selected = bestPathAt(graph, paths, sample, budget);
+        Optional<CellValue> value = selected.map(path -> {
+            Replay replay = point ? replayPoint(graph, path, sample)
+                    : replayAffine(graph, path, sample);
+            return new CellValue(replay.score(), replay.arrival().slope(),
+                    replay.arrival().intercept());
+        });
+        return new TemporalCell(start, end, point, point, selected, value);
+    }
+
     /** Solves a query over all vertex-simple paths and the complete real departure interval. */
     public static List<Segment> solve(TDGraph graph, QuerySpec query) {
         Objects.requireNonNull(graph, "graph");

@@ -32,7 +32,14 @@ import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
 import edu.ipcmax.experiments.framework.ExperimentStatus;
 import edu.ipcmax.experiments.framework.QueryDeadline;
 
-/** Five-second anytime interval profile baseline with streaming exact profiling. */
+/**
+ * Five-second continuous-profile adaptation of iSCOPE's simple-path recursion.
+ *
+ * <p>The WISE 2025 optimized implementation composes partial label functions,
+ * splits their feasible support, merges breakpoints with randomized scores, and
+ * uses parallel work stealing. This implementation profiles completed paths
+ * without those optimizations. Its output metadata records that deviation.</p>
+ */
 public final class IScopeAlgorithm implements ExperimentAlgorithm {
     static final long DEFAULT_LIMIT_NANOS = TimeUnit.SECONDS.toNanos(5);
     private static final long MAX_FINALIZATION_RESERVE_NANOS =
@@ -200,12 +207,29 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
         scalars.put("cap_triggered", List.copyOf(capTriggered));
         scalars.put("query_deadline_nanos", limit);
         scalars.put("finalization_reserve_nanos", reserve);
+        scalars.put("measured_query_elapsed_ns", elapsed);
+        scalars.put("deadline_overrun_ns", Math.max(0L, elapsed - limit));
+        scalars.put("deadline_overrun", elapsed > limit);
+        scalars.put("deadline_enforcement",
+                "COOPERATIVE_MONOTONIC_WITH_FINALIZATION_RESERVE");
+        scalars.put("objective", "PREFERENCE_MAX_PROFILE");
+        scalars.put("numerical_contract", "LEGACY_CANONICAL_PROFILE_12DP-v1");
+        scalars.put("implementation_variant",
+                "CONTINUOUS_PROFILE_EXHAUSTIVE_PATH_ADAPTATION-v1");
+        scalars.put("paper_fidelity", "DEVIATION");
+        scalars.put("paper_doi", "10.1007/978-981-95-7251-9_12");
+        scalars.put("partial_label_function_splitting", false);
+        scalars.put("breakpoint_merging", false);
+        scalars.put("score_randomization", false);
+        scalars.put("execution_threads", 1);
+        scalars.put("budget_contract", "ABSOLUTE_TRAVEL_TIME");
+        scalars.put("departure_time_contract", "CONTINUOUS_CANONICAL_DOMAIN");
         scalars.put(
                 "query_independent_lower_bound_weights_prepared",
                 preparedGraph == graph && preparedLower != null);
         scalars.put(
                 "output_validation_contract",
-                "CANONICAL_EXACT_PROFILE_AND_VERTEX_SIMPLE-v1");
+                "LEGACY_PROFILE_AND_VERTEX_SIMPLE-v2");
         return new AlgorithmResult(
                 status, profile, exactness, scalars, null, null);
     }

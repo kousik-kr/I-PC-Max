@@ -149,6 +149,35 @@ class IScopeAlgorithmTest {
     }
 
     @Test
+    void reportsMeasuredDeadlineOverrunAndNamesThePaperAdaptation() {
+        AtomicLong time = new AtomicLong();
+        ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
+        var result = new IScopeAlgorithm(() -> time.getAndAdd(20)).run(
+                switchingScoreGraph(), new QuerySpec(1, 4, 0, 10, 20, 1),
+                config("iscope", 10_000, 12), instrumentation);
+
+        assertEquals(ExperimentStatus.TIME_CAPPED_NOT_CERTIFIED, result.status());
+        long measured = instrumentation.timings().get("algorithm_total");
+        assertEquals(measured, result.scalars().get("measured_query_elapsed_ns"));
+        assertEquals(Math.max(0L, measured - 12), result.scalars().get("deadline_overrun_ns"));
+        assertTrue((Boolean) result.scalars().get("deadline_overrun"));
+        assertEquals("CONTINUOUS_PROFILE_EXHAUSTIVE_PATH_ADAPTATION-v1",
+                result.scalars().get("implementation_variant"));
+        assertEquals("DEVIATION", result.scalars().get("paper_fidelity"));
+        assertEquals("LEGACY_CANONICAL_PROFILE_12DP-v1",
+                result.scalars().get("numerical_contract"));
+    }
+
+    @Test
+    void omittedQueryCapUsesFiveSecondsWithoutInventingCompletionPercentage() {
+        var result = new IScopeAlgorithm().run(switchingScoreGraph(),
+                new QuerySpec(1, 4, 0, 10, 20, 1),
+                config("iscope", 10_000, 0), new ExperimentInstrumentation());
+        assertEquals(5_000_000_000L, result.scalars().get("query_deadline_nanos"));
+        assertFalse(result.scalars().containsKey("completion_percentage"));
+    }
+
+    @Test
     void budgetInfeasibleCellsAreExcludedFromTheEnvelope() {
         PiecewiseLinearFn travel = new PiecewiseLinearFn(List.of(
                 point(0, 2), point(5, 2), point(6, 6), point(1440, 6)));
