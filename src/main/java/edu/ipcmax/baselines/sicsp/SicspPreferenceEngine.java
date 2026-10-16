@@ -10,6 +10,11 @@ import edu.ipcmax.core.profile.CandidateProfile;
 import edu.ipcmax.core.profile.CandidateSet;
 import edu.ipcmax.core.validate.LooplessChecker;
 import edu.ipcmax.core.validate.Path;
+import edu.ipcmax.baselines.exact.ExactTemporalDomain;
+import edu.ipcmax.baselines.exact.ExactTime;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceEnvelope;
+import edu.ipcmax.baselines.exact.preference.ExactPreferencePathProfile;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceReplay;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,11 +27,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
+import java.math.BigInteger;
 import java.util.Set;
 
 /** Minimal objective adaptation of the native sequential SICSP candidate core. */
 public final class SicspPreferenceEngine {
-    private record Replay(double arrival, OptionalInt score) {
+    private record Replay(ExactTime arrival, Optional<BigInteger> score) {
     }
 
     private record ReplayKey(Path path, double departure) {
@@ -145,14 +151,27 @@ public final class SicspPreferenceEngine {
             }
             sampledHeap = Math.max(sampledHeap, usedHeap());
         }
+        Map<Path, ExactPreferencePathProfile> exactProfiles = new LinkedHashMap<>();
+        ExactTemporalDomain exactQueryDomain = ExactTemporalDomain.fromLegacy(query.departureDomain());
+        for (Path path : retainedPaths) {
+            ExactPreferenceReplay.replay(graph, query.source(), query.destination(), path,
+                    query.departureDomain(), query.travelTimeBudget())
+                    .ifPresent(profile -> exactProfiles.put(path, profile));
+            sampledHeap = Math.max(sampledHeap, usedHeap());
+        }
+        List<Path> budgetFeasiblePaths = exactProfiles.values().stream()
+                .filter(profile -> !profile.feasibleDomain().isEmpty())
+                .map(ExactPreferencePathProfile::path)
+                .sorted(SicspPathOrder::compare).toList();
         long profileReplayNanos = System.nanoTime() - profileReplayStarted;
 
         long envelopeStarted = System.nanoTime();
         EnvelopeProfile envelope = EnvelopeExtractor.extract(candidates, query.departureDomain());
+        ExactPreferenceEnvelope exactEnvelope = ExactPreferenceEnvelope.overRetained(exactQueryDomain, exactProfiles);
         long envelopeNanos = System.nanoTime() - envelopeStarted;
         sampledHeap = Math.max(sampledHeap, usedHeap());
 
-        ProfileMeasures measures = measure(envelope);
+        ProfileMeasures measures = measure(exactEnvelope);
         long queryNanos = System.nanoTime() - queryStarted;
         SicspPrefStatistics statistics = new SicspPrefStatistics(
                 generation.edgesConsidered(),
@@ -173,12 +192,12 @@ public final class SicspPreferenceEngine {
                 simplePaths.size(),
                 outsidePaths.size(),
                 retainedPaths.size(),
-                feasibleProfiles.size(),
-                retainedPaths.size() - feasibleProfiles.size(),
+                budgetFeasiblePaths.size(),
+                retainedPaths.size() - budgetFeasiblePaths.size(),
                 profileReplayNanos,
                 envelopeNanos,
                 queryNanos,
-                envelope.segments().size(),
+                exactEnvelope.cells().size(),
                 measures.feasibleCells(),
                 sampledHeap,
                 measures.feasibleCoverage(),
@@ -202,6 +221,9 @@ public final class SicspPreferenceEngine {
                 outsidePaths,
                 orderedPaths(retainedPaths),
                 feasibleProfiles,
+                exactEnvelope,
+                exactProfiles,
+                budgetFeasiblePaths,
                 statistics);
     }
 
@@ -253,9 +275,9 @@ public final class SicspPreferenceEngine {
                         && candidateReplay.orElseThrow().score().isPresent()
                         && SicspPreferenceDominance.strictlyDominates(
                                 otherReplay.orElseThrow().arrival(),
-                                otherReplay.orElseThrow().score().getAsInt(),
+                                otherReplay.orElseThrow().score().orElseThrow(),
                                 candidateReplay.orElseThrow().arrival(),
-                                candidateReplay.orElseThrow().score().getAsInt())) {
+                                candidateReplay.orElseThrow().score().orElseThrow())) {
                     dominated = true;
                     break;
                 }
@@ -291,8 +313,8 @@ public final class SicspPreferenceEngine {
                     Replay left = otherReplay.orElseThrow();
                     Replay right = candidateReplay.orElseThrow();
                     if (SicspPreferenceDominance.skylineDominates(
-                            left.arrival(), left.score().getAsInt(),
-                            right.arrival(), right.score().getAsInt())) {
+                            left.arrival(), left.score().orElseThrow(),
+                            right.arrival(), right.score().orElseThrow())) {
                         dominated = true;
                         break;
                     }
@@ -322,31 +344,9 @@ public final class SicspPreferenceEngine {
             int destination,
             double departure,
             Path path) {
-        double time = Domain.canonicalTime(departure);
-        int node = source;
-        int score = 0;
-        boolean scoreDefined = true;
-        for (int arcId : path.arcIds()) {
-            if (arcId < 0 || arcId >= graph.edgeCount()) {
-                return Optional.empty();
-            }
-            Edge edge = graph.edges().get(arcId);
-            if (edge.source() != node || !edge.travelTimeFunction().domain().contains(time)) {
-                return Optional.empty();
-            }
-            if (scoreDefined && edge.scoreFunction().domain().contains(time)) {
-                score += edge.scoreFunction().valueAt(time);
-            } else {
-                scoreDefined = false;
-            }
-            time = edge.travelTimeFunction().arrivalTimeAt(time);
-            node = edge.target();
-        }
-        return node == destination
-                ? Optional.of(new Replay(
-                        Domain.canonicalTime(time),
-                        scoreDefined ? OptionalInt.of(score) : OptionalInt.empty()))
-                : Optional.empty();
+        Optional<ExactPreferenceReplay.PointReplay> exact = ExactPreferenceReplay.replayAt(
+                graph, source, destination, path, departure);
+        return exact.map(point -> new Replay(point.arrival(), Optional.of(point.score())));
     }
 
     private List<SicspPrefBreakpointCandidate> adaptCandidates(
@@ -359,14 +359,18 @@ public final class SicspPreferenceEngine {
             OptionalDouble arrival = candidate.replayedDestinationArrival();
             OptionalDouble travelTime = OptionalDouble.empty();
             OptionalInt score = OptionalInt.empty();
-            if (departure.isPresent() && candidate.path().isPresent()) {
+            if (departure.isPresent() && candidate.path().isPresent()
+                    && LooplessChecker.isLoopless(graph, candidate.path().orElseThrow())) {
                 Optional<Replay> replay = replayAt(
                         candidate.path().orElseThrow(), departure.getAsDouble(), query, replayCache);
                 if (replay.isPresent()) {
-                    arrival = OptionalDouble.of(replay.orElseThrow().arrival());
-                    travelTime = OptionalDouble.of(Domain.canonicalTime(
-                            replay.orElseThrow().arrival() - departure.getAsDouble()));
-                    score = replay.orElseThrow().score();
+                    ExactTime exactDeparture = ExactTime.fromCanonicalDouble(
+                            Domain.canonicalTime(departure.getAsDouble()));
+                    arrival = OptionalDouble.of(replay.orElseThrow().arrival().toDisplayDouble());
+                    travelTime = OptionalDouble.of(replay.orElseThrow().arrival()
+                            .subtract(exactDeparture).toDisplayDouble());
+                    BigInteger exactScore = replay.orElseThrow().score().orElseThrow();
+                    if (exactScore.bitLength() < Integer.SIZE) score = OptionalInt.of(exactScore.intValue());
                 }
             }
             String rejectionReason = candidate.path().isPresent()
@@ -440,6 +444,52 @@ public final class SicspPreferenceEngine {
             double maximumTravelTime) {
     }
 
+    private static ProfileMeasures measure(ExactPreferenceEnvelope profile) {
+        ExactTime total = ExactTime.ZERO;
+        ExactTime feasible = ExactTime.ZERO;
+        ExactTime scoreIntegral = ExactTime.ZERO;
+        ExactTime travelIntegral = ExactTime.ZERO;
+        ExactTime travelMeasure = ExactTime.ZERO;
+        ExactTime minTravel = null;
+        ExactTime maxTravel = null;
+        long feasibleCells = 0;
+        for (ExactTemporalDomain.Interval component : profile.domain().intervals()) {
+            total = total.add(component.end().subtract(component.start()));
+        }
+        for (var cell : profile.cells()) {
+            if (!cell.found()) continue;
+            feasibleCells++;
+            ExactTime length = cell.interval().end().subtract(cell.interval().start());
+            feasible = feasible.add(length);
+            scoreIntegral = scoreIntegral.add(length.multiply(new ExactTime(cell.score(), BigInteger.ONE)));
+            ExactTime leftTravel = cell.arrivalSlope().subtract(ExactTime.ONE)
+                    .multiply(cell.interval().start()).add(cell.arrivalIntercept());
+            ExactTime rightTravel = cell.arrivalSlope().subtract(ExactTime.ONE)
+                    .multiply(cell.interval().end()).add(cell.arrivalIntercept());
+            minTravel = minTravel == null || leftTravel.compareTo(minTravel) < 0 ? leftTravel : minTravel;
+            minTravel = rightTravel.compareTo(minTravel) < 0 ? rightTravel : minTravel;
+            maxTravel = maxTravel == null || leftTravel.compareTo(maxTravel) > 0 ? leftTravel : maxTravel;
+            maxTravel = rightTravel.compareTo(maxTravel) > 0 ? rightTravel : maxTravel;
+            if (length.signum() > 0) {
+                ExactTime slope = cell.arrivalSlope().subtract(ExactTime.ONE);
+                ExactTime integral = slope.multiply(cell.interval().end().multiply(cell.interval().end())
+                                .subtract(cell.interval().start().multiply(cell.interval().start())))
+                        .divide(ExactTime.of(2))
+                        .add(cell.arrivalIntercept().multiply(length));
+                travelIntegral = travelIntegral.add(integral);
+                travelMeasure = travelMeasure.add(length);
+            }
+        }
+        double coverage = total.signum() > 0 ? feasible.divide(total).toDouble()
+                : profile.cells().stream().anyMatch(cell -> cell.found()) ? 1.0 : 0.0;
+        double average = travelMeasure.signum() > 0 ? travelIntegral.divide(travelMeasure).toDouble()
+                : minTravel == null ? 0.0 : minTravel.toDouble();
+        return new ProfileMeasures(feasibleCells, coverage, scoreIntegral.toDouble(),
+                minTravel == null ? 0.0 : minTravel.toDouble(), average,
+                maxTravel == null ? 0.0 : maxTravel.toDouble());
+    }
+
+    @SuppressWarnings("unused")
     private static ProfileMeasures measure(EnvelopeProfile profile) {
         double totalLength = 0;
         double feasibleLength = 0;

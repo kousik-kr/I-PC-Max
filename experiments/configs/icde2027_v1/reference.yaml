@@ -166,7 +166,7 @@
     "pace-b": "legacy_canonical_12_decimal_per_operation-v1",
     "pace-x": "legacy_canonical_12_decimal_per_operation-v1",
     "iscope": "legacy_canonical_12_decimal_per_operation-v1",
-    "sicsp-pref": "LEGACY_MIXED_PROFILE_AND_SCALAR_12DP-v1",
+    "sicsp-pref": "EXACT_RATIONAL_PREFERENCE_PROFILE-v1",
     "thop-partitioned": "exact_rational_after_decimal_canonical_input-v1"
   },
   "objective_track": "tiny_preference_reference",
@@ -183,7 +183,7 @@
     ],
     "max_budget_overhead": 0.1
   },
-  "freeze_manifest": "experiments/manifests/icde2027_v1/freezes/reference.json",
+  "freeze_manifest": "experiments/manifests/icde2027_v1/freezes/reference_m5r2.json",
   "reporting": {
     "all_methods": [
       "source_commit",

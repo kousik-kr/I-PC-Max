@@ -3,6 +3,7 @@ package edu.ipcmax.baselines.sicsp;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import edu.ipcmax.baselines.TemporalArrivalProfiles;
 import edu.ipcmax.baselines.exact.ExactArrivalProfile;
 import edu.ipcmax.baselines.exact.ExactTime;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceReplay;
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.function.PiecewiseConstFn;
 import edu.ipcmax.core.function.PiecewiseLinearFn;
@@ -37,26 +39,27 @@ import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
 import edu.ipcmax.testoracle.ExactFraction;
 import edu.ipcmax.testoracle.TinyContinuousEnvelopeOracle;
 
-/** Unresolved numerical counterexamples must not carry an exact frontier claim. */
+/** Exact rational preference regressions; previous mixed-model failures remain permanent fixtures. */
 class SicspPrefTemporalContractTest {
     private static final List<Integer> ROOT_PATH = List.of(0, 1);
     private static final double ROOT_DECIMAL = 6.666666666667;
     private static final MathContext REFERENCE_PRECISION = new MathContext(80, RoundingMode.HALF_EVEN);
 
     @Test
-    void unresolvedTemporalContractCannotClaimExactRetainedFrontier() {
+    void exactTemporalContractRepairsTheCounterexampleAndClaimsOnlyRetainedFrontier() {
         var graph = new TinyGraphBuilder().node(1).node(2).edge(1, 2, 1).build();
         var result = new SicspPrefExperimentAlgorithm().run(graph,
                 new QuerySpec(1, 2, 0, 5, 2, 1), config(), new ExperimentInstrumentation());
 
-        assertEquals(ExactnessScope.NOT_CERTIFIED, result.exactnessScope());
+        assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
         assertFalse(result.completeProfile());
-        assertEquals("P1-B", result.scalars().get("known_temporal_issue"));
-        assertEquals(false, result.scalars().get("temporal_correctness_verified"));
-        assertEquals("LEGACY_MIXED_PROFILE_AND_SCALAR_12DP-v1",
+        assertFalse(result.scalars().containsKey("known_temporal_issue"));
+        assertEquals(true, result.scalars().get("temporal_correctness_verified"));
+        assertEquals("EXACT_RATIONAL_PREFERENCE_PROFILE-v1",
                 result.scalars().get("numerical_contract"));
-        assertEquals("UNRESOLVED", result.scalars().get("numerical_repair_status"));
-        assertTrue(result.profile().segments().stream().anyMatch(segment -> segment.found()));
+        assertEquals("REPAIRED_EXACT_PROFILE", result.scalars().get("numerical_repair_status"));
+        assertTrue(result.profile() == null, "the runner must not evaluate a rounded compatibility profile");
+        assertNotNull(result.scalars().get("objective_result"));
     }
 
     @Test
@@ -103,6 +106,13 @@ class SicspPrefTemporalContractTest {
         }
         SicspPrefResult result = new SicspPreferenceEngine(graph).query(
                 new SicspPrefQuery(1, 3, Domain.closed(0, 20), 80));
+        var exactProfile = result.exactCandidateProfiles().get(new Path(ROOT_PATH));
+        assertNotNull(exactProfile);
+        assertEquals(ExactTime.parseDecimal("60.0000000000005"),
+                exactProfile.arrival().valueAt(ROOT_DECIMAL));
+        assertEquals(ExactTime.of(20).divide(ExactTime.of(3)), rootTime());
+        assertEquals(10, exactProfile.score().valueAt(
+                ExactTime.fromCanonicalDouble(ROOT_DECIMAL)).intValueExact());
         List<SicspPrefBreakpointCandidate> events = new ArrayList<>(result.rawOPoints());
         events.addAll(result.rawWPoints());
         events.addAll(result.candidateGeneration().arrivalDiagnostics());
@@ -147,6 +157,15 @@ class SicspPrefTemporalContractTest {
         assertEquals(60.000000000001, singleton.arrivalProfile().valueAt(ROOT_DECIMAL));
         assertEquals(10, singleton.scoreProfile().valueAt(ROOT_DECIMAL));
         assertNotEquals(full.arrivalProfile().valueAt(ROOT_DECIMAL), singleton.arrivalProfile().valueAt(ROOT_DECIMAL));
+
+        var exactFull = ExactPreferenceReplay.replay(graph, 1, 3, new Path(ROOT_PATH),
+                Domain.closed(0, 20), 80).orElseThrow();
+        var exactSingleton = ExactPreferenceReplay.replay(graph, 1, 3, new Path(ROOT_PATH),
+                Domain.closed(ROOT_DECIMAL, ROOT_DECIMAL), 80).orElseThrow();
+        assertEquals(ExactTime.parseDecimal("60.0000000000005"), exactFull.arrival().valueAt(ROOT_DECIMAL));
+        assertEquals(exactFull.arrival().valueAt(ROOT_DECIMAL), exactSingleton.arrival().valueAt(ROOT_DECIMAL));
+        assertEquals(exactFull.score().valueAt(ExactTime.fromCanonicalDouble(ROOT_DECIMAL)),
+                exactSingleton.score().valueAt(ExactTime.fromCanonicalDouble(ROOT_DECIMAL)));
     }
 
     @Test
@@ -160,6 +179,11 @@ class SicspPrefTemporalContractTest {
 
         SicspPrefResult result = new SicspPreferenceEngine(graph).query(
                 new SicspPrefQuery(1, 2, Domain.closed(0, 9), budget));
+        var exactAtDecimal = result.exactEnvelope().cellAt(ExactTime.fromCanonicalDouble(ROOT_DECIMAL)).orElseThrow();
+        assertFalse(exactAtDecimal.found());
+        var exactAtRoot = result.exactEnvelope().cellAt(rootTime()).orElseThrow();
+        assertTrue(exactAtRoot.found());
+        assertEquals(ExactTime.of(21), exactAtRoot.travelTimeAt(rootTime()));
         assertTrue(result.envelope().segmentAt(ROOT_DECIMAL).found());
         var oracle = TinyContinuousEnvelopeOracle.solveCells(graph, new QuerySpec(1, 2, 0, 9, budget, 1));
         assertTrue(oracle.stream().filter(cell -> contains(cell.start(), cell.end(),
@@ -197,6 +221,13 @@ class SicspPrefTemporalContractTest {
         assertEquals(List.of(0, 1, 2), reported.path().arcIds());
         assertEquals(20, reported.candidate().scoreProfile().valueAt(departure));
         assertNotEquals(chain.score(), reported.candidate().scoreProfile().valueAt(departure));
+        var repaired = result.exactEnvelope().cellAt(ExactTime.fromCanonicalDouble(departure)).orElseThrow();
+        assertTrue(repaired.found());
+        assertEquals(List.of(3), repaired.path().arcIds());
+        assertEquals(15, repaired.score().intValueExact());
+        var exactEvent = result.exactEnvelope().cellAt(rootTime()).orElseThrow();
+        assertEquals(List.of(0, 1, 2), exactEvent.path().arcIds());
+        assertEquals(20, exactEvent.score().intValueExact());
     }
 
     @Test
@@ -395,6 +426,8 @@ class SicspPrefTemporalContractTest {
     private static BigDecimal decimal(double value) { return BigDecimal.valueOf(value).setScale(12, RoundingMode.UNNECESSARY); }
     private static BigDecimal canonical(BigDecimal value) { return value.setScale(12, RoundingMode.HALF_EVEN); }
     private static ExactFraction fraction(double value) { return ExactFraction.fromDouble(value); }
+
+    private static ExactTime rootTime() { return ExactTime.of(20).divide(ExactTime.of(3)); }
 
     private static AlgorithmConfig config() {
         return new AlgorithmConfig("sicsp-pref", Ablation.NONE, 2, 4, 4, 1, 0, 0,

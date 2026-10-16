@@ -9,11 +9,20 @@ import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.pcmax.EnvelopeExtractor;
 import edu.ipcmax.core.pcmax.EnvelopeProfile;
 import edu.ipcmax.core.pcmax.ExactPathProfileBuilder;
+import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.core.profile.CandidateProfile;
 import edu.ipcmax.core.profile.CandidateSet;
 import edu.ipcmax.core.validate.Path;
+import edu.ipcmax.baselines.exact.ExactTemporalDomain;
+import edu.ipcmax.baselines.exact.ExactTime;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceEnvelope;
+import edu.ipcmax.baselines.exact.preference.ExactPreferencePathProfile;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceReplay;
+import edu.ipcmax.testoracle.ExactFraction;
+import edu.ipcmax.testoracle.TinyContinuousEnvelopeOracle;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -251,6 +260,67 @@ class SicspPreferenceEngineTest {
         assertEquals(40, oracle.segmentAt(0).candidate().scoreProfile().valueAt(0));
         assertTrue(result.statistics().integratedPreferenceScore() < integratedScore(oracle));
         assertRetainedFrontierEnvelopeIsExact(result);
+
+        QuerySpec exactQuery = new QuerySpec(1, 7, 0, 20, 10, 1);
+        ExactPreferenceEnvelope rawEnvelope = exactEnvelope(temporal, exactQuery,
+                result.simpleCandidatePaths());
+        ExactPreferenceEnvelope retainedEnvelope = result.exactEnvelope();
+        List<Path> globallyEnumerated = allSimplePaths(temporal, 1, 7);
+        ExactPreferenceEnvelope globalEnvelope = exactEnvelope(temporal, exactQuery, globallyEnumerated);
+        assertExactEnvelopeMatchesIndependentCells(temporal, exactQuery,
+                result.simpleCandidatePaths(), rawEnvelope);
+        assertExactEnvelopeMatchesIndependentCells(temporal, exactQuery,
+                result.budgetFeasibleRetainedPaths(), retainedEnvelope);
+        assertExactEnvelopeMatchesIndependentCells(temporal, exactQuery,
+                globallyEnumerated, globalEnvelope);
+        assertEquals(result.retainedCandidatePaths().stream()
+                        .filter(result.budgetFeasibleRetainedPaths()::contains).sorted(SicspPathOrder::compare).toList(),
+                result.budgetFeasibleRetainedPaths());
+        ExactTime departure = ExactTime.ZERO;
+        assertEquals(globallyBest.arcIds(), globalEnvelope.cellAt(departure).orElseThrow().path().arcIds());
+        assertFalse(result.budgetFeasibleRetainedPaths().contains(globallyBest));
+        assertFalse(retainedEnvelope.cellAt(departure).orElseThrow().path().arcIds()
+                .equals(globallyBest.arcIds()));
+    }
+
+    private static ExactPreferenceEnvelope exactEnvelope(
+            TDGraph graph, QuerySpec query, List<Path> paths) {
+        Map<Path, ExactPreferencePathProfile> profiles = new java.util.LinkedHashMap<>();
+        for (Path path : paths) {
+            ExactPreferenceReplay.replay(graph, query.source(), query.destination(), path,
+                    Domain.closed(query.departureStart(), query.departureEnd()), query.maxTravelTime())
+                    .ifPresent(profile -> profiles.put(path, profile));
+        }
+        return ExactPreferenceEnvelope.overRetained(
+                ExactTemporalDomain.fromLegacy(Domain.closed(query.departureStart(), query.departureEnd())), profiles);
+    }
+
+    private static void assertExactEnvelopeMatchesIndependentCells(
+            TDGraph graph, QuerySpec query, List<Path> paths, ExactPreferenceEnvelope actual) {
+        List<TinyContinuousEnvelopeOracle.TemporalCell> expected =
+                TinyContinuousEnvelopeOracle.solveCellsForPaths(graph, query,
+                        paths.stream().map(Path::arcIds).toList());
+        for (var cell : expected) {
+            ExactFraction sample = cell.start().equals(cell.end()) ? cell.start()
+                    : cell.start().add(cell.end()).divide(ExactFraction.of(2));
+            ExactTime departure = exactTime(sample);
+            var selected = actual.cellAt(departure).orElseThrow(() ->
+                    new AssertionError("missing exact cell at " + departure));
+            assertEquals(cell.path().map(Path::new).orElse(null), selected.path(), "departure=" + departure);
+            if (cell.path().isPresent()) {
+                var value = cell.value().orElseThrow();
+                assertEquals(BigInteger.valueOf(value.score()), selected.score(), "departure=" + departure);
+                ExactTime arrival = exactTime(value.arrivalSlope()).multiply(departure)
+                        .add(exactTime(value.arrivalIntercept()));
+                assertEquals(arrival, selected.arrivalAt(departure), "departure=" + departure);
+            }
+        }
+    }
+
+    private static ExactTime exactTime(ExactFraction value) {
+        String[] parts = value.toString().split("/", -1);
+        return parts.length == 1 ? ExactTime.of(new BigInteger(parts[0]), BigInteger.ONE)
+                : ExactTime.of(new BigInteger(parts[0]), new BigInteger(parts[1]));
     }
 
     private static void assertRetainedFrontierEnvelopeIsExact(SicspPrefResult result) {

@@ -14,6 +14,28 @@ import static org.junit.jupiter.api.Assertions.*;
 class ObjectiveAdapterCliTest {
     @TempDir Path temporary;
 
+    @Test void sicspPrefCliWritesTheAuthoritativeExactRationalProfile() throws Exception {
+        Path output = temporary.resolve("sicsp-pref.jsonl");
+        assertEquals(0, PaceBench.execute(new String[]{"--algorithm", "sicsp-pref",
+                "--dataset", "demo", "--query-file", "experiments/manifests/tiny.jsonl",
+                "--output-jsonl", output.toString(), "--serialize-profile",
+                "--profile-output-dir", temporary.resolve("sicsp-pref-profiles").toString()}));
+        List<String> rows = Files.readAllLines(output);
+        assertEquals(3, rows.size());
+        for (String row : rows) {
+            var record = QueryManifestIO.mapper().readTree(row);
+            assertEquals("EXACT_RATIONAL_PREFERENCE_PROFILE-v1",
+                    record.path("counters").path("numerical_contract").asText());
+            assertTrue(record.path("output").path("profile").isObject());
+            assertEquals("exact-preference-envelope-v1",
+                    record.path("output").path("profile").path("schema").asText());
+            assertTrue(record.path("output").path("profile").path("cells").isArray());
+            assertFalse(record.path("output").path("profile_checksum").isNull());
+            assertTrue(record.path("timing_ns").path("exact_profile_serialization").asLong() >= 0);
+            assertTrue(Files.isRegularFile(Path.of(record.path("output").path("profile_file").asText())));
+        }
+    }
+
     @Test void nativeReproductionCliSerializesObjectiveAndPreservesHeuristicStatus() throws Exception {
         Path output = temporary.resolve("native.jsonl");
         assertEquals(0, PaceBench.execute(new String[]{"--algorithm", "sicsp-native",

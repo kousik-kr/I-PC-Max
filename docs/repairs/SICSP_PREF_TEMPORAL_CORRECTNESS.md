@@ -1,5 +1,7 @@
 # SICSP-Pref temporal correctness status (M5-R R2)
 
+> Historical diagnostic written before M5-R2. Its then-unresolved disposition and then-current adapter downgrade are superseded by [SICSP_PREF_EXACT_NUMERICAL_REPAIR.md](SICSP_PREF_EXACT_NUMERICAL_REPAIR.md). The counterexample arithmetic and independent-reference descriptions below remain useful; the exact rational evaluator now repairs the final retained-registry result. PACE-X/PACE-B/iSCOPE and global SICSP search completeness remain outside that repair.
+
 Date: 2026-10-16. This report records an **unresolved P1 numerical defect**. SICSP-Pref's implementation has not been numerically repaired. The change in this milestone is a safety downgrade that prevents the affected output from claiming a certified retained frontier.
 
 ## Arithmetic contracts and reproduction

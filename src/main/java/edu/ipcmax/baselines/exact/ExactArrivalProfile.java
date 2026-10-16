@@ -366,6 +366,12 @@ public final class ExactArrivalProfile {
     }
 
     private static ExactTime exactTravelAt(ExactTime time, List<ExactTime> knots, List<ExactTime> values) {
+        if (knots.size() == 1) {
+            if (!time.equals(knots.getFirst())) {
+                throw new IllegalArgumentException("single-point edge queried outside its only knot");
+            }
+            return values.getFirst();
+        }
         int segment = interpolationSegment(time, knots);
         ExactTime slope = values.get(segment + 1).subtract(values.get(segment))
                 .divide(knots.get(segment + 1).subtract(knots.get(segment)));

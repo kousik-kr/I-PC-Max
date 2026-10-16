@@ -121,24 +121,28 @@ class ExperimentAlgorithmsTest {
     }
 
     @Test
-    void sicspPrefIsRegisteredAndReportsUncertifiedRetainedCandidateMetrics() {
+    void sicspPrefIsRegisteredAndReportsExactRetainedCandidateMetrics() {
         ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
         var algorithm = AlgorithmRegistry.create("sicsp-pref");
         var result = algorithm.run(
                 ExperimentDatasets.demo(), QUERY, config("sicsp-pref"), instrumentation);
 
         assertEquals("sicsp-pref", algorithm.id());
-        assertEquals(ExactnessScope.NOT_CERTIFIED, result.exactnessScope());
-        assertEquals("P1-B", result.scalars().get("known_temporal_issue"));
-        assertEquals(false, result.scalars().get("temporal_correctness_verified"));
-        assertTrue(result.profile().segments().stream().anyMatch(segment -> segment.found()));
+        assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
+        assertFalse(result.scalars().containsKey("known_temporal_issue"));
+        assertEquals(true, result.scalars().get("temporal_correctness_verified"));
+        assertEquals("EXACT_RATIONAL_PREFERENCE_PROFILE-v1", result.scalars().get("numerical_contract"));
+        assertTrue(result.profile() == null);
+        assertNotNull(result.scalars().get("objective_result"));
         assertTrue(((Number) result.scalars().get("query_execution_nanos")).longValue() > 0);
         assertTrue(((Number) result.scalars().get("forward_search_calls")).longValue() > 0);
         assertTrue(((Number) result.scalars().get("profile_cell_count")).longValue() > 0);
-        assertEquals("computed_exhaustive_vertex_simple_paths",
+        assertEquals("not_computed_search_scope_is_heuristic",
                 result.scalars().get("oracle_quality_gap_status"));
-        assertTrue(((Number) result.scalars().get("oracle_quality_gap")).doubleValue() >= 0);
+        assertTrue(((Number) result.scalars().get("exact_profile_piece_count")).longValue() > 0);
+        assertTrue(((Number) result.scalars().get("exact_rational_max_component_bit_length")).intValue() > 0);
         assertTrue(instrumentation.timings().containsKey("query_execution"));
+        assertTrue(instrumentation.timings().containsKey("exact_profile_serialization"));
         assertTrue(instrumentation.counters().containsKey("retained_distinct_candidates"));
     }
 
@@ -153,7 +157,8 @@ class ExperimentAlgorithmsTest {
         assertEquals(ExperimentStatus.UNRESOLVED_NO_GENERATED_CANDIDATE, result.status());
         assertEquals(ExactnessScope.NOT_CERTIFIED, result.exactnessScope());
         assertFalse(result.completeProfile());
-        assertTrue(result.profile().segments().stream().allMatch(segment -> !segment.found()));
+        assertTrue(result.profile() == null);
+        assertNotNull(result.scalars().get("objective_result"));
     }
 
     @Test

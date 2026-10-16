@@ -1,5 +1,13 @@
 # ICDE 2027 M5-R repair and release-gate report
 
+## M5-R2 addendum — SICSP-Pref exact retained-profile repair
+
+This addendum supersedes the earlier P1-B disposition in this historical M5-R report. M5-R2 implemented `EXACT_RATIONAL_PREFERENCE_PROFILE-v1` for path replay, score-step preimages, travel-budget feasibility, exact route-envelope selection and deterministic rational serialization. SICSP-Pref now uses that output authoritatively over its generated, simple, dominance-retained route registry. `SicspNativeEngine` candidate generation is unchanged. Exact event replay is used by the preference adaptation's O/W dominance comparisons; this can change adapted survivors under the exact contract but does not change generated native event routes.
+
+The independent rational oracle validates complete temporal cells for the generated raw-simple, retained-feasible and global simple-path registries on the SICSP heuristic-miss fixture. The retained registry matches; the global best route remains missing from search. The repaired adapter therefore uses `RETAINED_FRONTIER` only for a feasible exact retained envelope and never claims global certification. Exact API details and the repaired cases are in [EXACT_PREFERENCE_TEMPORAL_API.md](repairs/EXACT_PREFERENCE_TEMPORAL_API.md) and [SICSP_PREF_EXACT_NUMERICAL_REPAIR.md](repairs/SICSP_PREF_EXACT_NUMERICAL_REPAIR.md); cross-algorithm follow-up is in [PREFERENCE_ALGORITHM_NUMERICAL_MIGRATION_PLAN.md](repairs/PREFERENCE_ALGORITHM_NUMERICAL_MIGRATION_PLAN.md).
+
+This repairs the SICSP-Pref final-evaluation P1-B defect. It does not approve experiments: PACE-X, PACE-B and iSCOPE still use legacy temporal profiles and/or pruning; historical P1-C remains unresolved; the benchmark freeze remains unapproved; and no M6/M7 work was started.
+
 Date: 2026-10-16. Branch: `feature/icde27-baseline-implementation`. Audited starting revision: `508a1d8cc422fd4595ad36857e51990fd86c562e`; implementation baseline at M5-R start: `0d0fa20c8b979b1db9916d5489649d73e8cc4993`.
 
 ## Executive result
