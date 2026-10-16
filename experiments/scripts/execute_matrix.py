@@ -51,7 +51,7 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _job_timeout_seconds(job: dict[str, Any], design: dict[str, Any]) -> int:
+def _job_timeout_seconds(job: dict[str, Any], design: dict[str, Any]) -> int | None:
     return algorithm_timeout_seconds(design, str(job["algorithm_id"]))
 
 
@@ -239,6 +239,11 @@ def _command(
     ):
         parameters.update(_resolved_pace_b(run_root, design))
     parameters.update(job.get("axis") or {})
+    for parameter_name, parameter_value in tuple(parameters.items()):
+        if isinstance(parameter_value, str) and "{dataset}" in parameter_value:
+            parameters[parameter_name] = parameter_value.format(
+                dataset=job["dataset_id"]
+            )
     dataset_path = "demo"
     if job["dataset_id"] == "sicsp-figure1":
         dataset_path = "sicsp-figure1"
@@ -278,7 +283,10 @@ def _command(
         "--repetitions", "1", "--warmup-runs",
         str(int(design.get("protocol", {}).get("warmup_passes", 0))),
         "--threads", str(parameters.pop("threads", 1)),
-        "--timeout-seconds", str(_job_timeout_seconds(job, design)),
+        "--timeout-seconds", (
+            "unlimited" if _job_timeout_seconds(job, design) is None
+            else str(_job_timeout_seconds(job, design))
+        ),
         "--preprocessing-timeout-seconds", str(preprocessing_timeout),
         "--memory-limit-mb", str(memory),
         "--seed", str(design.get("seeds", {}).get("schedule", 20260725)),
@@ -349,10 +357,10 @@ def execute_one(job: dict[str, Any], design: dict[str, Any], run_id: str, backen
         write_jsonl(query_file, [row])
         command = _command(job, design, run_root, query_file, java_output)
         resources = design["resources"]
-        timeout = (
+        query_timeout = _job_timeout_seconds(job, design)
+        timeout = None if query_timeout is None else (
             int(resources.get("preprocessing_timeout_seconds", 1800))
-            + _job_timeout_seconds(job, design)
-            + 90
+            + query_timeout + 90
         )
         completed = subprocess.run(
             command, cwd=repo_path("."), env=environment(), check=False, capture_output=True, text=True, timeout=timeout
@@ -842,6 +850,16 @@ def main() -> int:
             }, indent=2))
             return 0
         if args.backend == "slurm":
+            unbounded = [
+                str(job["algorithm_id"])
+                for job in jobs
+                if _job_timeout_seconds(job, design) is None
+            ]
+            if unbounded:
+                raise ValueError(
+                    "Slurm wall-time limits would contradict explicit unlimited query policy for: "
+                    + ", ".join(sorted(set(unbounded)))
+                )
             memory = design["resources"].get("memory_limit_mb")
             if memory is None:
                 raise ValueError("memory_limit_mb is required for Slurm")

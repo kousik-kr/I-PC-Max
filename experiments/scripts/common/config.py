@@ -49,13 +49,24 @@ def repo_path(value: str | Path) -> Path:
 def algorithm_timeout_seconds(
     design: dict[str, Any],
     algorithm_id: str,
-) -> int:
-    """Return the effective query timeout for one planned algorithm."""
+) -> int | None:
+    """Return a finite query cap, or None for explicit unlimited wall time.
+
+    Per-method omission inherits the explicitly configured family default.
+    Null, zero, booleans and missing family defaults are invalid.
+    """
     resources = design["resources"]
     per_algorithm = resources.get("algorithm_timeout_seconds")
-    if isinstance(per_algorithm, dict) and algorithm_id in per_algorithm:
-        return int(per_algorithm[algorithm_id])
-    return int(resources["timeout_seconds"])
+    value = (per_algorithm[algorithm_id]
+             if isinstance(per_algorithm, dict) and algorithm_id in per_algorithm
+             else resources.get("timeout_seconds"))
+    if value == "unlimited":
+        return None
+    if type(value) is not int or value < 1:
+        raise ValueError(
+            f"{algorithm_id} timeout must be a positive integer or explicit 'unlimited'; got {value!r}"
+        )
+    return value
 
 
 def _validate_final_q1(
@@ -329,6 +340,134 @@ def validate_icde2027(design: dict[str, Any], studies: list[dict[str, Any]]) -> 
         raise ValueError("dirty historical result reuse must be explicitly disabled")
 
 
+def _validate_icde2027_compact(
+    design: dict[str, Any], studies: list[dict[str, Any]]
+) -> None:
+    by_id = {study["study_id"]: study for study in studies}
+    if set(by_id) != {"C01", "C02"}:
+        raise ValueError("compact family requires the C01 and C02 manifest studies")
+    primary, controlled = by_id["C01"], by_id["C02"]
+    if set(design["datasets"]) != {"NY", "FLA", "CAL", "NY-EXACT"}:
+        raise ValueError("compact family requires NY, FLA, CAL, and NY-EXACT")
+    if {item["id"] for item in primary.get("algorithms", [])} != {
+        "pace-b", "iscope", "thop-partitioned"
+    }:
+        raise ValueError("C01 must compare PACE-B, iSCOPE, and THop")
+    if {item["id"] for item in controlled.get("algorithms", [])} != {
+        "pace-x", "pace-b", "iscope", "sicsp-pref"
+    }:
+        raise ValueError("C02 must compare all four preference methods")
+    if set(primary.get("datasets", [])) != {"NY", "FLA", "CAL"}:
+        raise ValueError("C01 must use the three compact historical datasets")
+    if set(controlled.get("datasets", [])) != {"NY-EXACT"}:
+        raise ValueError("C02 must use the actual NY-EXACT dataset")
+    if primary.get("query_manifest_pattern") != (
+        "experiments/manifests/icde2027_compact_v1/queries/{dataset}/compact_50.jsonl"
+    ):
+        raise ValueError("C01 must use the frozen compact_50 manifests")
+    if controlled.get("query_manifest_pattern") != (
+        "experiments/manifests/icde2027_compact_v1/queries/NY-EXACT/controlled_20.jsonl"
+    ):
+        raise ValueError("C02 must use the frozen NY-EXACT controlled manifest")
+    if primary.get("trials") != 2 or controlled.get("trials") != 1:
+        raise ValueError("compact trials must be two primary and one controlled")
+    resources = design["resources"]
+    expected_timeouts = {
+        "pace-b": "unlimited", "iscope": 5,
+        "thop-partitioned": "unlimited", "pace-x": "unlimited",
+        "sicsp-pref": "unlimited",
+    }
+    if resources.get("algorithm_timeout_seconds") != expected_timeouts:
+        raise ValueError("compact family must declare its method-specific timeout policy")
+    if resources.get("timeout_seconds") != "unlimited":
+        raise ValueError("compact family must use explicit unlimited as the base policy")
+    for method in expected_timeouts:
+        algorithm_timeout_seconds(design, method)
+    policies = resources.get("timeout_result_policy", {})
+    expected_policies = {
+        "pace-b": "NO_WALL_TIMEOUT_REPORT_INTRINSIC_WORK_CAPS",
+        "iscope": "ANYTIME_PROFILE_WITHIN_CAP_NOT_CERTIFIED",
+        "thop-partitioned": "NO_WALL_TIMEOUT_REPORT_RESOURCE_FAILURES",
+        "pace-x": "GLOBAL_CERTIFICATE_AND_ORACLE_REQUIRED",
+        "sicsp-pref": "CONTROLLED_ONLY_LARGE_NETWORK_SCOPE_PILOT_DEPENDENT",
+    }
+    if policies != expected_policies:
+        raise ValueError("compact timeout-result policy must cover every method")
+    if design["protocol"].get("algorithm_comparison_threads") != 1:
+        raise ValueError("compact algorithm comparisons require one thread")
+    if any(
+        algorithm.get("parameters", {}).get("threads") != 1
+        for study in studies for algorithm in study.get("algorithms", [])
+    ):
+        raise ValueError("compact algorithm entries must explicitly request one thread")
+    if design.get("historical_result_reuse") is not False:
+        raise ValueError("compact family must disable historical result reuse")
+    if design["paths"]["results_root"] != "experiments/results/icde2027_compact_v1" and not design["paths"]["results_root"].startswith(
+        "experiments/results/icde2027_compact_v1/"
+    ):
+        raise ValueError("compact results require an isolated namespace")
+    if design.get("reference_result_policy") != (
+        "GLOBAL_CERTIFIED_ONLY_AND_INDEPENDENTLY_VALIDATED"
+    ):
+        raise ValueError("PACE-X reference results require both gates")
+    if design.get("exact_algorithm_guard", {}).get("allowed_studies") != ["C02"]:
+        raise ValueError("PACE-X must be restricted to the controlled study")
+    if not design["protocol"].get("shared_preprocessing"):
+        raise ValueError("compact no-cap runner requires shared-preprocessing local execution")
+    if int(resources.get("memory_limit_mb", 0)) < 256:
+        raise ValueError("compact methods retain the configured finite memory cap")
+    for study_id, pattern, count, sidecar_name in (
+        ("C01", primary["query_manifest_pattern"], 50, "manifest.json"),
+        ("C02", controlled["query_manifest_pattern"], 20, "controlled_manifest.json"),
+    ):
+        datasets = primary["datasets"] if study_id == "C01" else controlled["datasets"]
+        for dataset in datasets:
+            query_path = repo_path(pattern.format(dataset=dataset))
+            sidecar = load_document(query_path.parent / sidecar_name)
+            expected_hash_key = (
+                "compact_query_sha256" if study_id == "C01"
+                else "controlled_query_sha256"
+            )
+            expected_count_key = (
+                "compact_query_count" if study_id == "C01"
+                else "controlled_query_count"
+            )
+            if sha256_file(query_path) != sidecar.get(expected_hash_key):
+                raise ValueError(f"frozen compact query hash mismatch: {query_path}")
+            rows = [
+                json.loads(line)
+                for line in query_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if len(rows) != count or len(rows) != sidecar.get(expected_count_key):
+                raise ValueError(f"frozen compact query count mismatch: {query_path}")
+            if any(
+                row.get("window_length") != 120
+                or row.get("budget_slack") != 0.3
+                or row.get("metadata", {}).get("split") != "evaluation"
+                for row in rows
+            ):
+                raise ValueError(f"compact rows do not match the declared default workload: {query_path}")
+            if study_id == "C01":
+                pairs: dict[str, set[tuple[int, int]]] = {}
+                bands: dict[int, set[str]] = {}
+                for row in rows:
+                    metadata = row["metadata"]
+                    pairs.setdefault(metadata["pair_id"], set()).add(
+                        (metadata["time_center"], row["distance_bin"])
+                    )
+                    bands.setdefault(row["distance_bin"], set()).add(metadata["pair_id"])
+                if len(pairs) != 25 or any(
+                    len(values) != 2 or {center for center, _ in values} != {510, 1110}
+                    for values in pairs.values()
+                ):
+                    raise ValueError(f"compact rows must be 25 original pairs at both centers: {query_path}")
+                if set(bands) != {1, 2, 3, 4, 5} or any(
+                    len(pair_ids) != 5 for pair_ids in bands.values()
+                ):
+                    raise ValueError(f"compact rows must select five pairs per distance band: {query_path}")
+
+
 def load_design(path: Path) -> dict[str, Any]:
     path = path.resolve()
     design = load_document(path)
@@ -379,6 +518,8 @@ def load_design(path: Path) -> dict[str, Any]:
         expected = set(study_ids)
         if not expected:
             raise ValueError("ICDE2027 requires explicit objective-specific studies")
+    elif profile == "icde2027_compact_v1":
+        expected = {"C01", "C02"}
     else:
         expected = {f"E{index:02d}" for index in range(14)}
     if study_ids != expected:
@@ -398,6 +539,8 @@ def load_design(path: Path) -> dict[str, Any]:
             )
     if not design.get("smoke", False) and profile == "icde2027_v1":
         validate_icde2027(design, studies)
+    elif not design.get("smoke", False) and profile == "icde2027_compact_v1":
+        _validate_icde2027_compact(design, studies)
     elif not design.get("smoke", False) and profile == "scalability_5s":
         _validate_scalability_5s(design, studies)
     elif not design.get("smoke", False) and profile == "two_track":

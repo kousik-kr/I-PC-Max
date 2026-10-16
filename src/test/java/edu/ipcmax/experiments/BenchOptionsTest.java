@@ -54,6 +54,21 @@ class BenchOptionsTest {
         assertEquals("rpq", AlgorithmRegistry.create("rpq").id());
     }
 
+    @Test
+    void explicitUnlimitedIsDistinctFromZeroAndPreservesFiniteIscopeCap() {
+        BenchOptions unlimited = parse(
+                "--algorithm", "pace-b", "--timeout-seconds", "unlimited",
+                "--memory-limit-mb", "2048");
+        assertEquals(0, unlimited.timeoutSeconds);
+        assertTrue(unlimited.unlimitedTimeoutExplicit);
+        assertEquals(0, unlimited.algorithmConfig().queryTimeLimitNanos());
+        assertThrows(IllegalArgumentException.class, () -> parse(
+                "--algorithm", "pace-b", "--timeout-seconds", "0"));
+        BenchOptions iscope = parse(
+                "--algorithm", "iscope", "--timeout-seconds", "5");
+        assertEquals(5, iscope.timeoutSeconds);
+    }
+
     private static BenchOptions parse(String... prefix) {
         String[] suffix = {"--dataset", "demo", "--query-file", "experiments/manifests/tiny.jsonl",
                 "--output-jsonl", "target/test.jsonl"};

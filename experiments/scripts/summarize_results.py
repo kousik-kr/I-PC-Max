@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import collections
 import csv
+from fractions import Fraction
 import json
 import math
 from pathlib import Path
@@ -22,6 +23,7 @@ from experiments.scripts.common.config import (
     load_design,
     repo_path,
 )
+from experiments.scripts.common.exact_preference import decode_exact_preference_profile
 
 
 def _percentile(values: list[float], fraction: float) -> float | None:
@@ -163,6 +165,9 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     trials: dict[tuple[Group, str], dict[str, list[float]]] = collections.defaultdict(
         lambda: collections.defaultdict(list)
     )
+    exact_trials: dict[tuple[Group, str], dict[str, list[Fraction]]] = collections.defaultdict(
+        lambda: collections.defaultdict(list)
+    )
     completion: collections.Counter[Group] = collections.Counter()
     successful: collections.Counter[Group] = collections.Counter()
     valid_outputs: collections.Counter[Group] = collections.Counter()
@@ -230,13 +235,28 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         if valid_profile and isinstance(runtime, (int, float)):
             valid_outputs[group] += 1
             if completion_status == "TIME_CAPPED_NOT_CERTIFIED":
-                par2_samples[group].append(
-                    2.0 * algorithm_timeout_seconds(design, algorithm_id)
-                    * 1_000_000_000
-                )
+                query_cap = algorithm_timeout_seconds(design, algorithm_id)
+                if query_cap is not None:
+                    par2_samples[group].append(2.0 * query_cap * 1_000_000_000)
             else:
                 par2_samples[group].append(float(runtime))
             query_key = (group, plan["query_id"])
+            output = java.get("output", {})
+            objective = output.get("objective_result")
+            if not isinstance(objective, dict) and output.get("exact_profile_schema"):
+                objective = output
+            if isinstance(objective, dict) and objective.get("profile") is not None:
+                exact_profile = decode_exact_preference_profile(
+                    objective["profile"], objective.get("exact_profile_checksum")
+                )
+                exact_trials[query_key]["coverage"].append(exact_profile.metrics.coverage)
+                exact_trials[query_key]["integrated_preference"].append(
+                    exact_profile.metrics.integrated_preference
+                )
+                if exact_profile.metrics.average_selected_preference is not None:
+                    exact_trials[query_key]["average_selected_preference"].append(
+                        exact_profile.metrics.average_selected_preference
+                    )
             for metric, (section, field) in metric_paths.items():
                 value = java.get(section, {}).get(field)
                 if isinstance(value, (int, float)):
@@ -264,11 +284,13 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
                     float(counters["candidates_retained"]) / generated if generated else 0.0
                 )
         else:
-            par2_samples[group].append(
-                2.0 * algorithm_timeout_seconds(design, algorithm_id)
-                * 1_000_000_000
-            )
+            query_cap = algorithm_timeout_seconds(design, algorithm_id)
+            if query_cap is not None:
+                par2_samples[group].append(2.0 * query_cap * 1_000_000_000)
     query_medians: dict[Group, dict[str, list[float]]] = collections.defaultdict(
+        lambda: collections.defaultdict(list)
+    )
+    exact_query_medians: dict[Group, dict[str, list[Fraction]]] = collections.defaultdict(
         lambda: collections.defaultdict(list)
     )
     paired_runtime: dict[tuple[str, str, str, str, str], float] = {}
@@ -295,6 +317,10 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             for metric, values in metrics.items()
             if values
         }
+    for key, metrics in exact_trials.items():
+        group, _query_id = key
+        for metric, values in metrics.items():
+            exact_query_medians[group][metric].append(statistics.median(values))
     rows: list[dict[str, Any]] = []
     seed = int(design.get("seeds", {}).get("bootstrap", 20260726))
     for group in sorted(completion):
@@ -371,6 +397,18 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             "median_profile_cells_total": statistics.median(metrics["profile_cells_total"]) if metrics.get("profile_cells_total") else None,
             "median_feasible_coverage": statistics.median(metrics["feasible_coverage"]) if metrics.get("feasible_coverage") else None,
             "median_average_selected_score": statistics.median(metrics["average_selected_score"]) if metrics.get("average_selected_score") else None,
+            "median_exact_feasible_coverage": (
+                None if not exact_query_medians[group].get("coverage")
+                else str(statistics.median(exact_query_medians[group]["coverage"]))
+            ),
+            "median_exact_integrated_preference": (
+                None if not exact_query_medians[group].get("integrated_preference")
+                else str(statistics.median(exact_query_medians[group]["integrated_preference"]))
+            ),
+            "median_exact_average_selected_preference": (
+                None if not exact_query_medians[group].get("average_selected_preference")
+                else str(statistics.median(exact_query_medians[group]["average_selected_preference"]))
+            ),
             "median_average_selected_travel_time": statistics.median(
                 metrics["average_selected_travel_time"]
             ) if metrics.get("average_selected_travel_time") else None,

@@ -172,7 +172,7 @@ class PaceBenchFrameworkTest {
     }
 
     @Test
-    void paceXSerializesVerifiedExhaustiveExactnessAndCompletion() throws Exception {
+    void paceXSerializesUncertifiedExhaustiveSearchCompletion() throws Exception {
         Path output = temporary.resolve("pace-x.jsonl");
         assertEquals(0, PaceBench.execute(new String[] {
                 "--algorithm", "pace-x", "--dataset", "demo",
@@ -185,7 +185,7 @@ class PaceBenchFrameworkTest {
         assertEquals("PACE_X_EXHAUSTIVE", record.path("configuration").path("execution_mode").asText());
         assertTrue(record.path("configuration").path("exhaustive_anchors").isNull());
         assertEquals("PACE_X", record.path("status").path("execution_policy").asText());
-        assertEquals("GLOBAL_CERTIFIED", record.path("status").path("exactness_scope").asText());
+        assertEquals("NOT_CERTIFIED", record.path("status").path("exactness_scope").asText());
         assertEquals("COMPLETE", record.path("status").path("generation_completion").asText());
         assertTrue(record.path("status").path("cap_triggered").isEmpty());
     }

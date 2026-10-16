@@ -1144,7 +1144,11 @@ public final class PaceBench {
         result.put("baseline_k", options.algorithm.equals("ksp-profile") ? options.baselineK : null);
         result.put("threads", pace == null ? options.threads : pace.threadCount());
         result.put("deterministic", options.deterministic);
-        result.put("timeout_seconds", options.timeoutSeconds);
+        result.put("timeout_seconds", options.unlimitedTimeoutExplicit
+                ? "unlimited" : options.timeoutSeconds);
+        result.put("timeout_policy", options.unlimitedTimeoutExplicit
+                ? "EXPLICIT_UNLIMITED"
+                : options.timeoutSpecified ? "EXPLICIT_FINITE" : "UNSPECIFIED_LEGACY");
         result.put("memory_limit_bytes", options.memoryLimitMb == 0 ? null : options.memoryLimitMb * 1024L * 1024L);
         result.put("max_enumerated_paths", switch (options.algorithm) {
             case "exh-profile", "ksp-profile", "interval-best", "iscope", "sicsp-pref" ->

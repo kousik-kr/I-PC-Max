@@ -15,8 +15,10 @@ if __package__ in {None, ""}:
 
 from experiments.scripts.common.atomic_io import atomic_write_json, atomic_write_text
 from experiments.scripts.common.config import load_design, repo_path
+from experiments.scripts.common.hashing import sha256_file
 from experiments.scripts.common.provenance import physical_core_count
 from experiments.scripts.common.status import TERMINAL_STATUSES
+from experiments.scripts.common.exact_preference import decode_exact_preference_profile
 
 
 def _jsonl(paths: list[Path]) -> list[dict[str, Any]]:
@@ -67,25 +69,86 @@ def _expected_cells(design: dict[str, Any]) -> collections.Counter[tuple[Any, ..
                     ))
                     if study.get("filter_threads_to_physical_cores") and threads > physical_core_count():
                         continue
-                    pair_count = int(algorithm.get(
-                        "pairs_per_dataset", study.get("pairs_per_dataset", 0)
-                    ))
-                    pair_indices = study.get("pair_indices")
-                    pairs = (
-                        [int(pair) for pair in pair_indices]
-                        if pair_indices is not None
-                        else range(1, pair_count + 1)
-                    )
-                    for pair in pairs:
-                        for center in study.get("centers", [0]):
-                            for trial in range(int(study.get("trials", 1))):
-                                result[(
-                                    study["study_id"], dataset, algorithm["id"],
-                                    algorithm.get("variant", algorithm["id"]),
-                                    json.dumps(axis, sort_keys=True, separators=(",", ":")),
-                                    pair, center, trial,
-                                )] += 1
+                    if study.get("query_manifest_pattern"):
+                        manifest = repo_path(
+                            study["query_manifest_pattern"].format(dataset=dataset)
+                        )
+                        query_specs = [
+                            (
+                                int(row["metadata"]["pair_index"]),
+                                int(row["metadata"]["time_center"]),
+                            )
+                            for row in _jsonl([manifest])
+                        ]
+                    else:
+                        pair_count = int(algorithm.get(
+                            "pairs_per_dataset", study.get("pairs_per_dataset", 0)
+                        ))
+                        pair_indices = study.get("pair_indices")
+                        pairs = (
+                            [int(pair) for pair in pair_indices]
+                            if pair_indices is not None
+                            else range(1, pair_count + 1)
+                        )
+                        query_specs = [
+                            (pair, center)
+                            for pair in pairs
+                            for center in study.get("centers", [0])
+                        ]
+                    for pair, center in query_specs:
+                        for trial in range(int(study.get("trials", 1))):
+                            result[(
+                                study["study_id"], dataset, algorithm["id"],
+                                algorithm.get("variant", algorithm["id"]),
+                                json.dumps(axis, sort_keys=True, separators=(",", ":")),
+                                pair, center, trial,
+                            )] += 1
     return result
+
+
+def _manifest_identity_mismatches(
+    planned: list[dict[str, Any]], design: dict[str, Any]
+) -> int:
+    expected: collections.Counter[tuple[Any, ...]] = collections.Counter()
+    for study in design["study_definitions"]:
+        pattern = study.get("query_manifest_pattern")
+        if not pattern or study.get("mode") != "execute":
+            continue
+        datasets = study.get("datasets", "all")
+        datasets = design["datasets"] if datasets == "all" else datasets
+        for dataset in datasets:
+            if dataset not in design["datasets"]:
+                continue
+            manifest_value = pattern.format(dataset=dataset)
+            manifest = repo_path(manifest_value)
+            rows = _jsonl([manifest])
+            digest = sha256_file(manifest)
+            for algorithm in study.get("algorithms", []):
+                if algorithm.get("datasets") and dataset not in algorithm["datasets"]:
+                    continue
+                for axis in algorithm.get("axes", study.get("axes", [{}])):
+                    axis_json = json.dumps(axis, sort_keys=True, separators=(",", ":"))
+                    for row in rows:
+                        metadata = row["metadata"]
+                        for trial in range(int(study.get("trials", 1))):
+                            expected[(
+                                study["study_id"], dataset, row["query_id"],
+                                int(metadata["pair_index"]), int(metadata["time_center"]),
+                                algorithm["id"], algorithm.get("variant", algorithm["id"]),
+                                axis_json, trial, manifest_value, digest,
+                            )] += 1
+    actual: collections.Counter[tuple[Any, ...]] = collections.Counter()
+    for job in planned:
+        if job.get("query_manifest_sha256") is None:
+            continue
+        actual[(
+            job["study_id"], job["dataset_id"], job["query_id"],
+            int(job["pair_index"]), int(job["time_center"]),
+            job["algorithm_id"], job["variant_id"],
+            json.dumps(job.get("axis", {}), sort_keys=True, separators=(",", ":")),
+            int(job["trial_id"]), job["manifest"], job["query_manifest_sha256"],
+        )] += 1
+    return sum((expected - actual).values()) + sum((actual - expected).values())
 
 
 def validate_planned_cells(
@@ -105,13 +168,15 @@ def validate_planned_cells(
     missing = expected - actual
     extra = actual - expected
     duplicates = sum(count - 1 for count in actual.values() if count > 1)
+    manifest_mismatches = _manifest_identity_mismatches(planned, design)
     return {
         "expected_formula_cells": sum(expected.values()),
         "actual_planned_cells": len(planned),
         "duplicate_planned_cells": duplicates,
         "missing_formula_cells": sum(missing.values()),
         "unexpected_formula_cells": sum(extra.values()),
-        "passed": not duplicates and not missing and not extra,
+        "manifest_identity_mismatches": manifest_mismatches,
+        "passed": not duplicates and not missing and not extra and not manifest_mismatches,
         "_actual": actual,
         "_expected": expected,
         "_missing": missing,
@@ -142,6 +207,11 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         errors.append(f"missing {sum(missing_cells.values())} independently enumerated planned cells")
     if extra_cells:
         errors.append(f"found {sum(extra_cells.values())} unexpected planned cells")
+    if cell_validation["manifest_identity_mismatches"]:
+        errors.append(
+            "compact planned jobs do not match their frozen query IDs/manifest hashes: "
+            f"{cell_validation['manifest_identity_mismatches']} mismatches"
+        )
     by_job: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for record in records:
         by_job[record.get("job_id")].append(record)
@@ -216,6 +286,22 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         checksum = output.get("profile_checksum")
         if record.get("completion_status") in valid_profile_statuses and not checksum:
             errors.append(f"valid-profile job {job_id} has no output checksum")
+        if algorithm in {"pace-x", "pace-b", "iscope", "sicsp-pref"}:
+            objective = output.get("objective_result")
+            if not isinstance(objective, dict) and output.get("exact_profile_schema"):
+                objective = output
+            if record.get("completion_status") in valid_profile_statuses:
+                if not isinstance(objective, dict) or not isinstance(objective.get("profile"), dict):
+                    errors.append(f"preference job {job_id} has no typed exact objective profile")
+                else:
+                    try:
+                        exact_profile = decode_exact_preference_profile(
+                            objective["profile"], objective.get("exact_profile_checksum")
+                        )
+                        if exact_profile.checksum != checksum:
+                            errors.append(f"preference job {job_id} output checksum is not the exact profile checksum")
+                    except ValueError as malformed:
+                        errors.append(f"preference job {job_id} has invalid exact profile: {malformed}")
         if algorithm in {"pace-b", "iscope", "allfp"} and checksum:
             if counters.get("output_validation_contract") != (
                 "CANONICAL_EXACT_PROFILE_AND_VERTEX_SIMPLE-v1"

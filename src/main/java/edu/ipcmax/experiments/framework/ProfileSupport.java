@@ -29,8 +29,16 @@ public final class ProfileSupport {
 
     /** Stable scientific output only: excludes preparation/query times and other diagnostics. */
     public static String canonicalResult(AlgorithmResult result) {
-        if (result.profile() != null) return canonical(result.profile());
         Object objective = result.scalars().get("objective_result");
+        if (objective instanceof Map<?, ?> objectiveMap
+                && objectiveMap.containsKey("profile")) {
+            try {
+                return OBJECTIVE_JSON.writeValueAsString(objectiveMap.get("profile")) + "\n";
+            } catch (java.io.IOException failure) {
+                throw new IllegalArgumentException("exact objective profile is not serializable", failure);
+            }
+        }
+        if (result.profile() != null) return canonical(result.profile());
         if (objective == null) return null;
         try {
             return OBJECTIVE_JSON.writeValueAsString(objective) + "\n";
@@ -148,6 +156,14 @@ public final class ProfileSupport {
         output.put("selected_travel_time", result.scalars().get("selected_travel_time"));
         output.put("profile_checksum", checksum(profile));
         output.put("profile_file", null);
+        if (result.scalars().get("objective_result") instanceof Map<?, ?> objective) {
+            Map<String, Object> legacy = new LinkedHashMap<>(output);
+            output.put("legacy_projection", legacy);
+            objective.forEach((key, value) -> output.put(String.valueOf(key), value));
+            output.put("objective_result", objective);
+            Object exactChecksum = objective.get("exact_profile_checksum");
+            if (exactChecksum != null) output.put("profile_checksum", exactChecksum);
+        }
         return output;
     }
 

@@ -1,0 +1,102 @@
+{
+  "schema_version": 3,
+  "experiment_id": "icde2027_compact_v1",
+  "profile": "icde2027_compact_v1",
+  "datasets": ["NY", "FLA", "CAL", "NY-EXACT"],
+  "dataset_configs": {
+    "NY": "experiments/configs/datasets/ny.yaml",
+    "FLA": "experiments/configs/datasets/fla.yaml",
+    "CAL": "experiments/configs/datasets/cal.yaml",
+    "NY-EXACT": "experiments/configs/datasets/ny_exact.yaml"
+  },
+  "studies": [
+    "experiments/configs/icde2027_compact_v1/c01_historical.yaml",
+    "experiments/configs/icde2027_compact_v1/c02_controlled_reference.yaml"
+  ],
+  "seeds": {"graph_main": 42, "schedule": 20260725},
+  "workload": {
+    "default_window_minutes": 120,
+    "default_budget_overhead": 0.30,
+    "budget_definition": "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME",
+    "historical_query_policy": "preserve_source_records_byte_for_byte"
+  },
+  "protocol": {
+    "warmup_passes": 1,
+    "measured_trials": 2,
+    "process_isolation": false,
+    "shared_preprocessing": true,
+    "algorithm_comparison_threads": 1,
+    "retry_infrastructure_failures": 1,
+    "retry_algorithm_failures": 0,
+    "metric_definition_version": "icde2027-exact-objective-v1",
+    "preprocessing_accounting": "SEPARATE_FROM_QUERY",
+    "completion_policy": "STATUS_AND_COMPLETED_FLAG_MUST_AGREE",
+    "memory_measurement": "PROCESS_PEAK_RSS_AND_JAVA_HEAP_REPORTED_SEPARATELY"
+  },
+  "pace_b_defaults": {
+    "theta": 2,
+    "pivot_limit_l": 4,
+    "connector_limit_kc": 4,
+    "frontier_limit_kf": 2,
+    "threads": 1,
+    "pilot_resolved_fields": ["pivot_limit_l", "connector_limit_kc", "frontier_limit_kf"],
+    "connector_expansion_cap_mc": 250000,
+    "breakpoint_cap_mb": 100000,
+    "query_work_cap_mq": 5000000,
+    "query_work_accounting_contract": "PACE-MQ-TOTAL-WORK-v3",
+    "semantic_version": "pace-b-fb-witness-grid-v1"
+  },
+  "resolved_pace_b_required": false,
+  "resources": {
+    "timeout_seconds": "unlimited",
+    "algorithm_timeout_seconds": {
+      "pace-b": "unlimited",
+      "iscope": 5,
+      "thop-partitioned": "unlimited",
+      "pace-x": "unlimited",
+      "sicsp-pref": "unlimited"
+    },
+    "timeout_result_policy": {
+      "pace-b": "NO_WALL_TIMEOUT_REPORT_INTRINSIC_WORK_CAPS",
+      "iscope": "ANYTIME_PROFILE_WITHIN_CAP_NOT_CERTIFIED",
+      "thop-partitioned": "NO_WALL_TIMEOUT_REPORT_RESOURCE_FAILURES",
+      "pace-x": "GLOBAL_CERTIFICATE_AND_ORACLE_REQUIRED",
+      "sicsp-pref": "CONTROLLED_ONLY_LARGE_NETWORK_SCOPE_PILOT_DEPENDENT"
+    },
+    "preprocessing_timeout_seconds": 1800,
+    "memory_limit_mb": 256000,
+    "max_concurrent": 1,
+    "max_threads_per_query": 1,
+    "parallel_thread_candidates": [1],
+    "require_server_profile_for_full_run": true
+  },
+  "query_generation": {
+    "java_main_class": "edu.ipcmax.experiments.querygen.QuerySetGenerator",
+    "paper_java_main_class": "edu.ipcmax.experiments.querygen.PaperQuerySetGenerator",
+    "configuration": "experiments/configs/query_generation.yaml",
+    "manifest_pattern": "experiments/manifests/queries/{dataset}/paper_q1.jsonl",
+    "required_contract": "paper-q1-v1"
+  },
+  "paths": {
+    "data_root": "data/input",
+    "results_root": "experiments/results/icde2027_compact_v1",
+    "matrix_root": "experiments/manifests/icde2027_compact_v1/matrices",
+    "query_root": "experiments/manifests/icde2027_compact_v1/queries",
+    "jar": "target/pace-bench-icde2027-compact-v1.jar"
+  },
+  "historical_result_reuse": false,
+  "freeze_required_before_execution": true,
+  "reference_result_policy": "GLOBAL_CERTIFIED_ONLY_AND_INDEPENDENTLY_VALIDATED",
+  "exact_algorithm_guard": {
+    "allowed_studies": ["C02"],
+    "datasets": ["NY-EXACT"],
+    "splits": ["evaluation"],
+    "max_budget_overhead_by_study": {"C02": 0.30}
+  },
+  "planning": {
+    "estimated_raw_bytes_per_job": 131072,
+    "estimated_fixed_release_bytes": 104857600,
+    "max_disk_bytes": 107374182400,
+    "runtime_upper_bound_definition": "Unbounded for PACE-B and THop by policy; iSCOPE query search cap is five seconds. Preprocessing retains its separate finite timeout."
+  }
+}

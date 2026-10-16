@@ -10,6 +10,8 @@ import edu.ipcmax.core.pcmax.PaceExactnessScope;
 import edu.ipcmax.core.pcmax.PaceExecutionMetrics;
 import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.core.validate.LooplessChecker;
+import edu.ipcmax.core.validate.Path;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceObjective;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
 import edu.ipcmax.experiments.framework.ExactnessScope;
@@ -47,6 +49,7 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
     public AlgorithmResult run(
             TDGraph graph, QuerySpec query, AlgorithmConfig config,
             ExperimentInstrumentation instrumentation) {
+        long algorithmStarted = System.nanoTime();
         prepare(graph, config);
         PaceExecutionMetrics metrics =
                 PaceExecutionMetrics.live(instrumentation::accept);
@@ -93,7 +96,28 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
         instrumentation.addCounter("memo_waits", stats.cacheWaits());
         instrumentation.addCounter("requested_workers", stats.requestedWorkers());
         instrumentation.addCounter("observed_workers", stats.observedWorkers());
-        boolean feasible = profile.segments().stream().anyMatch(segment -> segment.found());
+        java.util.List<Path> emittedRoutes = generation.frontier().candidates().stream()
+                .map(candidate -> new Path(candidate.stablePathId()))
+                .distinct().toList();
+        PaceExactnessScope searchExactness = generation.exactnessScope();
+        ExactnessScope exactness = id.equals("pace-x")
+                ? ExactnessScope.NOT_CERTIFIED
+                : searchExactness == PaceExactnessScope.GLOBAL_CERTIFIED
+                        ? ExactnessScope.RETAINED_FRONTIER
+                        : searchExactness == PaceExactnessScope.RETAINED_FRONTIER
+                                ? ExactnessScope.RETAINED_FRONTIER
+                                : ExactnessScope.NOT_CERTIFIED;
+        long exactStarted = System.nanoTime();
+        ExactPreferenceObjective.Evaluation exact = ExactPreferenceObjective.evaluate(
+                graph, query, emittedRoutes, System.nanoTime() - algorithmStarted,
+                generation.completion().name(), exactness.name(),
+                id.equals("pace-b") ? "PACE_B_RETAINED_FRONTIER" : "PACE_X_EMITTED_FRONTIER");
+        long exactNanos = System.nanoTime() - exactStarted;
+        instrumentation.setTiming("exact_objective_evaluation", exactNanos);
+        java.util.Map<String, Object> exactObjectiveResult = new java.util.LinkedHashMap<>(
+                exact.objectiveResult());
+        exactObjectiveResult.put("end_to_end_query_nanos", System.nanoTime() - algorithmStarted);
+        boolean feasible = exact.profile().hasFeasibleCell();
         ExperimentStatus status = switch (generation.completion()) {
             case COMPLETE -> feasible
                     ? ExperimentStatus.COMPLETED
@@ -102,15 +126,17 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
             case UNRESOLVED_NO_GENERATED_CANDIDATE ->
                     ExperimentStatus
                             .UNRESOLVED_NO_GENERATED_CANDIDATE;
-            case NO_FEASIBLE_PATH -> ExperimentStatus.NO_FEASIBLE_PATH;
+            case NO_FEASIBLE_PATH -> ExperimentStatus.UNRESOLVED_NO_GENERATED_CANDIDATE;
             case RESOURCE_TRUNCATED, ABORTED ->
                     ExperimentStatus.LIMIT_EXCEEDED;
         };
-        ExactnessScope exactness = switch (generation.exactnessScope()) {
-            case GLOBAL_CERTIFIED -> ExactnessScope.GLOBAL_CERTIFIED;
-            case RETAINED_FRONTIER -> ExactnessScope.RETAINED_FRONTIER;
-            case NOT_CERTIFIED -> ExactnessScope.NOT_CERTIFIED;
-        };
+        // Exact final replay validates only emitted routes. Existing search-time
+        // corridor, lower-bound and temporal pruning still uses the legacy model.
+        if (generation.completion() == PaceCompletion.COMPLETE && !feasible) {
+            status = ExperimentStatus.UNRESOLVED_NO_GENERATED_CANDIDATE;
+        } else if (id.equals("pace-x") && status == ExperimentStatus.COMPLETED) {
+            status = ExperimentStatus.COMPLETED;
+        }
         Map<String, Object> scalars = new java.util.LinkedHashMap<>();
         scalars.put("generation_completion", generation.completion().name());
         scalars.put("cap_triggered", generation.capStatus().triggered().stream()
@@ -131,6 +157,19 @@ public final class PaceExperimentAlgorithm implements ExperimentAlgorithm {
         scalars.put(
                 "output_validation_contract",
                 "CANONICAL_EXACT_PROFILE_AND_VERTEX_SIMPLE-v1");
+        scalars.put("legacy_projection_schema", "LEGACY_CANONICAL_PROFILE_12DP-v1");
+        scalars.put("exact_profile_schema", "exact-preference-envelope-v1");
+        scalars.put("exact_profile_checksum", exact.objectiveResult().get("exact_profile_checksum"));
+        scalars.put("exact_objective_evaluation_nanos", exactNanos);
+        scalars.put("retained_route_provenance", generation.frontier().candidates().stream()
+                .map(candidate -> Map.of(
+                        "path_arc_ids", candidate.stablePathId(),
+                        "recursion_depth", candidate.recursionDepth(),
+                        "pivot_id", candidate.pivotId(),
+                        "compressed", candidate.compressed(),
+                        "used_pivot_arc_ids", candidate.usedPivotArcIds()))
+                .toList());
+        scalars.put("objective_result", exactObjectiveResult);
         addRetainedPathStatistics(
                 scalars, generation.frontier());
         return new AlgorithmResult(

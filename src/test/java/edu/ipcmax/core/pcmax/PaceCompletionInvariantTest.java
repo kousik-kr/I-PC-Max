@@ -61,7 +61,7 @@ class PaceCompletionInvariantTest {
     }
 
     @Test
-    void sufficientDepthMatchesIndependentOracleAndCertifiesTheFeasibleChain() {
+    void sufficientDepthMatchesIndependentOracleButAdapterRemainsUncertified() {
         TDGraph graph = scoreChain();
         QuerySpec query = new QuerySpec(1, 3, 0, 5, 5, 1);
         var expected = TinyContinuousEnvelopeOracle.solve(graph, query);
@@ -77,8 +77,8 @@ class PaceCompletionInvariantTest {
         var adapted = new PaceExperimentAlgorithm("pace-x").run(
                 graph, query, config(2), new ExperimentInstrumentation());
         assertEquals(ExperimentStatus.COMPLETED, adapted.status());
-        assertEquals(ExactnessScope.GLOBAL_CERTIFIED, adapted.exactnessScope());
-        assertTrue(adapted.completeProfile());
+        assertEquals(ExactnessScope.NOT_CERTIFIED, adapted.exactnessScope());
+        assertFalse(adapted.completeProfile());
     }
 
     @Test
@@ -91,8 +91,8 @@ class PaceCompletionInvariantTest {
         assertEquals(PaceExactnessScope.GLOBAL_CERTIFIED, exact.lastGenerationResult().exactnessScope());
         var adapted = new PaceExperimentAlgorithm("pace-x").run(
                 disconnected, query, config(0), new ExperimentInstrumentation());
-        assertEquals(ExperimentStatus.NO_FEASIBLE_PATH, adapted.status());
-        assertTrue(adapted.completeProfile());
+        assertEquals(ExperimentStatus.UNRESOLVED_NO_GENERATED_CANDIDATE, adapted.status());
+        assertFalse(adapted.completeProfile());
         PiecewiseConstFn positive = new PiecewiseConstFn(List.of(
                 new PiecewiseConstFn.Interval(0, 1440, 7)));
         TDGraph alternatives = new TinyGraphBuilder().node(1).node(2).node(3)
@@ -100,7 +100,7 @@ class PaceCompletionInvariantTest {
         var partial = new PaceExperimentAlgorithm("pace-x").run(
                 alternatives, query, config(0), new ExperimentInstrumentation());
         assertEquals(ExperimentStatus.COMPLETED, partial.status());
-        assertEquals(ExactnessScope.RETAINED_FRONTIER, partial.exactnessScope());
+        assertEquals(ExactnessScope.NOT_CERTIFIED, partial.exactnessScope());
         assertEquals(List.of(0), partial.profile().segmentAt(0).path().arcIds());
         assertFalse(partial.completeProfile());
     }

@@ -64,6 +64,32 @@ def expand_study(study: dict[str, Any], design: dict[str, Any]) -> list[dict[str
                 if line.strip()
             ]
     for dataset in _datasets(study, design):
+        selected_manifest = None
+        selected_manifest_sha256 = None
+        manifest_specs = None
+        if study.get("query_manifest_pattern"):
+            selected_manifest = study["query_manifest_pattern"].format(dataset=dataset)
+            manifest_path = repo_path(selected_manifest)
+            if not manifest_path.is_file():
+                raise FileNotFoundError(f"query manifest is missing: {manifest_path}")
+            selected_manifest_sha256 = sha256_file(manifest_path)
+            manifest_rows = [
+                json.loads(line)
+                for line in manifest_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if not manifest_rows or any(row.get("dataset_id") != dataset for row in manifest_rows):
+                raise ValueError(f"query manifest is empty or mixes datasets: {manifest_path}")
+            if len({row.get("query_id") for row in manifest_rows}) != len(manifest_rows):
+                raise ValueError(f"query manifest has duplicate query IDs: {manifest_path}")
+            manifest_specs = [
+                {
+                    "query_id": row["query_id"],
+                    "pair_index": int(row["metadata"]["pair_index"]),
+                    "time_center": int(row["metadata"]["time_center"]),
+                }
+                for row in manifest_rows
+            ]
         for algorithm in study.get("algorithms", []):
             allowed = algorithm.get("datasets")
             if allowed and dataset not in allowed:
@@ -120,34 +146,45 @@ def expand_study(study: dict[str, Any], design: dict[str, Any]) -> list[dict[str
                     if pair_indices is not None
                     else range(1, pair_count + 1)
                 )
-                for pair in pairs:
-                    for center in study.get("centers", [0]):
-                        query_id = _query_id(dataset, split, pair, int(center), axis)
-                        if dataset == "demo" and pair <= len(fixture_ids):
-                            query_id = fixture_ids[pair - 1]
-                        for trial in range(int(study.get("trials", 1))):
-                            semantic = {
-                                "study_id": study["study_id"],
-                                "dataset_id": dataset,
-                                "split": split,
-                                "pair_index": pair,
-                                "time_center": center,
-                                "query_id": query_id,
-                                "algorithm_id": algorithm["id"],
-                                "variant_id": algorithm.get("variant", algorithm["id"]),
-                                "algorithm_parameters": algorithm.get("parameters", {}),
-                                "axis": axis,
-                                "trial_id": trial,
-                            }
-                            input_hash = sha256_json({"design": design["config_hash"], "job": semantic})
-                            jobs.append({
-                                "schema_version": 1,
-                                **semantic,
-                                "input_hash": input_hash,
-                                "job_id": input_hash[:24],
-                                "manifest": study.get("manifest") or design.get("query_generation", {}).get("manifest_pattern", "").format(dataset=dataset),
-                                "reference_algorithm": study.get("reference_algorithm"),
-                            })
+                query_specs = manifest_specs or [
+                    {
+                        "query_id": None,
+                        "pair_index": pair,
+                        "time_center": center,
+                    }
+                    for pair in pairs
+                    for center in study.get("centers", [0])
+                ]
+                for query_spec in query_specs:
+                    pair = query_spec["pair_index"]
+                    center = query_spec["time_center"]
+                    query_id = query_spec["query_id"] or _query_id(dataset, split, pair, int(center), axis)
+                    if dataset == "demo" and pair <= len(fixture_ids):
+                        query_id = fixture_ids[pair - 1]
+                    for trial in range(int(study.get("trials", 1))):
+                        semantic = {
+                            "study_id": study["study_id"],
+                            "dataset_id": dataset,
+                            "split": split,
+                            "pair_index": pair,
+                            "time_center": center,
+                            "query_id": query_id,
+                            "query_manifest_sha256": selected_manifest_sha256,
+                            "algorithm_id": algorithm["id"],
+                            "variant_id": algorithm.get("variant", algorithm["id"]),
+                            "algorithm_parameters": algorithm.get("parameters", {}),
+                            "axis": axis,
+                            "trial_id": trial,
+                        }
+                        input_hash = sha256_json({"design": design["config_hash"], "job": semantic})
+                        jobs.append({
+                            "schema_version": 1,
+                            **semantic,
+                            "input_hash": input_hash,
+                            "job_id": input_hash[:24],
+                            "manifest": selected_manifest or study.get("manifest") or design.get("query_generation", {}).get("manifest_pattern", "").format(dataset=dataset),
+                            "reference_algorithm": study.get("reference_algorithm"),
+                        })
     return jobs
 
 
@@ -157,7 +194,7 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
     hashes: dict[str, str] = {}
     total = 0
     pace_b_jobs = 0
-    serial_timeout_upper_bound = 0
+    serial_timeout_upper_bound: int | None = 0
     all_job_ids: set[str] = set()
     duplicate_job_ids: list[str] = []
     ledger: list[dict[str, Any]] = []
@@ -201,10 +238,14 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
         write_jsonl(path, jobs)
         counts[study["study_id"]] = len(jobs)
         pace_b_jobs += sum(job["algorithm_id"] == "pace-b" for job in jobs)
-        serial_timeout_upper_bound += sum(
+        job_timeouts = [
             algorithm_timeout_seconds(design, str(job["algorithm_id"]))
             for job in jobs
-        )
+        ]
+        if any(value is None for value in job_timeouts):
+            serial_timeout_upper_bound = None
+        elif serial_timeout_upper_bound is not None:
+            serial_timeout_upper_bound += sum(value for value in job_timeouts if value is not None)
         hashes[study["study_id"]] = sha256_json(jobs)
         total += len(jobs)
     if duplicate_job_ids:
@@ -262,7 +303,8 @@ def build_all(design: dict[str, Any], output_directory: Path) -> dict[str, Any]:
         "serial_timeout_upper_bound_seconds":
             serial_timeout_upper_bound,
         "configured_parallel_timeout_upper_bound_seconds":
-            math.ceil(serial_timeout_upper_bound / max_concurrent),
+            None if serial_timeout_upper_bound is None
+            else math.ceil(serial_timeout_upper_bound / max_concurrent),
         "pace_b_candidate_work_upper_bound":
             pace_b_jobs * query_work_cap,
         "pace_b_jobs": pace_b_jobs,

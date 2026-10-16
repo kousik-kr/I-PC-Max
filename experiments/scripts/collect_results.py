@@ -16,6 +16,7 @@ if __package__ in {None, ""}:
 from experiments.scripts.common.atomic_io import atomic_write_json, write_jsonl
 from experiments.scripts.common.config import load_design, repo_path
 from experiments.scripts.common.hashing import sha256_files
+from experiments.scripts.common.exact_preference import decode_exact_preference_profile
 
 
 def read_records(directory: Path) -> list[dict[str, Any]]:
@@ -82,6 +83,18 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
     counters = java.get("counters", {})
     memory = java.get("memory_bytes", {})
     output = java.get("output", {})
+    objective = output.get("objective_result")
+    if not isinstance(objective, dict) and output.get("exact_profile_schema"):
+        objective = output
+    exact_profile = None
+    exact_error = None
+    if isinstance(objective, dict) and objective.get("profile") is not None:
+        try:
+            exact_profile = decode_exact_preference_profile(
+                objective["profile"], objective.get("exact_profile_checksum")
+            )
+        except ValueError as error:
+            exact_error = str(error)
     peak_rss = memory.get("peak_rss")
     start_rss = memory.get("start_rss")
     algorithm_id = configuration.get("algorithm")
@@ -93,7 +106,7 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
         "rpq": "RPQ (historical)",
         "pace-x": "PACE-X",
     }.get(algorithm_id, algorithm_id)
-    return {
+    row = {
         "run_id": record["run_id"],
         "study_id": record["study_id"],
         "job_id": record["job_id"],
@@ -200,6 +213,30 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
         ),
         "input_hash": record["input_hash"],
     }
+    if exact_profile is not None:
+        metrics = exact_profile.metrics
+        row.update({
+            "exact_profile_schema": "exact-preference-envelope-v1",
+            "exact_profile_checksum": exact_profile.checksum,
+            "exact_profile_cells": len(exact_profile.cells),
+            "exact_feasible_coverage": str(metrics.coverage),
+            "exact_integrated_preference": str(metrics.integrated_preference),
+            "exact_average_selected_preference": (
+                None if metrics.average_selected_preference is None
+                else str(metrics.average_selected_preference)
+            ),
+            # Numeric columns are presentation-only conversions from exact Fractions.
+            "feasible_coverage": float(metrics.coverage),
+            "average_selected_score": (
+                None if metrics.average_selected_preference is None
+                else float(metrics.average_selected_preference)
+            ),
+            "profile_cells_total": len(exact_profile.cells),
+            "output_checksum": exact_profile.checksum,
+        })
+    elif exact_error is not None:
+        row["exact_profile_validation_error"] = exact_error
+    return row
 
 
 def collect(run_root: Path) -> dict[str, Any]:

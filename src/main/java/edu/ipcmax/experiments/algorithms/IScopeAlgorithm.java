@@ -12,7 +12,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
 import edu.ipcmax.core.function.Domain;
-import edu.ipcmax.core.graph.LowerBoundGraph;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.pcmax.EnvelopeExtractor;
 import edu.ipcmax.core.pcmax.EnvelopeProfile;
@@ -24,6 +23,8 @@ import edu.ipcmax.core.profile.CandidateSet;
 import edu.ipcmax.core.profile.PathPointer;
 import edu.ipcmax.core.validate.LooplessChecker;
 import edu.ipcmax.core.validate.Path;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceObjective;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceReplay;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
 import edu.ipcmax.experiments.framework.ExactnessScope;
@@ -47,7 +48,6 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
 
     private final LongSupplier clock;
     private volatile TDGraph preparedGraph;
-    private volatile LowerBoundGraph preparedLower;
 
     public IScopeAlgorithm() {
         this(System::nanoTime);
@@ -70,10 +70,9 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
     public synchronized void prepare(
             TDGraph graph,
             AlgorithmConfig config) {
-        if (preparedGraph == graph && preparedLower != null) {
+        if (preparedGraph == graph) {
             return;
         }
-        preparedLower = new LowerBoundGraph(graph);
         preparedGraph = graph;
     }
 
@@ -83,6 +82,7 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
             QuerySpec query,
             AlgorithmConfig config,
             ExperimentInstrumentation instrumentation) {
+        long algorithmStarted = clock.getAsLong();
         long limit = config.queryTimeLimitOr(DEFAULT_LIMIT_NANOS);
         long reserve = Math.min(MAX_FINALIZATION_RESERVE_NANOS, limit / 10);
         QueryDeadline deadline = QueryDeadline.start(clock, limit, reserve);
@@ -93,18 +93,6 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
         boolean searchExhausted = false;
 
         try {
-            long lowerStarted = clock.getAsLong();
-            LowerBoundGraph lower = preparedGraph == graph
-                    && preparedLower != null
-                            ? preparedLower
-                            : new LowerBoundGraph(
-                                    graph, deadline::finalizationDue);
-            LowerBoundGraph.Distances toTarget = lower.distancesToTarget(
-                    query.destination(), deadline::finalizationDue);
-            instrumentation.setTiming(
-                    "lower_bound_preprocessing",
-                    nonnegative(clock.getAsLong() - lowerStarted));
-
             ExactPathProfileBuilder.HorizonReplayContext replay =
                     ExactPathProfileBuilder.budgetContext(
                             graph,
@@ -112,25 +100,11 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
                             query.maxTravelTime(),
                             deadline::finalizationDue);
 
-            if (toTarget.reached(query.source())
-                    && !deadline.finalizationDue()) {
-                List<Integer> witness = toTarget.pathFrom(query.source()).arcIds();
-                stats.witnessAttempted++;
-                profilePath(
-                        graph, query, replay, witness, deadline, committed,
-                        acceptedPathIds, stats, instrumentation);
-            }
-
             if (!deadline.finalizationDue()) {
                 long enumerationStarted = clock.getAsLong();
                 SimplePathSearch.StreamingSearchResult search =
-                        SimplePathSearch.exhaustiveStreaming(
-                                graph,
-                                lower,
-                                toTarget,
-                                query.source(),
-                                query.destination(),
-                                query.maxTravelTime(),
+                        SimplePathSearch.exhaustiveStreamingUnpruned(
+                                graph, query.source(), query.destination(),
                                 config.maxEnumeratedPaths(),
                                 deadline::finalizationDue,
                                 path -> profilePath(
@@ -154,6 +128,27 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
         }
 
         EnvelopeProfile profile = committed.profile;
+        List<Path> emittedRoutes = acceptedPathIds.stream().map(Path::new).toList();
+        long exactStarted = clock.getAsLong();
+        ExactPreferenceObjective.Evaluation exact = ExactPreferenceObjective.evaluate(
+                graph, query, emittedRoutes, nonnegative(clock.getAsLong() - algorithmStarted),
+                stats.timeCapReached ? "TIME_CAPPED_NOT_CERTIFIED"
+                        : stats.pathCapReached ? "PATH_CAPPED_NOT_CERTIFIED"
+                        : searchExhausted ? "EXHAUSTED" : "INCOMPLETE",
+                stats.timeCapReached || stats.pathCapReached || !searchExhausted
+                        ? "NOT_CERTIFIED" : "GLOBAL_CERTIFIED",
+                "ISCOPE_EXACTLY_FEASIBLE_EMITTED_SIMPLE_PATHS");
+        long exactNanos = nonnegative(clock.getAsLong() - exactStarted);
+        instrumentation.setTiming("exact_objective_evaluation", exactNanos);
+        if (deadline.expired()) stats.timeCapReached = true;
+        Map<String, Object> exactObjectiveResult = new LinkedHashMap<>(exact.objectiveResult());
+        exactObjectiveResult.put("end_to_end_query_nanos",
+                nonnegative(clock.getAsLong() - algorithmStarted));
+        if (stats.timeCapReached) {
+            exactObjectiveResult.put("completion_status", "TIME_CAPPED_NOT_CERTIFIED");
+            exactObjectiveResult.put("exactness_scope", ExactnessScope.NOT_CERTIFIED.name());
+        }
+        boolean exactFeasible = exact.profile().hasFeasibleCell();
         stats.outputProfileCells = profile.segments().size();
         stats.profileBreakpoints = committed.accepted.candidates().stream()
                 .mapToLong(candidate -> candidate.arrivalProfile().breakpoints().size())
@@ -167,7 +162,7 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
         stats.outputLoopless = profile.segments().stream()
                 .filter(segment -> segment.found())
                 .allMatch(segment -> LooplessChecker.isLoopless(graph, segment.path()));
-        stats.outputFeasible = profile.segments().stream().anyMatch(segment -> segment.found());
+        stats.outputFeasible = exactFeasible;
 
         long elapsed = deadline.elapsedNanos();
         instrumentation.setTiming("algorithm_total", elapsed);
@@ -187,6 +182,11 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
             exactness = ExactnessScope.NOT_CERTIFIED;
             completion = "PATH_CAPPED_NOT_CERTIFIED";
             capTriggered.add("PATH_LIMIT");
+        } else if (!searchExhausted) {
+            status = ExperimentStatus.PATH_CAPPED_NOT_CERTIFIED;
+            exactness = ExactnessScope.NOT_CERTIFIED;
+            completion = "INCOMPLETE";
+            capTriggered.add("SEARCH_INCOMPLETE");
         } else if (!stats.outputFeasible) {
             status = ExperimentStatus.NO_FEASIBLE_PATH;
             exactness = ExactnessScope.GLOBAL_CERTIFIED;
@@ -213,7 +213,8 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
         scalars.put("deadline_enforcement",
                 "COOPERATIVE_MONOTONIC_WITH_FINALIZATION_RESERVE");
         scalars.put("objective", "PREFERENCE_MAX_PROFILE");
-        scalars.put("numerical_contract", "LEGACY_CANONICAL_PROFILE_12DP-v1");
+        scalars.put("numerical_contract", ExactPreferenceObjective.CONTRACT);
+        scalars.put("legacy_projection_schema", "LEGACY_CANONICAL_PROFILE_12DP-v1");
         scalars.put("implementation_variant",
                 "CONTINUOUS_PROFILE_EXHAUSTIVE_PATH_ADAPTATION-v1");
         scalars.put("paper_fidelity", "DEVIATION");
@@ -225,11 +226,15 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
         scalars.put("budget_contract", "ABSOLUTE_TRAVEL_TIME");
         scalars.put("departure_time_contract", "CONTINUOUS_CANONICAL_DOMAIN");
         scalars.put(
-                "query_independent_lower_bound_weights_prepared",
-                preparedGraph == graph && preparedLower != null);
+                "search_pruning_policy", "NO_LOWER_BOUND_OR_BUDGET_PRUNING_EXACT_SIMPLE_PATH_ENUMERATION-v1");
+        scalars.put("route_registry_provenance", "DIRECTED_VERTEX_SIMPLE_DFS_EXACT_BUDGET_FEASIBLE_PATHS");
         scalars.put(
                 "output_validation_contract",
                 "LEGACY_PROFILE_AND_VERTEX_SIMPLE-v2");
+        scalars.put("exact_profile_schema", "exact-preference-envelope-v1");
+        scalars.put("exact_profile_checksum", exact.objectiveResult().get("exact_profile_checksum"));
+        scalars.put("exact_objective_evaluation_nanos", exactNanos);
+        scalars.put("objective_result", exactObjectiveResult);
         return new AlgorithmResult(
                 status, profile, exactness, scalars, null, null);
     }
@@ -265,6 +270,15 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
             return true;
         }
 
+        var exactRoute = ExactPreferenceReplay.replay(
+                graph, query.source(), query.destination(), new Path(stableArcs),
+                query.departureDomain(), query.maxTravelTime());
+        if (exactRoute.isEmpty() || exactRoute.orElseThrow().feasibleDomain().isEmpty()) {
+            stats.rejectedPaths++;
+            acceptedPathIds.remove(stableArcs);
+            return !deadline.finalizationDue();
+        }
+
         long profilingStarted = clock.getAsLong();
         try {
             var candidate = replay.replay(
@@ -273,8 +287,8 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
                     "profiling",
                     nonnegative(clock.getAsLong() - profilingStarted));
             if (candidate.isEmpty()) {
-                stats.rejectedPaths++;
-                acceptedPathIds.remove(stableArcs);
+                // Retain the exact-feasible route for the authoritative profile;
+                // the legacy projection may have lost it through rounded support.
                 return !deadline.finalizationDue();
             }
             CandidateProfile completed = candidate.get();
@@ -291,7 +305,6 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
                         nonnegative(clock.getAsLong() - envelopeStarted));
                 stats.envelopeUpdatesDiscarded++;
                 stats.timeCapReached = true;
-                acceptedPathIds.remove(stableArcs);
                 return false;
             }
             long envelopeNanos = nonnegative(
@@ -309,7 +322,6 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
                     nonnegative(clock.getAsLong() - profilingStarted));
             stats.partialProfilesDiscarded++;
             stats.timeCapReached = true;
-            acceptedPathIds.remove(stableArcs);
             return false;
         }
     }

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "study_id": "C01",
+  "stage": "compact_historical",
+  "mode": "execute",
+  "datasets": ["NY", "FLA", "CAL"],
+  "split": "evaluation",
+  "query_manifest_pattern": "experiments/manifests/icde2027_compact_v1/queries/{dataset}/compact_50.jsonl",
+  "trials": 2,
+  "algorithms": [
+    {
+      "id": "pace-b",
+      "variant": "bounded-candidates-exact-retained-objective",
+      "parameters": {"theta": 2, "threads": 1, "resolved_pace_b": false}
+    },
+    {
+      "id": "iscope",
+      "variant": "basic-iscope-five-second-cap",
+      "parameters": {"threads": 1, "max_enumerated_paths": 100000}
+    },
+    {
+      "id": "thop-partitioned",
+      "variant": "fastest-profile-budget-and-score-ignored",
+      "parameters": {
+        "threads": 1,
+        "thop_index_dir": "data/indices/icde2027_compact_v1/{dataset}",
+        "thop_partitions": "data/indices/icde2027_compact_v1/{dataset}/partitions.json",
+        "thop_domain_start": 0,
+        "thop_domain_end": 10080,
+        "thop_lifecycle": "load"
+      }
+    }
+  ],
+  "purpose": "Same 50 frozen historical logical queries and two measured trials for PACE-B, basic iSCOPE, and preference-free THop. THop ignores preference scores and travel-time budgets."
+}

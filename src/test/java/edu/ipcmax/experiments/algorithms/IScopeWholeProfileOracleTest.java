@@ -136,20 +136,22 @@ class IScopeWholeProfileOracleTest {
     }
 
     @Test
-    void preparedWeightsAreSeparateAndRepeatedQueriesPreserveTheWholeProfile() {
+    void preparationIsIdempotentAndUnprunedQueriesPreserveTheWholeProfile() {
         TDGraph graph = switchingGraph();
         QuerySpec query = new QuerySpec(1, 4, 0, 10, 20, 1);
         IScopeAlgorithm algorithm = new IScopeAlgorithm();
         AlgorithmConfig config = config(10_000, 10_000_000_000L);
         var unprepared = algorithm.run(graph, query, config, new ExperimentInstrumentation());
-        assertFalse((Boolean) unprepared.scalars().get("query_independent_lower_bound_weights_prepared"));
+        assertEquals("NO_LOWER_BOUND_OR_BUDGET_PRUNING_EXACT_SIMPLE_PATH_ENUMERATION-v1",
+                unprepared.scalars().get("search_pruning_policy"));
         algorithm.prepare(graph, config);
         algorithm.prepare(graph, config);
         for (int repeat = 0; repeat < 2; repeat++) {
             var instrumentation = new ExperimentInstrumentation();
             var prepared = algorithm.run(graph, query, config, instrumentation);
-            assertTrue((Boolean) prepared.scalars().get("query_independent_lower_bound_weights_prepared"));
-            assertTrue(instrumentation.timings().containsKey("lower_bound_preprocessing"));
+            assertEquals("NO_LOWER_BOUND_OR_BUDGET_PRUNING_EXACT_SIMPLE_PATH_ENUMERATION-v1",
+                    prepared.scalars().get("search_pruning_policy"));
+            assertTrue(instrumentation.timings().containsKey("exact_objective_evaluation"));
             assertWholeProfile(graph, query, prepared.profile(), TinyContinuousEnvelopeOracle.solveCells(graph, query));
         }
     }
@@ -176,9 +178,8 @@ class IScopeWholeProfileOracleTest {
         assertTrue(TinyContinuousEnvelopeOracle.solveCells(graph, query).stream()
                 .anyMatch(cell -> cell.start().equals(trueRoot)));
         assertNotEquals(trueRoot, fraction(departure));
-        assertEquals("LEGACY_CANONICAL_PROFILE_12DP-v1", result.scalars().get("numerical_contract"));
-        // This is an unresolved shared-model limitation, not a successful
-        // numerical repair or evidence of exactness over arbitrary real times.
+        assertEquals("EXACT_RATIONAL_PREFERENCE_PROFILE-v1", result.scalars().get("numerical_contract"));
+        assertEquals("LEGACY_CANONICAL_PROFILE_12DP-v1", result.scalars().get("legacy_projection_schema"));
     }
 
     private static void validateCapped(TDGraph graph, QuerySpec query, AlgorithmResult result) {

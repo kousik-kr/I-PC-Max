@@ -1,0 +1,29 @@
+{
+  "controlled_query_count": 20,
+  "controlled_query_sha256": "8a0d553ed7d7b0682c80c7706ae3566a4c157b8809dc2764d272d487dbe4ad6d",
+  "dataset_graph_checksum": "6f878449ad1aeb924c2ba7388698ac1f1a407b99bc362dff7b819eb9bfceb683",
+  "dataset_id": "NY-EXACT",
+  "distinct_NY_CTRL_graph_verified": false,
+  "family": "icde2027_compact_v1",
+  "query_field_policy": "all query rows copied unchanged from NY-EXACT source manifest",
+  "rho": 0.3,
+  "schema_version": 1,
+  "selected_original_pair_ids": [
+    "NY-EXACT-EVAL-P001",
+    "NY-EXACT-EVAL-P002",
+    "NY-EXACT-EVAL-P021",
+    "NY-EXACT-EVAL-P022",
+    "NY-EXACT-EVAL-P041",
+    "NY-EXACT-EVAL-P042",
+    "NY-EXACT-EVAL-P061",
+    "NY-EXACT-EVAL-P062",
+    "NY-EXACT-EVAL-P081",
+    "NY-EXACT-EVAL-P082"
+  ],
+  "selection": "first two existing OD pairs per distance band; both original centers",
+  "source_default_query_sha256": "4954a7f46f476b663aa8b91da4c9c9982d25cb243945cdb35a3080051a527eef",
+  "source_manifest": "experiments/manifests/queries/NY-EXACT/paper_q1.jsonl",
+  "source_manifest_sha256": "fb7e0ffaa5a3378af3d516a8c45d1af9c39485de8af72a47ebf4323be7a25314",
+  "trials_per_query": 1,
+  "window_minutes": 120
+}

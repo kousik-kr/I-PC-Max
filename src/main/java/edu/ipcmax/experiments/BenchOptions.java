@@ -28,6 +28,8 @@ final class BenchOptions {
     int warmupRuns;
     int threads = 1;
     int timeoutSeconds;
+    boolean timeoutSpecified;
+    boolean unlimitedTimeoutExplicit;
     int preprocessingTimeoutSeconds;
     int memoryLimitMb;
     long seed = 42;
@@ -95,7 +97,17 @@ final class BenchOptions {
                         integerList(tokens, ++index, option);
                 case "--warmup-runs" -> options.warmupRuns = integer(tokens, ++index, option);
                 case "--threads" -> options.threads = integer(tokens, ++index, option);
-                case "--timeout-seconds" -> options.timeoutSeconds = integer(tokens, ++index, option);
+                case "--timeout-seconds" -> {
+                    String timeout = value(tokens, ++index, option);
+                    options.timeoutSpecified = true;
+                    if (timeout.equalsIgnoreCase("unlimited")) {
+                        options.timeoutSeconds = 0;
+                        options.unlimitedTimeoutExplicit = true;
+                    } else {
+                        options.timeoutSeconds = Integer.parseInt(timeout);
+                        options.unlimitedTimeoutExplicit = false;
+                    }
+                }
                 case "--preprocessing-timeout-seconds" ->
                         options.preprocessingTimeoutSeconds =
                                 integer(tokens, ++index, option);
@@ -212,6 +224,10 @@ final class BenchOptions {
                 || memoryLimitMb < 0
                 || maxFrontierFragments < 1) {
             throw new IllegalArgumentException("resource limits cannot be negative and frontier guard must be positive");
+        }
+        if (timeoutSpecified && timeoutSeconds == 0 && !unlimitedTimeoutExplicit) {
+            throw new IllegalArgumentException(
+                    "--timeout-seconds 0 is ambiguous; use the explicit token 'unlimited'");
         }
         if (distanceBins < 1 || windowMinutes < 1) {
             throw new IllegalArgumentException("distance bins and query window must be positive");

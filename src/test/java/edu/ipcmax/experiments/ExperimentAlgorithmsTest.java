@@ -56,8 +56,8 @@ class ExperimentAlgorithmsTest {
                     graph, QUERY, config(policy), new ExperimentInstrumentation());
 
             if (policy.equals("pace-x")) {
-                assertEquals(ExactnessScope.GLOBAL_CERTIFIED, result.exactnessScope());
-                assertTrue(result.completeProfile());
+                assertEquals(ExactnessScope.NOT_CERTIFIED, result.exactnessScope());
+                assertFalse(result.completeProfile());
             } else {
                 assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
                 assertFalse(result.completeProfile());

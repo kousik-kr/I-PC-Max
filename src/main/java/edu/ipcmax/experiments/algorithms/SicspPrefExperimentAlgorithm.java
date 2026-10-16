@@ -6,6 +6,7 @@ import edu.ipcmax.baselines.sicsp.SicspPreferenceEngine;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.pcmax.QuerySpec;
 import edu.ipcmax.baselines.exact.preference.ExactPreferenceProfileCodec;
+import edu.ipcmax.baselines.exact.preference.ExactPreferenceObjective;
 import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.AlgorithmResult;
 import edu.ipcmax.experiments.framework.ExactnessScope;
@@ -33,6 +34,7 @@ public final class SicspPrefExperimentAlgorithm implements ExperimentAlgorithm {
             QuerySpec query,
             AlgorithmConfig config,
             ExperimentInstrumentation instrumentation) {
+        long endToEndStarted = System.nanoTime();
         SicspPrefResult result = new SicspPreferenceEngine(graph).query(new SicspPrefQuery(
                 query.source(), query.destination(), query.departureDomain(), query.maxTravelTime()));
         var stats = result.statistics();
@@ -201,6 +203,22 @@ public final class SicspPrefExperimentAlgorithm implements ExperimentAlgorithm {
 
         boolean feasible = result.exactEnvelope().hasFeasibleCell();
         ExactnessScope scope = feasible ? ExactnessScope.RETAINED_FRONTIER : ExactnessScope.NOT_CERTIFIED;
+        long sharedObjectiveStarted = System.nanoTime();
+        ExactPreferenceObjective.Evaluation sharedObjective = ExactPreferenceObjective.evaluate(
+                graph, query, result.budgetFeasibleRetainedPaths(),
+                stats.queryExecutionNanos(),
+                feasible ? "COMPLETED" : "UNRESOLVED_NO_GENERATED_CANDIDATE",
+                scope.name(), "SICSP_PREF_DOMINANCE_RETAINED_REGISTRY");
+        long sharedObjectiveNanos = System.nanoTime() - sharedObjectiveStarted;
+        instrumentation.setTiming("shared_exact_objective_evaluation", sharedObjectiveNanos);
+        objectiveResult.putAll(sharedObjective.objectiveResult());
+        objectiveResult.put("generated_route_registry", result.simpleCandidatePaths().stream()
+                .map(path -> path.arcIds()).toList());
+        objectiveResult.put("algorithm_retained_route_registry", result.retainedCandidatePaths().stream()
+                .map(path -> path.arcIds()).toList());
+        objectiveResult.put("end_to_end_query_nanos", System.nanoTime() - endToEndStarted);
+        scalars.put("objective_result", objectiveResult);
+        scalars.put("shared_exact_objective_evaluation_nanos", sharedObjectiveNanos);
         return new AlgorithmResult(
                 feasible ? ExperimentStatus.COMPLETED
                         : ExperimentStatus.UNRESOLVED_NO_GENERATED_CANDIDATE,

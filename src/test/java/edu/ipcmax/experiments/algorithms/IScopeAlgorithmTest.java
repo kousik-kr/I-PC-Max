@@ -164,8 +164,10 @@ class IScopeAlgorithmTest {
         assertEquals("CONTINUOUS_PROFILE_EXHAUSTIVE_PATH_ADAPTATION-v1",
                 result.scalars().get("implementation_variant"));
         assertEquals("DEVIATION", result.scalars().get("paper_fidelity"));
-        assertEquals("LEGACY_CANONICAL_PROFILE_12DP-v1",
+        assertEquals("EXACT_RATIONAL_PREFERENCE_PROFILE-v1",
                 result.scalars().get("numerical_contract"));
+        assertEquals("LEGACY_CANONICAL_PROFILE_12DP-v1",
+                result.scalars().get("legacy_projection_schema"));
     }
 
     @Test
@@ -200,7 +202,7 @@ class IScopeAlgorithmTest {
     }
 
     @Test
-    void lowerBoundPruningRejectsOverBudgetBranchesAndOutputIsLoopless() {
+    void unprunedExactFallbackEnumeratesOverBudgetBranchesAndOutputIsLoopless() {
         TDGraph graph = new TinyGraphBuilder()
                 .node(1).node(2).node(4)
                 .edge(1, 4, 2)
@@ -214,7 +216,9 @@ class IScopeAlgorithmTest {
                 new ExperimentInstrumentation());
 
         assertEquals(ExperimentStatus.CERTIFIED_COMPLETE, result.status());
-        assertTrue((Long) result.scalars().get("lower_bound_prunes") > 0);
+        assertEquals(0L, result.scalars().get("lower_bound_prunes"));
+        assertEquals("NO_LOWER_BOUND_OR_BUDGET_PRUNING_EXACT_SIMPLE_PATH_ENUMERATION-v1",
+                result.scalars().get("search_pruning_policy"));
         assertTrue((Boolean) result.scalars().get("output_loopless"));
     }
 

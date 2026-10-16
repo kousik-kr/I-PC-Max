@@ -16,7 +16,12 @@ from experiments.plots.make_all_plots import main as _unused_plot_main
 from experiments.scripts.build_matrices import build_all
 from experiments.scripts.collect_results import collect
 from experiments.scripts.common.atomic_io import atomic_write_json, atomic_write_text, mark_stage
-from experiments.scripts.common.config import filtered_design, load_design, repo_path
+from experiments.scripts.common.config import (
+    algorithm_timeout_seconds,
+    filtered_design,
+    load_design,
+    repo_path,
+)
 from experiments.scripts.common.hashing import sha256_file
 from experiments.scripts.common.provenance import git_state, host_environment
 from experiments.scripts.common.toolchain import environment, executable
@@ -145,6 +150,16 @@ def _execute_studies(
     if not selected:
         return {"jobs": 0, "status_counts": {}}
     if backend == "slurm":
+        unbounded = [
+            str(job["algorithm_id"])
+            for job in selected
+            if algorithm_timeout_seconds(design, str(job["algorithm_id"])) is None
+        ]
+        if unbounded:
+            raise ValueError(
+                "Slurm wall-time limits would contradict explicit unlimited query policy for: "
+                + ", ".join(sorted(set(unbounded)))
+            )
         memory = design["resources"].get("memory_limit_mb")
         if memory is None:
             raise ValueError("memory_limit_mb is required for Slurm")

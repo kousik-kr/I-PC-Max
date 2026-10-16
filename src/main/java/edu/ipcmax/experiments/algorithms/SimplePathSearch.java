@@ -54,6 +54,70 @@ final class SimplePathSearch {
                 maxPaths, stopRequested, visitor);
     }
 
+    /**
+     * Correctness fallback: enumerate every directed vertex-simple path without
+     * static lower-bound or budget pruning. Exact route replay decides feasibility.
+     */
+    static StreamingSearchResult exhaustiveStreamingUnpruned(
+            TDGraph graph,
+            int source,
+            int destination,
+            long maxPaths,
+            BooleanSupplier stopRequested,
+            CompletePathVisitor visitor) {
+        if (graph == null || maxPaths < 1 || stopRequested == null || visitor == null) {
+            throw new IllegalArgumentException("graph, positive path cap, stop predicate, and visitor are required");
+        }
+        Set<Integer> visited = new HashSet<>();
+        visited.add(source);
+        StreamingState state = new StreamingState();
+        boolean exhausted = dfsStreamingUnpruned(
+                graph, source, destination, maxPaths, visited,
+                new ArrayList<>(), stopRequested, visitor, state);
+        return new StreamingSearchResult(state.completePaths, state.dfsExpansions,
+                0L, exhausted, state.deadlineReached, state.pathCapReached);
+    }
+
+    private static boolean dfsStreamingUnpruned(
+            TDGraph graph,
+            int node,
+            int destination,
+            long maxPaths,
+            Set<Integer> visited,
+            List<Integer> arcs,
+            BooleanSupplier stopRequested,
+            CompletePathVisitor visitor,
+            StreamingState state) {
+        if (stopRequested.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+            state.deadlineReached = true;
+            return false;
+        }
+        if (node == destination) {
+            if (state.completePaths >= maxPaths) {
+                state.pathCapReached = true;
+                return false;
+            }
+            state.completePaths++;
+            return visitor.visit(new WeightedPath(List.copyOf(arcs), 0.0));
+        }
+        for (Edge edge : graph.outgoingEdges(node)) {
+            if (stopRequested.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+                state.deadlineReached = true;
+                return false;
+            }
+            state.dfsExpansions++;
+            if (visited.contains(edge.target())) continue;
+            visited.add(edge.target());
+            arcs.add(edge.arcId());
+            boolean keepGoing = dfsStreamingUnpruned(graph, edge.target(), destination,
+                    maxPaths, visited, arcs, stopRequested, visitor, state);
+            arcs.remove(arcs.size() - 1);
+            visited.remove(edge.target());
+            if (!keepGoing) return false;
+        }
+        return true;
+    }
+
     /** Streams paths while reusing an already timed query-local lower-bound search. */
     static StreamingSearchResult exhaustiveStreaming(
             TDGraph graph,

@@ -1,11 +1,65 @@
 from pathlib import Path
+from collections import Counter
+from tempfile import TemporaryDirectory
+import json
 import unittest
 
-from experiments.scripts.common.config import load_design
+from experiments.scripts.build_matrices import build_all
+from experiments.scripts.common.config import algorithm_timeout_seconds, load_design
+from experiments.scripts.validate_results import validate_planned_cells
 from experiments.scripts.run_all import _preflight_resources_compatible
 
 
 class ConfigContractTest(unittest.TestCase):
+    def test_timeout_policy_rejects_missing_null_and_zero_but_accepts_explicit_unlimited(self):
+        self.assertIsNone(algorithm_timeout_seconds(
+            {"resources": {"timeout_seconds": "unlimited"}}, "pace-b"))
+        self.assertEqual(5, algorithm_timeout_seconds(
+            {"resources": {
+                "timeout_seconds": "unlimited",
+                "algorithm_timeout_seconds": {"iscope": 5},
+            }}, "iscope"))
+        for resources in (
+            {}, {"timeout_seconds": None}, {"timeout_seconds": 0},
+        ):
+            with self.assertRaises(ValueError):
+                algorithm_timeout_seconds({"resources": resources}, "pace-b")
+
+    def test_compact_family_uses_frozen_query_records_and_revised_timeout_policy(self):
+        design = load_design(
+            Path("experiments/configs/icde2027_compact_v1/compact.yaml")
+        )
+        self.assertEqual("unlimited", design["resources"]["timeout_seconds"])
+        self.assertEqual({
+            "pace-b": "unlimited", "iscope": 5,
+            "thop-partitioned": "unlimited", "pace-x": "unlimited",
+            "sicsp-pref": "unlimited",
+        }, design["resources"]["algorithm_timeout_seconds"])
+        with TemporaryDirectory() as temporary:
+            report = build_all(design, Path(temporary))
+            self.assertEqual({"C01": 900, "C02": 80}, report["study_counts"])
+            jobs = []
+            for path in Path(temporary).glob("*.jsonl"):
+                if path.name == "canonical_job_ledger.jsonl":
+                    continue
+                jobs.extend(
+                    json.loads(line)
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                )
+        historical = [job for job in jobs if job["study_id"] == "C01"]
+        for dataset in ("NY", "FLA", "CAL"):
+            rows = [job for job in historical if job["dataset_id"] == dataset]
+            self.assertEqual(300, len(rows))
+            self.assertEqual(50, len({job["query_id"] for job in rows}))
+            self.assertEqual(
+                {"pace-b": 100, "iscope": 100, "thop-partitioned": 100},
+                dict(Counter(job["algorithm_id"] for job in rows)),
+            )
+        self.assertFalse(any(job["algorithm_id"] == "sicsp-pref" for job in historical))
+        self.assertTrue(validate_planned_cells(jobs, design)["passed"])
+        self.assertEqual(0, validate_planned_cells(jobs, design)["manifest_identity_mismatches"])
+
     def test_paper_design_has_two_track_datasets_and_all_studies(self):
         design = load_design(Path("experiments/configs/paper_q1.yaml"))
         self.assertEqual(["NY", "FLA", "CAL", "OL", "NY-EXACT"], design["datasets"])
