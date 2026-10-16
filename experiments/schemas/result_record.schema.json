@@ -111,6 +111,7 @@
       "properties": {
         "status_code": {"enum": ["COMPLETED", "CERTIFIED_COMPLETE", "UNRESOLVED_NO_GENERATED_CANDIDATE", "NO_FEASIBLE_PATH", "TIME_CAPPED_NOT_CERTIFIED", "PATH_CAPPED_NOT_CERTIFIED", "TIMEOUT", "OUT_OF_MEMORY", "LIMIT_EXCEEDED", "FUNCTION_HORIZON_EXCEEDED", "INVALID_QUERY", "INVALID_CONFIGURATION", "ERROR"]},
         "completed": {"type": "boolean"},
+        "terminal": {"type": "boolean"},
         "execution_policy": {"enum": ["PACE_X", "PACE_B", "ISCOPE_ANYTIME", "ALLFP_FUNCTIONAL", "SICSP_PREF_RETAINED_FRONTIER", "SICSP_NATIVE_HEURISTIC", "THOP_PARTITIONED_EXACT_FASTEST_PROFILE", null]},
         "exactness_scope": {"enum": ["GLOBAL_CERTIFIED", "RETAINED_FRONTIER", "NOT_CERTIFIED"]},
         "reference_available": {"type": "boolean"},
@@ -124,6 +125,7 @@
       "properties": {
         "status_code": {"enum": ["COMPLETED", "CERTIFIED_COMPLETE", "UNRESOLVED_NO_GENERATED_CANDIDATE", "NO_FEASIBLE_PATH", "TIME_CAPPED_NOT_CERTIFIED", "PATH_CAPPED_NOT_CERTIFIED", "TIMEOUT", "OUT_OF_MEMORY", "LIMIT_EXCEEDED", "FUNCTION_HORIZON_EXCEEDED", "INVALID_QUERY", "INVALID_CONFIGURATION", "ERROR"]},
         "completed": {"type": "boolean"},
+        "terminal": {"type": "boolean"},
         "execution_policy": {"enum": ["PACE_X", "PACE_B", "ISCOPE_ANYTIME", "ALLFP_FUNCTIONAL", "SICSP_PREF_RETAINED_FRONTIER", "SICSP_NATIVE_HEURISTIC", "THOP_PARTITIONED_EXACT_FASTEST_PROFILE", null]},
         "exactness_scope": {"enum": ["GLOBAL_CERTIFIED", "RETAINED_FRONTIER", "NOT_CERTIFIED"]},
         "generation_completion": {"enum": ["COMPLETE", "UNRESOLVED_NO_GENERATED_CANDIDATE", "NO_FEASIBLE_PATH", "RESOURCE_TRUNCATED", "ABORTED", null]},

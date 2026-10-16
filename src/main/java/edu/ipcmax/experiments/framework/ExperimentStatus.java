@@ -14,5 +14,22 @@ public enum ExperimentStatus {
     FUNCTION_HORIZON_EXCEEDED,
     INVALID_QUERY,
     INVALID_CONFIGURATION,
-    ERROR
+    ERROR;
+
+    /**
+     * Whether the algorithm ended by exhausting its defined work for this
+     * query. A capped anytime result is terminal, but the algorithm did not
+     * complete its search.
+     */
+    public boolean completedExecution() {
+        return this == COMPLETED
+                || this == CERTIFIED_COMPLETE
+                || this == UNRESOLVED_NO_GENERATED_CANDIDATE
+                || this == NO_FEASIBLE_PATH;
+    }
+
+    /** A result row with any status represents a terminal query outcome. */
+    public boolean terminal() {
+        return true;
+    }
 }

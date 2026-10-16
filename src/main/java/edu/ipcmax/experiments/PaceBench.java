@@ -1008,14 +1008,8 @@ public final class PaceBench {
         top.put("configuration", configurationRecord(options));
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("status_code", result.status().name());
-        status.put("completed", result.status() == ExperimentStatus.COMPLETED
-                || result.status() == ExperimentStatus.CERTIFIED_COMPLETE
-                || result.status()
-                        == ExperimentStatus
-                                .UNRESOLVED_NO_GENERATED_CANDIDATE
-                || result.status() == ExperimentStatus.NO_FEASIBLE_PATH
-                || result.status() == ExperimentStatus.TIME_CAPPED_NOT_CERTIFIED
-                || result.status() == ExperimentStatus.PATH_CAPPED_NOT_CERTIFIED);
+        status.put("completed", result.status().completedExecution());
+        status.put("terminal", result.status().terminal());
         status.put("execution_policy", executionPolicy(options.algorithm));
         status.put("exactness_scope", result.exactnessScope().name());
         status.put(
