@@ -209,7 +209,8 @@ rational event location and must not be used for exact downstream computation.
 
 ## Commit
 
-Commit: pending commit.
+Implementation commit: `c1d92d3105bc536cea97722007cd1f6f24ffa1c6` on
+`feature/icde27-baseline-implementation`.
 
 The implementation follows the functional-profile, pointwise minimum,
 label-pruning, and boundary-query structure of Li, Wang, and Zhou, “Time-
