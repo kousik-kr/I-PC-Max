@@ -6,6 +6,8 @@ import edu.ipcmax.core.function.PiecewiseLinearFn;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.Node;
 import edu.ipcmax.core.graph.TDGraph;
+import edu.ipcmax.baselines.exact.ExactArrivalProfile;
+import edu.ipcmax.baselines.exact.ExactTime;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -28,7 +30,7 @@ class ThopNumericalFailureReproductionTest {
     Path temporaryDirectory;
 
     @Test
-    void supportBoundaryCrossingOnQueryFourToOneIsReproduced() throws Exception {
+    void supportBoundaryCrossingOnQueryFourToOneUsesExactPreimages() throws Exception {
         TDGraph graph = mainGraph();
         GraphPartitionMetadata metadata = GraphPartitionMetadata.fromAssignments(graph, assignments());
         Path boundary = temporaryDirectory.resolve("failure-a.bthop");
@@ -36,73 +38,33 @@ class ThopNumericalFailureReproductionTest {
         BoundaryTHopIndex.build(graph, metadata, HORIZON, boundary);
         PartitionedTHopIndex index = PartitionedTHopIndex.build(graph, boundary, inner);
 
-        List<String> combinationDetails = new ArrayList<>();
-        ExactTemporalProfile prefixAtFailure = null;
-        ExactTemporalProfile outerAtFailure = null;
         int sourcePartition = metadata.partitionByVertex().get(4);
         int destinationPartition = metadata.partitionByVertex().get(1);
-        List<Integer> sourceBoundaries = boundaryVertices(metadata, sourcePartition);
-        List<Integer> destinationBoundaries = boundaryVertices(metadata, destinationPartition);
-        for (int sourceBoundary : sourceBoundaries) {
-            ExactTemporalProfile prefix = index.innerIndexForPartition(sourcePartition)
-                    .queryArrivalProfile(4, sourceBoundary, HORIZON);
-            for (int destinationBoundary : destinationBoundaries) {
-                ExactTemporalProfile middle = index.boundaryIndex().queryArrivalProfile(
-                        sourceBoundary, destinationBoundary, HORIZON);
-                ExactTemporalProfile suffix = index.innerIndexForPartition(destinationPartition)
-                        .queryArrivalProfile(destinationBoundary, 1, HORIZON);
-                ExactTemporalProfile boundaryToDestination;
-                try {
-                    boundaryToDestination = middle.composeAfter(suffix);
-                } catch (IllegalArgumentException failure) {
-                    combinationDetails.add("stage=middle-after-suffix boundary="
-                            + sourceBoundary + "->" + destinationBoundary
-                            + " prefix=" + summary(prefix)
-                            + " middle=" + summary(middle)
-                            + " suffix=" + summary(suffix)
-                            + " cause=" + failure.getMessage());
-                    continue;
-                }
-                try {
-                    prefix.composeAfter(boundaryToDestination);
-                } catch (IllegalArgumentException failure) {
-                    if (sourceBoundary == 5 && destinationBoundary == 3) {
-                        prefixAtFailure = prefix;
-                        outerAtFailure = boundaryToDestination;
-                    }
-                    combinationDetails.add("stage=prefix-after-boundary-to-destination boundary="
-                            + sourceBoundary + "->" + destinationBoundary
-                            + " prefix=" + summary(prefix)
-                            + " middle=" + summary(middle)
-                            + " suffix=" + summary(suffix)
-                            + " boundaryToDestination=" + summary(boundaryToDestination)
-                            + " cause=" + failure.getMessage());
-                }
-            }
-        }
+        ExactArrivalProfile prefix = index.innerIndexForPartition(sourcePartition)
+                .queryExactArrivalProfile(4, 5, HORIZON);
+        ExactArrivalProfile middle = index.boundaryIndex().queryExactArrivalProfile(5, 3, HORIZON);
+        ExactArrivalProfile suffix = index.innerIndexForPartition(destinationPartition)
+                .queryExactArrivalProfile(3, 1, HORIZON);
+        ExactArrivalProfile boundaryToDestination = middle.composeAfter(suffix);
+        ExactArrivalProfile candidate = prefix.composeAfter(boundaryToDestination);
+        ExactTime exactRoot = ExactTime.of(java.math.BigInteger.valueOf(62), java.math.BigInteger.valueOf(3));
 
-        PartitionedTHopIndex.UnsupportedTemporalCompositionException failure = assertThrows(
-                PartitionedTHopIndex.UnsupportedTemporalCompositionException.class,
-                () -> index.query(4, 1, HORIZON));
-        assertTrue(failure.getMessage().contains("4->1"));
-        assertTrue(combinationDetails.stream().anyMatch(detail ->
-                detail.contains("boundary=5->3")
-                        && detail.contains("cause=time is outside piecewise profile closure: 21.000000000001")
-                        && detail.contains("Interval[start=21.0, end=21.0")),
-                "expected the 5->3 composition to cross its owned singleton at 21: " + combinationDetails);
-        assertNotNull(prefixAtFailure);
-        assertNotNull(outerAtFailure);
-        assertEquals(HORIZON, prefixAtFailure.domain());
-        assertEquals(Domain.closed(0, 55), outerAtFailure.domain());
-        assertEquals(21.000000000001, prefixAtFailure.valueAt(20.666666666667));
-        assertEquals(30.0, outerAtFailure.valueAt(21.0));
-        assertTrue(outerAtFailure.cells().stream().anyMatch(cell ->
-                cell.domain().equals(Domain.closed(21, 21))
-                        && cell.valueAt(21) == 30.0));
+        assertTrue(prefix.domain().contains(exactRoot));
+        assertEquals(ExactTime.of(21), prefix.valueAtExact(exactRoot));
+        assertTrue(boundaryToDestination.domain().contains(ExactTime.of(21)));
+        assertEquals(ExactTime.of(30), boundaryToDestination.valueAtExact(ExactTime.of(21)));
+        assertEquals(ExactTime.of(30), candidate.valueAtExact(exactRoot));
+        assertTrue(!candidate.isEmpty());
+        assertTrue(candidate.segments().stream().anyMatch(segment ->
+                        segment.interval().start().equals(exactRoot) || segment.interval().end().equals(exactRoot)),
+                "the composition retains the exact 62/3 event location");
+        assertTrue(candidate.domain().contains(ExactTime.parseDecimal("20.666666666667")));
+        assertEquals("9.333333333334", index.query(4, 1, HORIZON)
+                .exactTravelTimeAt(20.666666666667).roundedDecimal(12).toPlainString());
     }
 
     @Test
-    void fractionalDepartureMismatchIsReproducedForBothRouteProfiles() throws Exception {
+    void fractionalDepartureMatchesEveryThopVariantAndTheRationalProfileOracle() throws Exception {
         TDGraph graph = mainGraph();
         GraphPartitionMetadata metadata = GraphPartitionMetadata.fromAssignments(graph, assignments());
         Path boundary = temporaryDirectory.resolve("failure-b.bthop");
@@ -113,51 +75,47 @@ class ThopNumericalFailureReproductionTest {
         THopIndex pruned = THopIndex.buildPruned(graph, HORIZON);
 
         double departure = 20.666666666667;
-        ExactTemporalProfile oracleFourToOneArrival = SimplePathProfileOracle
-                .allDestinations(graph, 4, HORIZON).get(1);
-        ExactTemporalProfile oracleFourToOne = oracleFourToOneArrival.asTravelTime();
-        ExactTemporalProfile partitionedFourToOne = partitioned.query(
-                4, 1, Domain.closed(departure, departure)).travelTimeProfile();
-        ExactTemporalProfile fullFourToOne = unpruned.query(
-                4, 1, Domain.closed(departure, departure)).travelTimeProfile();
-        ExactTemporalProfile fullHorizonFourToOne = unpruned.query(
-                4, 1, HORIZON).travelTimeProfile();
-        ExactTemporalProfile prunedFourToOne = pruned.query(
-                4, 1, Domain.closed(departure, departure)).travelTimeProfile();
-        ExactTemporalProfile directFourToOne = new FifoFastestPathProfileSearch(graph)
-                .search(4, HORIZON).profiles().get(1).asTravelTime();
-        double boundaryFiveToThree = partitioned.boundaryIndex().query(
-                5, 3, Domain.closed(departure, departure)).travelTimeProfile().valueAt(departure);
+        RationalTemporalReference.Q query = RationalTemporalReference.Q.decimal("20.666666666667");
+        RationalTemporalReference.Profile oracleFourToOne = RationalTemporalReference
+                .allDestinationProfiles(graph, 4, HORIZON).get(1).asTravelTime();
+        ExactTime expectedFourToOne = exact(oracleFourToOne.valueAt(query));
+        var partitionedFourToOne = partitioned.query(
+                4, 1, Domain.closed(departure, departure)).exactTravelTimeProfile();
+        var fullFourToOne = unpruned.query(
+                4, 1, Domain.closed(departure, departure)).exactTravelTimeProfile();
+        var fullHorizonFourToOne = unpruned.query(4, 1, HORIZON).exactTravelTimeProfile();
+        var prunedFourToOne = pruned.query(
+                4, 1, Domain.closed(departure, departure)).exactTravelTimeProfile();
+        var directFourToOne = new FifoFastestPathProfileSearch(graph)
+                .search(4, HORIZON).exactProfileTo(1).orElseThrow().asTravelTime();
 
-        assertEquals(30.0, oracleFourToOneArrival.valueAt(departure));
-        assertEquals(9.333333333333,
-                Domain.canonicalTime(oracleFourToOneArrival.valueAt(departure) - departure));
-        assertEquals(9.333333333334, oracleFourToOne.valueAt(departure),
-                "breakpoint-wise A(t)-t conversion and query-time A(t)-t round differently");
-        assertEquals(9.333333333333, partitionedFourToOne.valueAt(departure));
-        assertEquals(9.333333333333, fullFourToOne.valueAt(departure));
-        assertEquals(9.333333333334, fullHorizonFourToOne.valueAt(departure),
-                "the unpruned result also changes with the query domain");
-        assertEquals(9.333333333333, prunedFourToOne.valueAt(departure));
-        assertEquals(9.333333333334, directFourToOne.valueAt(departure));
-        assertEquals(5.0, boundaryFiveToThree);
+        assertEquals("9.3333333333335", oracleFourToOne.valueAt(query).rounded(13));
+        assertEquals(expectedFourToOne, partitionedFourToOne.valueAt(departure));
+        assertEquals(expectedFourToOne, fullFourToOne.valueAt(departure));
+        assertEquals(expectedFourToOne, fullHorizonFourToOne.restrict(
+                Domain.closed(departure, departure)).valueAt(departure));
+        assertEquals(expectedFourToOne, prunedFourToOne.valueAt(departure));
+        assertEquals(expectedFourToOne, directFourToOne.valueAt(departure));
+        assertEquals("9.333333333334", expectedFourToOne.roundedDecimal(12).toPlainString());
+        assertEquals("5", partitioned.boundaryIndex().query(5, 3,
+                Domain.closed(departure, departure)).exactTravelTimeAt(departure).toString());
 
-        ExactTemporalProfile directOneToSeven = new FifoFastestPathProfileSearch(graph)
-                .search(1, HORIZON).profiles().get(7).asTravelTime();
-
-        ExactTemporalProfile oracleOneToSeven = SimplePathProfileOracle
-                .allDestinations(graph, 1, HORIZON).get(7).asTravelTime();
-        ExactTemporalProfile partitionedOneToSeven = partitioned.query(
-                1, 7, Domain.closed(departure, departure)).travelTimeProfile();
-        ExactTemporalProfile fullOneToSeven = unpruned.query(
-                1, 7, Domain.closed(departure, departure)).travelTimeProfile();
-        ExactTemporalProfile prunedOneToSeven = pruned.query(
-                1, 7, Domain.closed(departure, departure)).travelTimeProfile();
-        assertEquals(8.333333333334, oracleOneToSeven.valueAt(departure));
-        assertEquals(8.333333333333, partitionedOneToSeven.valueAt(departure));
-        assertEquals(8.333333333333, fullOneToSeven.valueAt(departure));
-        assertEquals(8.333333333333, prunedOneToSeven.valueAt(departure));
-        assertEquals(8.333333333334, directOneToSeven.valueAt(departure));
+        RationalTemporalReference.Profile oracleOneToSeven = RationalTemporalReference
+                .allDestinationProfiles(graph, 1, HORIZON).get(7).asTravelTime();
+        ExactTime expectedOneToSeven = exact(oracleOneToSeven.valueAt(query));
+        var partitionedOneToSeven = partitioned.query(
+                1, 7, Domain.closed(departure, departure)).exactTravelTimeProfile();
+        var fullOneToSeven = unpruned.query(
+                1, 7, Domain.closed(departure, departure)).exactTravelTimeProfile();
+        var prunedOneToSeven = pruned.query(
+                1, 7, Domain.closed(departure, departure)).exactTravelTimeProfile();
+        var directOneToSeven = new FifoFastestPathProfileSearch(graph)
+                .search(1, HORIZON).exactProfileTo(7).orElseThrow().asTravelTime();
+        assertEquals(expectedOneToSeven, partitionedOneToSeven.valueAt(departure));
+        assertEquals(expectedOneToSeven, fullOneToSeven.valueAt(departure));
+        assertEquals(expectedOneToSeven, prunedOneToSeven.valueAt(departure));
+        assertEquals(expectedOneToSeven, directOneToSeven.valueAt(departure));
+        assertEquals("8.333333333334", expectedOneToSeven.roundedDecimal(12).toPlainString());
     }
 
     @Test
@@ -243,6 +201,10 @@ class ThopNumericalFailureReproductionTest {
                 new edu.ipcmax.core.validate.Path(List.of(3, 4, 5, 6, 1, 7)));
         assertEquals(30.0, scalarArrival,
                 "edge-by-edge tick rounding differs from exact route replay before output rounding");
+    }
+
+    private static ExactTime exact(RationalTemporalReference.Q value) {
+        return ExactTime.of(value.numerator(), value.denominator());
     }
 
     private static TDGraph mainGraph() {

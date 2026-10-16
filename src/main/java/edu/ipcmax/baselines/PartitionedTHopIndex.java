@@ -8,6 +8,10 @@ import edu.ipcmax.core.graph.Node;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.profile.TemporalProfileWork;
 import edu.ipcmax.core.profile.TimeProfile;
+import edu.ipcmax.baselines.exact.ExactAffineSegment;
+import edu.ipcmax.baselines.exact.ExactArrivalProfile;
+import edu.ipcmax.baselines.exact.ExactTemporalDomain;
+import edu.ipcmax.baselines.exact.ExactTime;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -53,7 +57,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class PartitionedTHopIndex {
     private static final int MAGIC = 0x50544850; // PTHP
-    private static final int FORMAT_VERSION = 1;
+    private static final int FORMAT_VERSION = 2;
     private static final String CONSTRUCTION_ID = "Li-Wang-Zhou-ICDE2019-Section-V-C";
     private static final String QUERY_ID = "Section-V-E:exhaustive-boundary-combinations";
     private static final int MAX_COUNT = 100_000_000;
@@ -129,7 +133,8 @@ public final class PartitionedTHopIndex {
             AugmentedPartition augmented = buildAugmentedPartition(
                     graph, metadata, boundary, partitionId, domain);
             InnerIndexBuild innerBuild = buildInnerLabels(
-                    graph, augmented.graph(), metadata.verticesByPartition().get(partitionId), domain);
+                    graph, augmented.graph(), metadata.verticesByPartition().get(partitionId), domain,
+                    augmented.exactArcArrivals());
             THopIndex inner = innerBuild.index();
             PartitionBuildCounts counts = augmented.counts();
             long partitionNanos = System.nanoTime() - partitionStarted;
@@ -386,11 +391,12 @@ public final class PartitionedTHopIndex {
         int sourcePartition = metadata.partitionByVertex().get(source);
         int destinationPartition = metadata.partitionByVertex().get(destination);
         if (source == destination) {
-            ExactTemporalProfile identity = ExactTemporalProfile.identity(departureDomain).asTravelTime();
+            ExactArrivalProfile identity = ExactArrivalProfile.identity(departureDomain).asTravelTime();
             return new QueryResult(
                     source,
                     destination,
                     departureDomain,
+                    identity.roundedLegacyProjection(),
                     identity,
                     new QueryStatistics(
                             "same-partition", sourcePartition, destinationPartition,
@@ -405,6 +411,7 @@ public final class PartitionedTHopIndex {
                     destination,
                     departureDomain,
                     inner.travelTimeProfile(),
+                    inner.exactTravelTimeProfile(),
                     new QueryStatistics(
                             "same-partition",
                             sourcePartition,
@@ -429,8 +436,8 @@ public final class PartitionedTHopIndex {
         THopIndex sourceInner = sourceUse.index();
         PartitionUse destinationUse = requirePartition(destinationPartition);
         THopIndex destinationInner = destinationUse.index();
-        Map<Integer, ExactTemporalProfile> sourcePrefixes = new TreeMap<>();
-        Map<Integer, ExactTemporalProfile> destinationSuffixes = new TreeMap<>();
+        Map<Integer, ExactArrivalProfile> sourcePrefixes = new TreeMap<>();
+        Map<Integer, ExactArrivalProfile> destinationSuffixes = new TreeMap<>();
         long sourceWork = 0;
         long destinationWork = 0;
         long[] prefixWork = {0, 0};
@@ -443,17 +450,17 @@ public final class PartitionedTHopIndex {
         })) {
             for (int boundary : sourceBoundaries) {
                 sourcePrefixes.put(boundary,
-                        sourceInner.queryArrivalProfile(source, boundary, departureDomain));
+                        sourceInner.queryExactArrivalProfile(source, boundary, departureDomain));
                 sourceWork += sourceInner.commonHubCount(source, boundary);
             }
             for (int boundary : destinationBoundaries) {
                 destinationSuffixes.put(boundary,
-                        destinationInner.queryArrivalProfile(boundary, destination, indexDomain));
+                        destinationInner.queryExactArrivalProfile(boundary, destination, indexDomain));
                 destinationWork += destinationInner.commonHubCount(boundary, destination);
             }
         }
 
-        ExactTemporalProfile result = ExactTemporalProfile.empty();
+        ExactArrivalProfile result = ExactArrivalProfile.empty();
         long combinations = 0;
         long skipped = 0;
         long supportBoundaryRejections = 0;
@@ -470,15 +477,15 @@ public final class PartitionedTHopIndex {
             }
         })) {
             for (int sourceBoundary : sourceBoundaries) {
-                ExactTemporalProfile prefix = sourcePrefixes.get(sourceBoundary);
+                ExactArrivalProfile prefix = sourcePrefixes.get(sourceBoundary);
                 if (prefix.isEmpty()) {
                     continue;
                 }
                 for (int destinationBoundary : destinationBoundaries) {
                     combinations++;
-                    ExactTemporalProfile middle;
+                    ExactArrivalProfile middle;
                     if (sourceBoundary == destinationBoundary) {
-                        middle = ExactTemporalProfile.identity(arrivalImageDomain(prefix));
+                        middle = ExactArrivalProfile.identity(arrivalImageDomain(prefix));
                     } else {
                         int commonBoundaryHubs = boundaryIndex.commonHubCount(
                                 sourceBoundary, destinationBoundary);
@@ -487,31 +494,21 @@ public final class PartitionedTHopIndex {
                             skipped++;
                             continue;
                         }
-                        middle = boundaryIndex.queryArrivalProfile(
+                        middle = boundaryIndex.queryExactArrivalProfile(
                                 sourceBoundary, destinationBoundary, indexDomain);
                     }
                     if (middle.isEmpty()) {
                         continue;
                     }
-                    ExactTemporalProfile candidate;
-                    try {
-                        ExactTemporalProfile suffix = destinationBoundary == destination
-                                ? ExactTemporalProfile.identity(arrivalImageDomain(middle))
-                                : destinationSuffixes.get(destinationBoundary);
-                        if (suffix.isEmpty()) {
-                            continue;
-                        }
-                        ExactTemporalProfile boundaryToDestination = middle.composeAfter(suffix);
-                        candidate = prefix.composeAfter(boundaryToDestination).restrict(departureDomain);
-                    } catch (IllegalArgumentException compositionFailure) {
-                        if (compositionFailure.getMessage() != null
-                                && compositionFailure.getMessage().startsWith(
-                                        "time is outside piecewise profile closure:")) {
-                            supportBoundaryRejections++;
-                            continue;
-                        }
-                        throw compositionFailure;
+                    ExactArrivalProfile candidate;
+                    ExactArrivalProfile suffix = destinationBoundary == destination
+                            ? ExactArrivalProfile.identity(arrivalImageDomain(middle))
+                            : destinationSuffixes.get(destinationBoundary);
+                    if (suffix.isEmpty()) {
+                        continue;
                     }
+                    ExactArrivalProfile boundaryToDestination = middle.composeAfter(suffix);
+                    candidate = prefix.composeAfter(boundaryToDestination).restrict(departureDomain);
                     if (candidate.isEmpty()) {
                         continue;
                     }
@@ -529,11 +526,12 @@ public final class PartitionedTHopIndex {
             throw new UnsupportedTemporalCompositionException(
                     source, destination, supportBoundaryRejections);
         }
-        ExactTemporalProfile travelTimes = result.asTravelTime();
+        ExactArrivalProfile travelTimes = result.asTravelTime();
         return new QueryResult(
                 source,
                 destination,
                 departureDomain,
+                travelTimes.roundedLegacyProjection(),
                 travelTimes,
                 new QueryStatistics(
                         "cross-partition",
@@ -583,25 +581,27 @@ public final class PartitionedTHopIndex {
             TDGraph originalGraph,
             TDGraph augmentedGraph,
             List<Integer> vertices,
-            Domain indexDomain) {
+            Domain indexDomain,
+            Map<Integer, ExactArrivalProfile> exactArcArrivals) {
         List<Integer> hubOrder = vertices.stream().sorted().toList();
-        TreeMap<Integer, Map<Integer, ExactTemporalProfile>> rows = new TreeMap<>();
-        FifoFastestPathProfileSearch search = new FifoFastestPathProfileSearch(augmentedGraph);
+        TreeMap<Integer, Map<Integer, ExactArrivalProfile>> rows = new TreeMap<>();
+        FifoFastestPathProfileSearch search = new FifoFastestPathProfileSearch(
+                augmentedGraph, exactArcArrivals);
         long profilesGenerated = 0;
         long compositions = 0;
         long envelopes = 0;
         long sampledPeak = usedHeapBytes();
         for (int source : vertices) {
             FifoFastestPathProfileSearch.SearchResult result = search.search(source, indexDomain);
-            rows.put(source, result.profiles());
-            profilesGenerated += result.profiles().size();
+            rows.put(source, result.exactProfiles());
+            profilesGenerated += result.exactProfiles().size();
             compositions += result.statistics().temporalCompositions();
             envelopes += result.statistics().envelopeOperations();
             sampledPeak = Math.max(sampledPeak, result.statistics().sampledPeakUsedHeapBytes());
         }
 
-        Map<Integer, Map<Integer, ExactTemporalProfile>> out = new TreeMap<>();
-        Map<Integer, Map<Integer, ExactTemporalProfile>> in = new TreeMap<>();
+        Map<Integer, Map<Integer, ExactArrivalProfile>> out = new TreeMap<>();
+        Map<Integer, Map<Integer, ExactArrivalProfile>> in = new TreeMap<>();
         for (int vertex : vertices) {
             out.put(vertex, new TreeMap<>());
             in.put(vertex, new TreeMap<>());
@@ -612,19 +612,19 @@ public final class PartitionedTHopIndex {
         try (TemporalProfileWork.Scope ignored = TemporalProfileWork.install(
                 (name, amount) -> labelWork.merge(name, amount, Long::sum))) {
             for (int hub : hubOrder) {
-                ExactTemporalProfile identity = ExactTemporalProfile.identity(indexDomain);
+                ExactArrivalProfile identity = ExactArrivalProfile.identity(indexDomain);
                 out.get(hub).put(hub, identity);
                 in.get(hub).put(hub, identity);
                 for (int destination : vertices) {
                     if (destination == hub) {
                         continue;
                     }
-                    ExactTemporalProfile forward = rows.get(hub).get(destination);
+                    ExactArrivalProfile forward = rows.get(hub).get(destination);
                     if (forward != null && !admitLabel(
                             out, in, hub, destination, hub, forward, processed, true)) {
                         pruned[0]++;
                     }
-                    ExactTemporalProfile reverse = rows.get(destination).get(hub);
+                    ExactArrivalProfile reverse = rows.get(destination).get(hub);
                     if (reverse != null && !admitLabel(
                             out, in, destination, hub, hub, reverse, processed, false)) {
                         pruned[0]++;
@@ -645,15 +645,15 @@ public final class PartitionedTHopIndex {
     }
 
     private static boolean admitLabel(
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in,
             int source,
             int destination,
             int hub,
-            ExactTemporalProfile candidate,
+            ExactArrivalProfile candidate,
             Set<Integer> processed,
             boolean forwardSearch) {
-        ExactTemporalProfile previous = labelEnvelope(out, in, source, destination, processed);
+        ExactArrivalProfile previous = labelEnvelope(out, in, source, destination, processed);
         if (!previous.isEmpty() && previous.dominates(candidate)) {
             if (!previous.sameFunction(candidate)) {
                 throw new IllegalStateException(
@@ -669,16 +669,16 @@ public final class PartitionedTHopIndex {
         return true;
     }
 
-    private static ExactTemporalProfile labelEnvelope(
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in,
+    private static ExactArrivalProfile labelEnvelope(
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in,
             int source,
             int destination,
             Set<Integer> eligibleHubs) {
-        ExactTemporalProfile result = ExactTemporalProfile.empty();
+        ExactArrivalProfile result = ExactArrivalProfile.empty();
         for (int hub : eligibleHubs) {
-            ExactTemporalProfile prefix = out.get(source).get(hub);
-            ExactTemporalProfile suffix = in.get(destination).get(hub);
+            ExactArrivalProfile prefix = out.get(source).get(hub);
+            ExactArrivalProfile suffix = in.get(destination).get(hub);
             if (prefix != null && suffix != null) {
                 result = result.pointwiseMinimum(prefix.composeAfter(suffix));
             }
@@ -703,26 +703,25 @@ public final class PartitionedTHopIndex {
                     original.baseTravelTime(), original.travelTimeFunction(), original.scoreFunction()));
         }
         List<Integer> localBoundaries = boundaryVerticesInPartition(metadata, partitionId);
+        Map<Integer, ExactArrivalProfile> exactArcArrivals = new HashMap<>();
         long shortcutArcs = 0;
         for (int source : localBoundaries) {
             for (int destination : localBoundaries) {
                 if (source == destination) {
                     continue;
                 }
-                ExactTemporalProfile travel = boundary.query(source, destination, domain)
-                        .travelTimeProfile();
+                ExactArrivalProfile travel = boundary.query(source, destination, domain)
+                        .exactTravelTimeProfile();
+                if (travel.isEmpty()) continue;
                 validateFifoProfile(travel, source, destination);
-                for (TimeProfile cell : travel.cells()) {
-                    List<PiecewiseLinearFn.Breakpoint> points = cell.breakpoints().stream()
-                            .map(point -> new PiecewiseLinearFn.Breakpoint(point.minute(), point.value()))
-                            .toList();
-                    PiecewiseLinearFn function = new PiecewiseLinearFn(points).restrict(cell.domain());
-                    edges.add(new Edge(
-                            edges.size(), source, destination, 0,
-                            Math.max(0, function.minTravelTime()), function,
-                            PiecewiseConstFn.constant(function.domain(), 0)));
-                    shortcutArcs++;
-                }
+                PiecewiseLinearFn placeholder = placeholderTravelFunction(domain);
+                Edge shortcut = new Edge(
+                        edges.size(), source, destination, 0, 0, placeholder,
+                        PiecewiseConstFn.constant(placeholder.domain(), 0));
+                edges.add(shortcut);
+                // The graph arc only carries topology; the exact profile is the authoritative shortcut weight.
+                exactArcArrivals.put(shortcut.arcId(), travel.asArrivalProfile());
+                shortcutArcs++;
             }
         }
         if (edges.stream().anyMatch(edge -> !memberSet.contains(edge.source())
@@ -730,31 +729,26 @@ public final class PartitionedTHopIndex {
             throw new IllegalStateException("augmented partition contains an external vertex");
         }
         return new AugmentedPartition(
-                new TDGraph(nodes, edges), new PartitionBuildCounts(shortcutArcs));
+                new TDGraph(nodes, edges), new PartitionBuildCounts(shortcutArcs),
+                Map.copyOf(exactArcArrivals));
     }
 
     private static void validateFifoProfile(
-            ExactTemporalProfile profile, int source, int destination) {
-        List<TimeProfile> cells = profile.cells();
-        for (TimeProfile cell : cells) {
-            List<TimeProfile.Breakpoint> points = cell.breakpoints();
-            for (int index = 1; index < points.size(); index++) {
-                double arrivalStart = points.get(index - 1).minute() + points.get(index - 1).value();
-                double arrivalEnd = points.get(index).minute() + points.get(index).value();
-                if (Domain.canonicalTime(arrivalEnd) < Domain.canonicalTime(arrivalStart)) {
-                    throw new IllegalArgumentException(
-                            "non-FIFO boundary shortcut " + source + "->" + destination);
-                }
+            ExactArrivalProfile profile, int source, int destination) {
+        ExactArrivalProfile arrivals = profile.asArrivalProfile();
+        List<ExactAffineSegment> pieces = arrivals.segments();
+        for (ExactAffineSegment piece : pieces) {
+            if (piece.slope().signum() < 0) {
+                throw new IllegalArgumentException(
+                        "non-FIFO boundary shortcut " + source + "->" + destination);
             }
         }
-        for (int index = 1; index < cells.size(); index++) {
-            TimeProfile left = cells.get(index - 1);
-            TimeProfile right = cells.get(index);
-            Domain.Interval leftInterval = left.domain().intervals().get(0);
-            Domain.Interval rightInterval = right.domain().intervals().get(0);
-            double leftArrival = leftInterval.end() + left.valueAtClosure(leftInterval.end());
-            double rightArrival = rightInterval.start() + right.valueAtClosure(rightInterval.start());
-            if (Domain.canonicalTime(leftArrival) > Domain.canonicalTime(rightArrival)) {
+        for (int index = 1; index < pieces.size(); index++) {
+            ExactAffineSegment left = pieces.get(index - 1);
+            ExactAffineSegment right = pieces.get(index);
+            ExactTime leftArrival = left.valueAtClosure(left.interval().end());
+            ExactTime rightArrival = right.valueAtClosure(right.interval().start());
+            if (leftArrival.compareTo(rightArrival) > 0) {
                 throw new IllegalArgumentException(
                         "non-FIFO boundary shortcut across temporal support at "
                                 + source + "->" + destination);
@@ -770,22 +764,31 @@ public final class PartitionedTHopIndex {
                 .toList();
     }
 
-    private static Domain arrivalImageDomain(ExactTemporalProfile arrivalProfile) {
-        Domain image = Domain.empty();
-        for (TimeProfile cell : arrivalProfile.cells()) {
-            image = image.union(cell.imageDomain(cell.domain()));
-        }
-        return image;
+    private static ExactTemporalDomain arrivalImageDomain(ExactArrivalProfile arrivalProfile) {
+        return arrivalProfile.imageDomain();
     }
 
-    private static long countLabels(Map<Integer, Map<Integer, ExactTemporalProfile>> labels) {
+    private static PiecewiseLinearFn placeholderTravelFunction(Domain domain) {
+        double start = domain.intervals().getFirst().start();
+        double end = domain.intervals().getLast().end();
+        if (start == end) {
+            start -= 1.0;
+            end += 1.0;
+        }
+        PiecewiseLinearFn spanning = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(start, 0),
+                new PiecewiseLinearFn.Breakpoint(end, 0)));
+        return spanning.restrict(domain);
+    }
+
+    private static long countLabels(Map<Integer, Map<Integer, ExactArrivalProfile>> labels) {
         return labels.values().stream().mapToLong(Map::size).sum();
     }
 
-    private static long countPieces(Map<Integer, Map<Integer, ExactTemporalProfile>> labels) {
+    private static long countPieces(Map<Integer, Map<Integer, ExactArrivalProfile>> labels) {
         return labels.values().stream()
                 .flatMap(row -> row.values().stream())
-                .mapToLong(ExactTemporalProfile::pieceCount)
+                .mapToLong(ExactArrivalProfile::pieceCount)
                 .sum();
     }
 
@@ -865,11 +868,11 @@ public final class PartitionedTHopIndex {
         output.writeInt(vertices.size());
         for (int vertex : vertices) {
             output.writeInt(vertex);
-            Map<Integer, ExactTemporalProfile> labels = outgoing
-                    ? index.outgoingLabels(vertex) : index.incomingLabels(vertex);
-            TreeMap<Integer, ExactTemporalProfile> ordered = new TreeMap<>(labels);
+            Map<Integer, ExactArrivalProfile> labels = outgoing
+                    ? index.exactOutgoingLabels(vertex) : index.exactIncomingLabels(vertex);
+            TreeMap<Integer, ExactArrivalProfile> ordered = new TreeMap<>(labels);
             output.writeInt(ordered.size());
-            for (Map.Entry<Integer, ExactTemporalProfile> label : ordered.entrySet()) {
+            for (Map.Entry<Integer, ExactArrivalProfile> label : ordered.entrySet()) {
                 output.writeInt(label.getKey());
                 writeProfile(output, label.getValue());
             }
@@ -900,14 +903,14 @@ public final class PartitionedTHopIndex {
             if (hubCount != vertexCount || !new HashSet<>(hubOrder).equals(Set.copyOf(vertices))) {
                 throw new IOException("invalid inner hub order");
             }
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out = readLabelMaps(input, vertices, domain);
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in = readLabelMaps(input, vertices, domain);
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out = readLabelMaps(input, vertices, domain);
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in = readLabelMaps(input, vertices, domain);
             if (input.available() != 0) {
                 throw new IOException("trailing bytes in partition label block");
             }
             for (int source : vertices) {
-                for (Map.Entry<Integer, ExactTemporalProfile> label : out.get(source).entrySet()) {
-                    ExactTemporalProfile reverse = in.get(label.getKey()).get(source);
+                for (Map.Entry<Integer, ExactArrivalProfile> label : out.get(source).entrySet()) {
+                    ExactArrivalProfile reverse = in.get(label.getKey()).get(source);
                     if (reverse != null && !reverse.sameFunction(label.getValue())) {
                         throw new IOException("inner in/out labels are inconsistent");
                     }
@@ -921,13 +924,13 @@ public final class PartitionedTHopIndex {
         }
     }
 
-    private static Map<Integer, Map<Integer, ExactTemporalProfile>> readLabelMaps(
+    private static Map<Integer, Map<Integer, ExactArrivalProfile>> readLabelMaps(
             DataInputStream input, List<Integer> vertices, Domain indexDomain) throws IOException {
         int vertexCount = readCount(input, "label map vertices");
         if (vertexCount != vertices.size()) {
             throw new IOException("inner label vertex count mismatch");
         }
-        TreeMap<Integer, Map<Integer, ExactTemporalProfile>> result = new TreeMap<>();
+        TreeMap<Integer, Map<Integer, ExactArrivalProfile>> result = new TreeMap<>();
         Set<Integer> validVertices = Set.copyOf(vertices);
         for (int i = 0; i < vertexCount; i++) {
             int vertex = input.readInt();
@@ -935,11 +938,12 @@ public final class PartitionedTHopIndex {
                 throw new IOException("invalid or duplicate inner label vertex");
             }
             int labelCount = readCount(input, "inner labels");
-            TreeMap<Integer, ExactTemporalProfile> labels = new TreeMap<>();
+            TreeMap<Integer, ExactArrivalProfile> labels = new TreeMap<>();
             for (int j = 0; j < labelCount; j++) {
                 int hub = input.readInt();
-                ExactTemporalProfile profile = readProfile(input);
-                if (!validVertices.contains(hub) || !profile.domain().difference(indexDomain).isEmpty()
+                ExactArrivalProfile profile = readProfile(input);
+                if (!validVertices.contains(hub)
+                        || !profile.domain().difference(ExactTemporalDomain.fromLegacy(indexDomain)).isEmpty()
                         || labels.put(hub, profile) != null) {
                     throw new IOException("invalid inner label hub or temporal support");
                 }
@@ -952,38 +956,17 @@ public final class PartitionedTHopIndex {
         return result;
     }
 
-    private static void writeProfile(DataOutputStream output, ExactTemporalProfile profile)
+    private static void writeProfile(DataOutputStream output, ExactArrivalProfile profile)
             throws IOException {
-        output.writeInt(profile.cells().size());
-        for (TimeProfile cell : profile.cells()) {
-            writeDomain(output, cell.domain());
-            output.writeInt(cell.breakpoints().size());
-            for (TimeProfile.Breakpoint point : cell.breakpoints()) {
-                output.writeDouble(point.minute());
-                output.writeDouble(point.value());
-            }
-        }
+        profile.writeTo(output);
     }
 
-    private static ExactTemporalProfile readProfile(DataInputStream input) throws IOException {
-        int cellCount = readCount(input, "profile cells");
-        if (cellCount == 0) {
+    private static ExactArrivalProfile readProfile(DataInputStream input) throws IOException {
+        ExactArrivalProfile profile = ExactArrivalProfile.readFrom(input);
+        if (profile.isEmpty()) {
             throw new IOException("stored THop labels cannot be empty");
         }
-        List<TimeProfile> cells = new ArrayList<>(cellCount);
-        for (int i = 0; i < cellCount; i++) {
-            Domain cellDomain = readDomain(input);
-            int breakpointCount = readCount(input, "profile breakpoints");
-            if (breakpointCount == 0) {
-                throw new IOException("profile cell has no breakpoints");
-            }
-            List<TimeProfile.Breakpoint> points = new ArrayList<>(breakpointCount);
-            for (int j = 0; j < breakpointCount; j++) {
-                points.add(new TimeProfile.Breakpoint(input.readDouble(), input.readDouble()));
-            }
-            cells.add(TimeProfile.piecewise(cellDomain, points, "loaded-partition-profile"));
-        }
-        return ExactTemporalProfile.fromCells(cells);
+        return profile;
     }
 
     private static void writeConstructionStatistics(
@@ -1250,7 +1233,15 @@ public final class PartitionedTHopIndex {
             int destination,
             Domain departureDomain,
             ExactTemporalProfile travelTimeProfile,
+            ExactArrivalProfile exactTravelTimeProfile,
             QueryStatistics queryStatistics) {
+        public double travelTimeAt(double departureTime) {
+            return exactTravelTimeProfile.valueAt(departureTime).toDisplayDouble();
+        }
+
+        public ExactTime exactTravelTimeAt(double departureTime) {
+            return exactTravelTimeProfile.valueAt(departureTime);
+        }
     }
 
     /** Raised instead of returning an incomplete profile after a support failure. */
@@ -1271,7 +1262,10 @@ public final class PartitionedTHopIndex {
         }
     }
 
-    private record AugmentedPartition(TDGraph graph, PartitionBuildCounts counts) {
+    private record AugmentedPartition(
+            TDGraph graph,
+            PartitionBuildCounts counts,
+            Map<Integer, ExactArrivalProfile> exactArcArrivals) {
     }
 
     private record PartitionBuildCounts(long shortcutArcs) {

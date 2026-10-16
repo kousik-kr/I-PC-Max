@@ -4,7 +4,8 @@ import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.function.PiecewiseLinearFn;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
-import edu.ipcmax.core.profile.TimeProfile;
+import edu.ipcmax.baselines.exact.ExactTemporalDomain;
+import edu.ipcmax.baselines.exact.ExactArrivalProfile;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -50,7 +51,7 @@ import java.util.concurrent.Future;
  */
 public final class BoundaryTHopIndex {
     private static final int MAGIC = 0x42544850; // BTHP
-    private static final int FORMAT_VERSION = 1;
+    private static final int FORMAT_VERSION = 2;
     private static final String CONSTRUCTION_ID = "Li-Wang-Zhou-ICDE2019-Section-V-B";
     private static final String SEARCH_ID =
             "FifoFastestPathProfileSearch:original-complete-directed-graph:exact";
@@ -165,20 +166,20 @@ public final class BoundaryTHopIndex {
                 sampledPeak = Math.max(sampledPeak, result.sampledPeakUsedHeapBytes());
             }
 
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out = emptyBoundaryLabels(graph);
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in = emptyBoundaryLabels(graph);
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out = emptyBoundaryLabels(graph);
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in = emptyBoundaryLabels(graph);
             long retainedProfiles = 0;
             long prunedProfiles = 0;
             long phase1DiskReadNanos = 0;
             long pruningNanos = 0;
             Set<Integer> processed = new LinkedHashSet<>();
             for (int hub : order) {
-                ExactTemporalProfile identity = ExactTemporalProfile.identity(indexDomain);
+                ExactArrivalProfile identity = ExactArrivalProfile.identity(indexDomain);
                 out.get(hub).put(hub, identity);
                 in.get(hub).put(hub, identity);
 
                 long readStarted = System.nanoTime();
-                Map<Integer, ExactTemporalProfile> row;
+                Map<Integer, ExactArrivalProfile> row;
                 try (Phase1ShardReader rowReader = new Phase1ShardReader(phase1Directory, hub)) {
                     row = rowReader.readAll();
                 }
@@ -187,12 +188,12 @@ public final class BoundaryTHopIndex {
                     if (destination == hub) {
                         continue;
                     }
-                    ExactTemporalProfile candidate = row.get(destination);
+                    ExactArrivalProfile candidate = row.get(destination);
                     if (candidate == null) {
                         continue;
                     }
                     long pruneStarted = System.nanoTime();
-                    ExactTemporalProfile previous = labelEnvelope(
+                    ExactArrivalProfile previous = labelEnvelope(
                             out, in, hub, destination, processed);
                     if (previous.dominates(candidate)) {
                         prunedProfiles++;
@@ -207,7 +208,7 @@ public final class BoundaryTHopIndex {
                     if (source == hub) {
                         continue;
                     }
-                    ExactTemporalProfile candidate;
+                    ExactArrivalProfile candidate;
                     readStarted = System.nanoTime();
                     try (Phase1ShardReader sourceReader = new Phase1ShardReader(phase1Directory, source)) {
                         candidate = sourceReader.read(hub);
@@ -217,7 +218,7 @@ public final class BoundaryTHopIndex {
                         continue;
                     }
                     long pruneStarted = System.nanoTime();
-                    ExactTemporalProfile previous = labelEnvelope(
+                    ExactArrivalProfile previous = labelEnvelope(
                             out, in, source, hub, processed);
                     if (previous.dominates(candidate)) {
                         prunedProfiles++;
@@ -314,12 +315,12 @@ public final class BoundaryTHopIndex {
                     FifoFastestPathProfileSearch.SearchResult search =
                             new FifoFastestPathProfileSearch(graph).search(source, indexDomain);
                     long searchNanos = System.nanoTime() - started;
-                    TreeMap<Integer, ExactTemporalProfile> boundaryProfiles = new TreeMap<>();
+                    TreeMap<Integer, ExactArrivalProfile> boundaryProfiles = new TreeMap<>();
                     for (int destination : partitionMetadata.boundaryVertexIds()) {
-                        search.profileTo(destination).ifPresent(profile -> boundaryProfiles.put(destination, profile));
+                        search.exactProfileTo(destination).ifPresent(profile -> boundaryProfiles.put(destination, profile));
                     }
                     long pieces = boundaryProfiles.values().stream()
-                            .mapToLong(ExactTemporalProfile::pieceCount).sum();
+                            .mapToLong(ExactArrivalProfile::pieceCount).sum();
                     long writeStarted = System.nanoTime();
                     long bytes = writePhase1Shard(phase1Directory, source, boundaryProfiles);
                     long writeNanos = System.nanoTime() - writeStarted;
@@ -410,8 +411,8 @@ public final class BoundaryTHopIndex {
             }
             DeterministicCounters counters = readCounters(input);
             validateCounters(counters, metadata, order);
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out = readLabels(input, graph, metadata, indexDomain);
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in = readLabels(input, graph, metadata, indexDomain);
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out = readLabels(input, graph, metadata, indexDomain);
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in = readLabels(input, graph, metadata, indexDomain);
             if (input.available() != 0) {
                 throw new IOException("trailing bytes in Boundary-THop index payload");
             }
@@ -494,11 +495,11 @@ public final class BoundaryTHopIndex {
         if (absoluteIndexFile.getParent() != null) {
             Files.createDirectories(absoluteIndexFile.getParent());
         }
-        Map<Integer, Map<Integer, ExactTemporalProfile>> out = emptyBoundaryLabels(graph);
-        Map<Integer, Map<Integer, ExactTemporalProfile>> in = emptyBoundaryLabels(graph);
+        Map<Integer, Map<Integer, ExactArrivalProfile>> out = emptyBoundaryLabels(graph);
+        Map<Integer, Map<Integer, ExactArrivalProfile>> in = emptyBoundaryLabels(graph);
         for (int boundary : partitionMetadata.boundaryVertexIds()) {
-            out.get(boundary).putAll(labels.outgoingLabels(boundary));
-            in.get(boundary).putAll(labels.incomingLabels(boundary));
+            out.get(boundary).putAll(labels.exactOutgoingLabels(boundary));
+            in.get(boundary).putAll(labels.exactIncomingLabels(boundary));
         }
         byte[] encoded = encodeIndex(
                 graph,
@@ -525,6 +526,16 @@ public final class BoundaryTHopIndex {
         return labels.incomingLabels(boundaryVertex);
     }
 
+    public Map<Integer, ExactArrivalProfile> exactOutgoingLabels(int boundaryVertex) {
+        requireBoundary(boundaryVertex);
+        return labels.exactOutgoingLabels(boundaryVertex);
+    }
+
+    public Map<Integer, ExactArrivalProfile> exactIncomingLabels(int boundaryVertex) {
+        requireBoundary(boundaryVertex);
+        return labels.exactIncomingLabels(boundaryVertex);
+    }
+
     /** Direct boundary-only THop query; result values are travel times. */
     public THopIndex.QueryResult query(int sourceBoundary, int destinationBoundary, Domain queryInterval) {
         requireBoundary(sourceBoundary);
@@ -539,6 +550,13 @@ public final class BoundaryTHopIndex {
         return labels.queryArrivalProfile(sourceBoundary, destinationBoundary, queryInterval);
     }
 
+    ExactArrivalProfile queryExactArrivalProfile(
+            int sourceBoundary, int destinationBoundary, Domain queryInterval) {
+        requireBoundary(sourceBoundary);
+        requireBoundary(destinationBoundary);
+        return labels.queryExactArrivalProfile(sourceBoundary, destinationBoundary, queryInterval);
+    }
+
     int commonHubCount(int sourceBoundary, int destinationBoundary) {
         requireBoundary(sourceBoundary);
         requireBoundary(destinationBoundary);
@@ -551,24 +569,24 @@ public final class BoundaryTHopIndex {
         }
     }
 
-    private static Map<Integer, Map<Integer, ExactTemporalProfile>> emptyBoundaryLabels(TDGraph graph) {
-        Map<Integer, Map<Integer, ExactTemporalProfile>> labels = new TreeMap<>();
+    private static Map<Integer, Map<Integer, ExactArrivalProfile>> emptyBoundaryLabels(TDGraph graph) {
+        Map<Integer, Map<Integer, ExactArrivalProfile>> labels = new TreeMap<>();
         for (int vertex : graph.nodeIds()) {
             labels.put(vertex, new TreeMap<>());
         }
         return labels;
     }
 
-    private static ExactTemporalProfile labelEnvelope(
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in,
+    private static ExactArrivalProfile labelEnvelope(
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in,
             int source,
             int destination,
             Set<Integer> eligibleHubs) {
-        ExactTemporalProfile result = ExactTemporalProfile.empty();
+        ExactArrivalProfile result = ExactArrivalProfile.empty();
         for (int hub : eligibleHubs) {
-            ExactTemporalProfile sourceToHub = out.get(source).get(hub);
-            ExactTemporalProfile hubToDestination = in.get(destination).get(hub);
+            ExactArrivalProfile sourceToHub = out.get(source).get(hub);
+            ExactArrivalProfile hubToDestination = in.get(destination).get(hub);
             if (sourceToHub == null || hubToDestination == null) {
                 continue;
             }
@@ -612,10 +630,10 @@ public final class BoundaryTHopIndex {
         }
     }
 
-    private static long countPieces(Map<Integer, Map<Integer, ExactTemporalProfile>> labels) {
+    private static long countPieces(Map<Integer, Map<Integer, ExactArrivalProfile>> labels) {
         return labels.values().stream()
                 .flatMap(map -> map.values().stream())
-                .mapToLong(ExactTemporalProfile::pieceCount)
+                .mapToLong(ExactArrivalProfile::pieceCount)
                 .sum();
     }
 
@@ -719,7 +737,7 @@ public final class BoundaryTHopIndex {
             }
         }
 
-        private ExactTemporalProfile read(int destination) throws IOException {
+        private ExactArrivalProfile read(int destination) throws IOException {
             ShardRecord record = records.get(destination);
             if (record == null) {
                 return null;
@@ -735,8 +753,8 @@ public final class BoundaryTHopIndex {
             return decodeProfile(bytes);
         }
 
-        private Map<Integer, ExactTemporalProfile> readAll() throws IOException {
-            TreeMap<Integer, ExactTemporalProfile> result = new TreeMap<>();
+        private Map<Integer, ExactArrivalProfile> readAll() throws IOException {
+            TreeMap<Integer, ExactArrivalProfile> result = new TreeMap<>();
             for (int destination : new TreeSet<>(records.keySet())) {
                 result.put(destination, read(destination));
             }
@@ -750,13 +768,13 @@ public final class BoundaryTHopIndex {
     }
 
     private static long writePhase1Shard(
-            Path directory, int source, Map<Integer, ExactTemporalProfile> profiles) throws IOException {
+            Path directory, int source, Map<Integer, ExactArrivalProfile> profiles) throws IOException {
         Path dataPath = phase1DataPath(directory, source);
         Path indexPath = phase1IndexPath(directory, source);
         TreeMap<Integer, ShardRecord> entries = new TreeMap<>();
         try (RandomAccessFile data = new RandomAccessFile(dataPath.toFile(), "rw")) {
             data.setLength(0);
-            for (Map.Entry<Integer, ExactTemporalProfile> entry : new TreeMap<>(profiles).entrySet()) {
+            for (Map.Entry<Integer, ExactArrivalProfile> entry : new TreeMap<>(profiles).entrySet()) {
                 byte[] profileBytes = encodeProfile(entry.getValue());
                 long offset = data.getFilePointer();
                 data.writeInt(entry.getKey());
@@ -792,8 +810,8 @@ public final class BoundaryTHopIndex {
             byte[] graphFingerprint,
             List<Integer> hubOrder,
             DeterministicCounters counters,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in) throws IOException {
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in) throws IOException {
         ByteArrayOutputStream payloadBytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(payloadBytes)) {
             output.writeUTF(CONSTRUCTION_ID);
@@ -874,8 +892,8 @@ public final class BoundaryTHopIndex {
 
     private static void validateCountersAgainstLabels(
             DeterministicCounters counters,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in,
             GraphPartitionMetadata metadata) throws IOException {
         long directedLabels = out.values().stream().mapToLong(Map::size).sum()
                 + in.values().stream().mapToLong(Map::size).sum();
@@ -892,25 +910,25 @@ public final class BoundaryTHopIndex {
     private static void writeLabels(
             DataOutputStream output,
             List<Integer> boundaryVertices,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> labels) throws IOException {
+            Map<Integer, Map<Integer, ExactArrivalProfile>> labels) throws IOException {
         output.writeInt(boundaryVertices.size());
         for (int vertex : boundaryVertices) {
             output.writeInt(vertex);
-            Map<Integer, ExactTemporalProfile> byHub = new TreeMap<>(labels.get(vertex));
+            Map<Integer, ExactArrivalProfile> byHub = new TreeMap<>(labels.get(vertex));
             output.writeInt(byHub.size());
-            for (Map.Entry<Integer, ExactTemporalProfile> entry : byHub.entrySet()) {
+            for (Map.Entry<Integer, ExactArrivalProfile> entry : byHub.entrySet()) {
                 output.writeInt(entry.getKey());
                 writeProfile(output, entry.getValue());
             }
         }
     }
 
-    private static Map<Integer, Map<Integer, ExactTemporalProfile>> readLabels(
+    private static Map<Integer, Map<Integer, ExactArrivalProfile>> readLabels(
             DataInputStream input,
             TDGraph graph,
             GraphPartitionMetadata metadata,
             Domain indexDomain) throws IOException {
-        Map<Integer, Map<Integer, ExactTemporalProfile>> labels = emptyBoundaryLabels(graph);
+        Map<Integer, Map<Integer, ExactArrivalProfile>> labels = emptyBoundaryLabels(graph);
         int vertexCount = readCount(input, "label vertex count");
         if (vertexCount != metadata.boundaryVertexCount()) {
             throw new IOException("label map does not cover the boundary vertex set");
@@ -922,14 +940,14 @@ public final class BoundaryTHopIndex {
                 throw new IOException("boundary label vertices are not serialized deterministically");
             }
             int labelCount = readCount(input, "vertex label count");
-            Map<Integer, ExactTemporalProfile> byHub = labels.get(vertex);
+            Map<Integer, ExactArrivalProfile> byHub = labels.get(vertex);
             for (int labelIndex = 0; labelIndex < labelCount; labelIndex++) {
                 int hub = input.readInt();
-                ExactTemporalProfile profile = readProfile(input);
+                ExactArrivalProfile profile = readProfile(input);
                 if (byHub.put(hub, profile) != null) {
                     throw new IOException("duplicate hub label for boundary vertex " + vertex);
                 }
-                if (!profile.domain().difference(indexDomain).isEmpty()) {
+                if (!profile.domain().difference(ExactTemporalDomain.fromLegacy(indexDomain)).isEmpty()) {
                     throw new IOException("label profile support lies outside the index domain");
                 }
             }
@@ -938,31 +956,31 @@ public final class BoundaryTHopIndex {
     }
 
     private static void validateLabelMaps(
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in,
             GraphPartitionMetadata metadata,
             Domain indexDomain) throws IOException {
         Set<Integer> boundary = Set.copyOf(metadata.boundaryVertexIds());
         for (int vertex : metadata.boundaryVertexIds()) {
-            for (Map.Entry<Integer, ExactTemporalProfile> entry : out.get(vertex).entrySet()) {
+            for (Map.Entry<Integer, ExactArrivalProfile> entry : out.get(vertex).entrySet()) {
                 if (!boundary.contains(entry.getKey()) || entry.getValue().isEmpty()
-                        || !entry.getValue().domain().difference(indexDomain).isEmpty()) {
+                        || !entry.getValue().domain().difference(ExactTemporalDomain.fromLegacy(indexDomain)).isEmpty()) {
                     throw new IOException("invalid outgoing boundary label at vertex " + vertex);
                 }
             }
-            for (Map.Entry<Integer, ExactTemporalProfile> entry : in.get(vertex).entrySet()) {
+            for (Map.Entry<Integer, ExactArrivalProfile> entry : in.get(vertex).entrySet()) {
                 if (!boundary.contains(entry.getKey()) || entry.getValue().isEmpty()
-                        || !entry.getValue().domain().difference(indexDomain).isEmpty()) {
+                        || !entry.getValue().domain().difference(ExactTemporalDomain.fromLegacy(indexDomain)).isEmpty()) {
                     throw new IOException("invalid incoming boundary label at vertex " + vertex);
                 }
             }
-            ExactTemporalProfile selfOut = out.get(vertex).get(vertex);
-            ExactTemporalProfile selfIn = in.get(vertex).get(vertex);
+            ExactArrivalProfile selfOut = out.get(vertex).get(vertex);
+            ExactArrivalProfile selfIn = in.get(vertex).get(vertex);
             if (selfOut == null || selfIn == null
-                    || !selfOut.domain().equals(indexDomain)
-                    || !selfIn.domain().equals(indexDomain)
-                    || !selfOut.sameFunction(ExactTemporalProfile.identity(indexDomain))
-                    || !selfIn.sameFunction(ExactTemporalProfile.identity(indexDomain))) {
+                    || !selfOut.domain().equals(ExactTemporalDomain.fromLegacy(indexDomain))
+                    || !selfIn.domain().equals(ExactTemporalDomain.fromLegacy(indexDomain))
+                    || !selfOut.sameFunction(ExactArrivalProfile.identity(indexDomain))
+                    || !selfIn.sameFunction(ExactArrivalProfile.identity(indexDomain))) {
                 throw new IOException("boundary self labels are missing or invalid at vertex " + vertex);
             }
         }
@@ -1033,49 +1051,27 @@ public final class BoundaryTHopIndex {
         }
     }
 
-    private static void writeProfile(DataOutputStream output, ExactTemporalProfile profile, boolean allowEmpty)
+    private static void writeProfile(DataOutputStream output, ExactArrivalProfile profile, boolean allowEmpty)
             throws IOException {
         if (!allowEmpty && profile.isEmpty()) {
             throw new IOException("empty temporal functions cannot be serialized as labels");
         }
-        output.writeInt(profile.cells().size());
-        for (TimeProfile cell : profile.cells()) {
-            writeDomain(output, cell.domain());
-            output.writeInt(cell.breakpoints().size());
-            for (TimeProfile.Breakpoint point : cell.breakpoints()) {
-                output.writeDouble(point.minute());
-                output.writeDouble(point.value());
-            }
-        }
+        profile.writeTo(output);
     }
 
-    private static void writeProfile(DataOutputStream output, ExactTemporalProfile profile) throws IOException {
+    private static void writeProfile(DataOutputStream output, ExactArrivalProfile profile) throws IOException {
         writeProfile(output, profile, false);
     }
 
-    private static ExactTemporalProfile readProfile(DataInputStream input) throws IOException {
-        int cellCount = readCount(input, "temporal function cell count");
-        if (cellCount == 0) {
+    private static ExactArrivalProfile readProfile(DataInputStream input) throws IOException {
+        ExactArrivalProfile profile = readProfileAllowEmpty(input);
+        if (profile.isEmpty()) {
             throw new IOException("empty temporal profile found in boundary labels");
         }
-        List<TimeProfile> cells = new ArrayList<>(cellCount);
-        try {
-            for (int cellIndex = 0; cellIndex < cellCount; cellIndex++) {
-                Domain domain = readDomain(input);
-                int pointCount = readCount(input, "temporal function breakpoint count");
-                List<TimeProfile.Breakpoint> points = new ArrayList<>(pointCount);
-                for (int pointIndex = 0; pointIndex < pointCount; pointIndex++) {
-                    points.add(new TimeProfile.Breakpoint(input.readDouble(), input.readDouble()));
-                }
-                cells.add(TimeProfile.piecewise(domain, points, "boundary-index-cell-" + cellIndex));
-            }
-            return ExactTemporalProfile.fromCells(cells);
-        } catch (RuntimeException invalid) {
-            throw new IOException("invalid temporal function encoding", invalid);
-        }
+        return profile;
     }
 
-    private static byte[] encodeProfile(ExactTemporalProfile profile) throws IOException {
+    private static byte[] encodeProfile(ExactArrivalProfile profile) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
             writeProfile(output, profile, true);
@@ -1083,9 +1079,9 @@ public final class BoundaryTHopIndex {
         return bytes.toByteArray();
     }
 
-    private static ExactTemporalProfile decodeProfile(byte[] bytes) throws IOException {
+    private static ExactArrivalProfile decodeProfile(byte[] bytes) throws IOException {
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            ExactTemporalProfile result = readProfileAllowEmpty(input);
+            ExactArrivalProfile result = readProfileAllowEmpty(input);
             if (input.available() != 0) {
                 throw new IOException("trailing bytes in phase-1 profile");
             }
@@ -1093,23 +1089,8 @@ public final class BoundaryTHopIndex {
         }
     }
 
-    private static ExactTemporalProfile readProfileAllowEmpty(DataInputStream input) throws IOException {
-        int cellCount = readCount(input, "temporal function cell count");
-        List<TimeProfile> cells = new ArrayList<>(cellCount);
-        try {
-            for (int cellIndex = 0; cellIndex < cellCount; cellIndex++) {
-                Domain domain = readDomain(input);
-                int pointCount = readCount(input, "temporal function breakpoint count");
-                List<TimeProfile.Breakpoint> points = new ArrayList<>(pointCount);
-                for (int pointIndex = 0; pointIndex < pointCount; pointIndex++) {
-                    points.add(new TimeProfile.Breakpoint(input.readDouble(), input.readDouble()));
-                }
-                cells.add(TimeProfile.piecewise(domain, points, "phase1-cell-" + cellIndex));
-            }
-            return ExactTemporalProfile.fromCells(cells);
-        } catch (RuntimeException invalid) {
-            throw new IOException("invalid phase-1 temporal function encoding", invalid);
-        }
+    private static ExactArrivalProfile readProfileAllowEmpty(DataInputStream input) throws IOException {
+        return ExactArrivalProfile.readFrom(input);
     }
 
     private static void writeDomain(DataOutputStream output, Domain domain) throws IOException {

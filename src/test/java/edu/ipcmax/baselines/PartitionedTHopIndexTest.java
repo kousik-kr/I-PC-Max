@@ -33,7 +33,7 @@ class PartitionedTHopIndexTest {
         GraphPartitionMetadata metadata = GraphPartitionMetadata.fromAssignments(graph, assignments());
         Path boundaryFile = temporaryDirectory.resolve("boundary.bthop");
         Path innerFile = temporaryDirectory.resolve("partitioned.pthop");
-        BoundaryTHopIndex.build(graph, metadata, HORIZON, boundaryFile);
+        BoundaryTHopIndex boundaryIndex = BoundaryTHopIndex.build(graph, metadata, HORIZON, boundaryFile);
         PartitionedTHopIndex index = PartitionedTHopIndex.build(graph, boundaryFile, innerFile);
         THopIndex unpruned = THopIndex.build(graph, HORIZON);
         THopIndex pruned = THopIndex.buildPruned(graph, HORIZON);
@@ -43,46 +43,59 @@ class PartitionedTHopIndexTest {
         for (Map.Entry<Integer, List<Integer>> partition : metadata.verticesByPartition().entrySet()) {
             THopIndex inner = index.innerIndexForPartition(partition.getKey());
             for (int source : partition.getValue()) {
-                Map<Integer, ExactTemporalProfile> oracle =
-                        SimplePathProfileOracle.allDestinations(graph, source, HORIZON);
+                Map<Integer, RationalTemporalReference.Profile> oracle =
+                        RationalTemporalReference.allDestinationProfiles(graph, source, HORIZON);
                 for (int destination : partition.getValue()) {
-                    ExactTemporalProfile expected = oracle.getOrDefault(
-                                    destination, ExactTemporalProfile.empty())
-                            .restrict(HORIZON).asTravelTime();
-                    ExactTemporalProfile actual = inner.query(source, destination, HORIZON)
-                            .travelTimeProfile();
-                    assertTrue(expected.sameFunction(actual),
+                    RationalTemporalReference.Profile expected = oracle.getOrDefault(
+                            destination, new RationalTemporalReference.Profile(List.of())).asTravelTime();
+                    var actual = inner.query(source, destination, HORIZON).exactTravelTimeProfile();
+                    assertTrue(expected.sameFunction(
+                                    RationalTemporalReference.Profile.fromProductionForComparison(actual)),
                             "inner augmented mismatch " + partition.getKey() + ": "
-                                    + source + "->" + destination + " "
-                                    + firstMismatch(expected, actual));
+                                    + source + "->" + destination + " expected=" + expected.segments()
+                                    + " actual=" + actual.segments());
                 }
             }
         }
         for (int source : graph.nodeIds()) {
-            Map<Integer, ExactTemporalProfile> oracle =
-                    SimplePathProfileOracle.allDestinations(graph, source, HORIZON);
+            Map<Integer, RationalTemporalReference.Profile> oracle =
+                    RationalTemporalReference.allDestinationProfiles(graph, source, HORIZON);
+            Map<Integer, edu.ipcmax.baselines.exact.ExactArrivalProfile> direct =
+                    new FifoFastestPathProfileSearch(graph).search(source, HORIZON).exactProfiles();
             for (int destination : graph.nodeIds()) {
-                ExactTemporalProfile expected = oracle.getOrDefault(
-                                destination, ExactTemporalProfile.empty())
-                        .restrict(HORIZON).asTravelTime();
-                ExactTemporalProfile partitioned = index.query(source, destination, HORIZON)
-                        .travelTimeProfile();
-                ExactTemporalProfile safelyPruned = index.queryWithSafePruning(
-                                source, destination, HORIZON)
-                        .travelTimeProfile();
-                ExactTemporalProfile fullUnpruned = unpruned.query(source, destination, HORIZON)
-                        .travelTimeProfile();
-                ExactTemporalProfile fullPruned = pruned.query(source, destination, HORIZON)
-                        .travelTimeProfile();
-                assertTrue(expected.sameFunction(partitioned), "partitioned mismatch " + source + "->" + destination
-                        + " " + firstMismatch(expected, partitioned)
-                        + " matchesFull=" + fullUnpruned.sameFunction(partitioned));
-                assertTrue(expected.sameFunction(safelyPruned), "safe-prune mismatch " + source + "->" + destination);
-                assertTrue(expected.sameFunction(fullUnpruned), "unpruned mismatch " + source + "->" + destination);
-                assertTrue(expected.sameFunction(fullPruned), "pruned mismatch " + source + "->" + destination);
+                RationalTemporalReference.Profile expected = oracle.getOrDefault(
+                        destination, new RationalTemporalReference.Profile(List.of())).asTravelTime();
+                var partitioned = index.query(source, destination, HORIZON).exactTravelTimeProfile();
+                var safelyPruned = index.queryWithSafePruning(source, destination, HORIZON)
+                        .exactTravelTimeProfile();
+                var fullUnpruned = unpruned.query(source, destination, HORIZON).exactTravelTimeProfile();
+                var fullPruned = pruned.query(source, destination, HORIZON).exactTravelTimeProfile();
+                var directProfile = direct.getOrDefault(destination,
+                        edu.ipcmax.baselines.exact.ExactArrivalProfile.empty()).asTravelTime();
+                assertTrue(expected.sameFunction(RationalTemporalReference.Profile
+                                .fromProductionForComparison(partitioned)),
+                        "partitioned mismatch " + source + "->" + destination);
+                assertTrue(expected.sameFunction(RationalTemporalReference.Profile
+                                .fromProductionForComparison(safelyPruned)),
+                        "safe-prune mismatch " + source + "->" + destination);
+                assertTrue(expected.sameFunction(RationalTemporalReference.Profile
+                                .fromProductionForComparison(fullUnpruned)),
+                        "unpruned mismatch " + source + "->" + destination);
+                assertTrue(expected.sameFunction(RationalTemporalReference.Profile
+                                .fromProductionForComparison(fullPruned)),
+                        "pruned mismatch " + source + "->" + destination);
+                assertTrue(expected.sameFunction(RationalTemporalReference.Profile
+                                .fromProductionForComparison(directProfile)),
+                        "direct functional search mismatch " + source + "->" + destination);
+                if (metadata.boundaryVertexIds().contains(source)
+                        && metadata.boundaryVertexIds().contains(destination)) {
+                    var boundary = boundaryIndex.query(source, destination, HORIZON).exactTravelTimeProfile();
+                    assertTrue(expected.sameFunction(RationalTemporalReference.Profile
+                                    .fromProductionForComparison(boundary)),
+                            "Boundary-THop mismatch " + source + "->" + destination);
+                }
             }
         }
-
     }
 
     @Test
@@ -115,8 +128,17 @@ class PartitionedTHopIndexTest {
         Path copied = temporaryDirectory.resolve("storage-copy.pthop");
         assertEquals(Files.size(innerFile), loaded.write(copied));
         assertEquals(-1L, Files.mismatch(innerFile, copied));
-        assertTrue(index.query(1, 6, Domain.closed(0, 20)).travelTimeProfile().sameFunction(
-                loaded.query(1, 6, Domain.closed(0, 20)).travelTimeProfile()));
+        var exactRoot = edu.ipcmax.baselines.exact.ExactTime.of(
+                java.math.BigInteger.valueOf(62), java.math.BigInteger.valueOf(3));
+        var originalProfile = index.query(4, 1, HORIZON).exactTravelTimeProfile();
+        var loadedProfile = loaded.query(4, 1, HORIZON).exactTravelTimeProfile();
+        assertTrue(originalProfile.sameFunction(loadedProfile));
+        assertTrue(originalProfile.segments().stream().anyMatch(segment ->
+                        segment.interval().start().equals(exactRoot) || segment.interval().end().equals(exactRoot)),
+                "the persisted partitioned result contains the exact rational event root");
+        assertTrue(loadedProfile.segments().stream().anyMatch(segment ->
+                        segment.interval().start().equals(exactRoot) || segment.interval().end().equals(exactRoot)),
+                "reload preserves the exact rational event root");
 
         byte[] corrupted = Files.readAllBytes(innerFile);
         corrupted[corrupted.length / 2] ^= 1;
@@ -183,7 +205,7 @@ class PartitionedTHopIndexTest {
     }
 
     @Test
-    void unsupportedTemporalCompositionIsRejectedWithTheCombinationCount() throws Exception {
+    void exactSupportCrossingReturnsTheCompleteQueryInsteadOfRejectingIt() throws Exception {
         TDGraph graph = mainGraph();
         GraphPartitionMetadata metadata = GraphPartitionMetadata.fromAssignments(graph, assignments());
         Path boundaryFile = temporaryDirectory.resolve("support-boundary.bthop");
@@ -191,10 +213,29 @@ class PartitionedTHopIndexTest {
         BoundaryTHopIndex.build(graph, metadata, HORIZON, boundaryFile);
         PartitionedTHopIndex index = PartitionedTHopIndex.build(graph, boundaryFile, innerFile);
 
-        PartitionedTHopIndex.UnsupportedTemporalCompositionException failure = assertThrows(
-                PartitionedTHopIndex.UnsupportedTemporalCompositionException.class,
-                () -> index.query(4, 1, HORIZON));
-        assertTrue(failure.rejectedCombinations() > 0);
+        var result = index.query(4, 1, HORIZON);
+        assertTrue(result.exactTravelTimeProfile().domain().contains(
+                edu.ipcmax.baselines.exact.ExactTime.parseDecimal("20.666666666667")));
+        assertEquals(0, result.queryStatistics().supportBoundaryRejections());
+    }
+
+    @Test
+    void severalBoundaryShortcutProfilesComposeToTheIndependentFullRoute() throws Exception {
+        TDGraph graph = mainGraph();
+        GraphPartitionMetadata metadata = GraphPartitionMetadata.fromAssignments(graph, assignments());
+        Path boundaryFile = temporaryDirectory.resolve("nested-shortcuts.bthop");
+        BoundaryTHopIndex boundary = BoundaryTHopIndex.build(graph, metadata, HORIZON, boundaryFile);
+
+        var first = boundary.query(5, 6, HORIZON).exactTravelTimeProfile().asArrivalProfile();
+        var second = boundary.query(6, 7, HORIZON).exactTravelTimeProfile().asArrivalProfile();
+        var third = boundary.query(7, 2, HORIZON).exactTravelTimeProfile().asArrivalProfile();
+        var nested = first.composeAfter(second).composeAfter(third).asTravelTime();
+        var expected = RationalTemporalReference.allDestinationProfiles(graph, 5, HORIZON)
+                .get(2).asTravelTime();
+        var directBoundary = boundary.query(5, 2, HORIZON).exactTravelTimeProfile();
+
+        assertTrue(expected.sameFunction(RationalTemporalReference.Profile.fromProductionForComparison(nested)));
+        assertTrue(directBoundary.sameFunction(nested));
     }
 
     private static TDGraph mainGraph() {

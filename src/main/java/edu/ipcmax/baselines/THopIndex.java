@@ -4,6 +4,8 @@ import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.profile.TemporalProfileWork;
+import edu.ipcmax.baselines.exact.ExactArrivalProfile;
+import edu.ipcmax.baselines.exact.ExactTemporalDomain;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -29,8 +31,8 @@ import java.util.TreeSet;
 public final class THopIndex {
     private final TDGraph graph;
     private final Domain indexDomain;
-    private final Map<Integer, Map<Integer, ExactTemporalProfile>> outgoingLabels;
-    private final Map<Integer, Map<Integer, ExactTemporalProfile>> incomingLabels;
+    private final Map<Integer, Map<Integer, ExactArrivalProfile>> outgoingLabels;
+    private final Map<Integer, Map<Integer, ExactArrivalProfile>> incomingLabels;
     private final IndexStatistics statistics;
     private final PreprocessingStatistics preprocessingStatistics;
     private final List<Integer> hubOrder;
@@ -39,8 +41,8 @@ public final class THopIndex {
     private THopIndex(
             TDGraph graph,
             Domain indexDomain,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> outgoingLabels,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> incomingLabels,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> outgoingLabels,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> incomingLabels,
             IndexStatistics statistics,
             PreprocessingStatistics preprocessingStatistics,
             List<Integer> hubOrder,
@@ -59,8 +61,8 @@ public final class THopIndex {
     static THopIndex fromExistingLabels(
             TDGraph graph,
             Domain indexDomain,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> outgoingLabels,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> incomingLabels,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> outgoingLabels,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> incomingLabels,
             List<Integer> hubOrder) {
         long labels = countLabels(outgoingLabels) + countLabels(incomingLabels);
         long pieces = countPieces(outgoingLabels) + countPieces(incomingLabels);
@@ -91,6 +93,12 @@ public final class THopIndex {
 
     /** Builds a complete unpruned index over {@code indexDomain}. */
     public static THopIndex build(TDGraph graph, Domain indexDomain) {
+        return build(graph, indexDomain, Map.of());
+    }
+
+    /** Internal builder for augmented partitions with exact shortcut profiles. */
+    static THopIndex build(
+            TDGraph graph, Domain indexDomain, Map<Integer, ExactArrivalProfile> exactArcArrivals) {
         Objects.requireNonNull(graph, "graph");
         validateIndexDomain(graph, indexDomain);
 
@@ -101,14 +109,14 @@ public final class THopIndex {
         long compositions = 0;
         long envelopes = 0;
         long profilesConstructed = 0;
-        Map<Integer, Map<Integer, ExactTemporalProfile>> out = new HashMap<>();
-        Map<Integer, Map<Integer, ExactTemporalProfile>> in = new HashMap<>();
+        Map<Integer, Map<Integer, ExactArrivalProfile>> out = new HashMap<>();
+        Map<Integer, Map<Integer, ExactArrivalProfile>> in = new HashMap<>();
         for (int node : graph.nodeIds()) {
             out.put(node, new HashMap<>());
             in.put(node, new HashMap<>());
         }
 
-        FifoFastestPathProfileSearch search = new FifoFastestPathProfileSearch(graph);
+        FifoFastestPathProfileSearch search = new FifoFastestPathProfileSearch(graph, exactArcArrivals);
         for (int source : graph.nodeIds()) {
             FifoFastestPathProfileSearch.SearchResult result = search.search(source, indexDomain);
             FifoFastestPathProfileSearch.SearchStatistics searchStats = result.statistics();
@@ -118,9 +126,9 @@ public final class THopIndex {
             compositions += searchStats.temporalCompositions();
             envelopes += searchStats.envelopeOperations();
             sampledPeak = Math.max(sampledPeak, searchStats.sampledPeakUsedHeapBytes());
-            for (Map.Entry<Integer, ExactTemporalProfile> pair : result.profiles().entrySet()) {
+            for (Map.Entry<Integer, ExactArrivalProfile> pair : result.exactProfiles().entrySet()) {
                 int destination = pair.getKey();
-                ExactTemporalProfile profile = pair.getValue();
+                ExactArrivalProfile profile = pair.getValue();
                 out.get(source).put(destination, profile);
                 in.get(destination).put(source, profile);
             }
@@ -168,7 +176,7 @@ public final class THopIndex {
      */
     public static THopIndex buildPruned(TDGraph graph, Domain indexDomain) {
         Objects.requireNonNull(graph, "graph");
-        return buildPruned(graph, indexDomain, barycenterHubOrder(graph));
+        return buildPruned(graph, indexDomain, barycenterHubOrder(graph), Map.of());
     }
 
     /**
@@ -177,10 +185,16 @@ public final class THopIndex {
      */
     public static THopIndex buildPruned(
             TDGraph graph, Domain indexDomain, List<Integer> suppliedHubOrder) {
+        return buildPruned(graph, indexDomain, suppliedHubOrder, Map.of());
+    }
+
+    static THopIndex buildPruned(
+            TDGraph graph, Domain indexDomain, List<Integer> suppliedHubOrder,
+            Map<Integer, ExactArrivalProfile> exactArcArrivals) {
         Objects.requireNonNull(graph, "graph");
         validateIndexDomain(graph, indexDomain);
         List<Integer> order = validateHubOrder(graph, suppliedHubOrder);
-        new FifoFastestPathProfileSearch(graph); // validates FIFO, including temporal support gaps
+        new FifoFastestPathProfileSearch(graph, exactArcArrivals); // validates exact FIFO and support gaps
 
         long started = System.nanoTime();
         long sampledPeak = usedHeapBytes();
@@ -195,18 +209,19 @@ public final class THopIndex {
         long forwardEnvelopes = 0;
         long backwardEnvelopes = 0;
 
-        Map<Integer, Map<Integer, ExactTemporalProfile>> out = new HashMap<>();
-        Map<Integer, Map<Integer, ExactTemporalProfile>> in = new HashMap<>();
+        Map<Integer, Map<Integer, ExactArrivalProfile>> out = new HashMap<>();
+        Map<Integer, Map<Integer, ExactArrivalProfile>> in = new HashMap<>();
         for (int node : graph.nodeIds()) {
             out.put(node, new HashMap<>());
             in.put(node, new HashMap<>());
         }
 
-        Domain terminalArrivalDomain = PrunedFifoProfileSearch.terminalArrivalDomain(graph);
+        ExactTemporalDomain terminalArrivalDomain = PrunedFifoProfileSearch.terminalArrivalDomain(
+                graph, exactArcArrivals);
         Set<Integer> processedHubs = new LinkedHashSet<>();
         Set<LabelKey> prunedLabels = new HashSet<>();
         for (int hub : order) {
-            ExactTemporalProfile self = ExactTemporalProfile.identity(indexDomain);
+            ExactArrivalProfile self = ExactArrivalProfile.identity(indexDomain);
             out.get(hub).put(hub, self);
             in.get(hub).put(hub, self);
 
@@ -215,11 +230,12 @@ public final class THopIndex {
                     hub,
                     self,
                     PrunedFifoProfileSearch.Direction.FORWARD,
+                    exactArcArrivals,
                     (vertex, profile) -> {
                         if (vertex == hub) {
                             return true;
                         }
-                        ExactTemporalProfile previous = labelEnvelope(
+                        ExactArrivalProfile previous = labelEnvelope(
                                 out, in, hub, vertex, processedHubs);
                         if (previous.dominates(profile)) {
                             in.get(vertex).remove(hub);
@@ -237,17 +253,18 @@ public final class THopIndex {
             forwardEnvelopes += forward.statistics().envelopeOperations();
             sampledPeak = Math.max(sampledPeak, forward.statistics().sampledPeakUsedHeapBytes());
 
-            ExactTemporalProfile terminalIdentity = ExactTemporalProfile.identity(terminalArrivalDomain);
+            ExactArrivalProfile terminalIdentity = ExactArrivalProfile.identity(terminalArrivalDomain);
             PrunedFifoProfileSearch.SearchResult backward = PrunedFifoProfileSearch.run(
                     graph,
                     hub,
                     terminalIdentity,
                     PrunedFifoProfileSearch.Direction.BACKWARD,
+                    exactArcArrivals,
                     (vertex, profile) -> {
                         if (vertex == hub) {
                             return true;
                         }
-                        ExactTemporalProfile previous = labelEnvelope(
+                        ExactArrivalProfile previous = labelEnvelope(
                                 out, in, vertex, hub, processedHubs);
                         if (previous.dominates(profile)) {
                             out.get(vertex).remove(hub);
@@ -366,16 +383,16 @@ public final class THopIndex {
         return List.copyOf(suppliedHubOrder);
     }
 
-    private static ExactTemporalProfile labelEnvelope(
-            Map<Integer, Map<Integer, ExactTemporalProfile>> out,
-            Map<Integer, Map<Integer, ExactTemporalProfile>> in,
+    private static ExactArrivalProfile labelEnvelope(
+            Map<Integer, Map<Integer, ExactArrivalProfile>> out,
+            Map<Integer, Map<Integer, ExactArrivalProfile>> in,
             int source,
             int destination,
             Set<Integer> eligibleHubs) {
-        ExactTemporalProfile result = ExactTemporalProfile.empty();
+        ExactArrivalProfile result = ExactArrivalProfile.empty();
         for (int hub : eligibleHubs) {
-            ExactTemporalProfile sourceToHub = out.get(source).get(hub);
-            ExactTemporalProfile hubToDestination = in.get(destination).get(hub);
+            ExactArrivalProfile sourceToHub = out.get(source).get(hub);
+            ExactArrivalProfile hubToDestination = in.get(destination).get(hub);
             if (sourceToHub == null || hubToDestination == null) {
                 continue;
             }
@@ -400,14 +417,26 @@ public final class THopIndex {
         return indexDomain;
     }
 
-    /** Hubs h with labels (h,F(v,h,t)) for v. */
+    /** Rounded legacy label projections; rational event roots are lost in this view. */
     public Map<Integer, ExactTemporalProfile> outgoingLabels(int vertex) {
+        graph.node(vertex);
+        return roundedLabels(outgoingLabels.get(vertex));
+    }
+
+    /** Rounded legacy label projections; rational event roots are lost in this view. */
+    public Map<Integer, ExactTemporalProfile> incomingLabels(int vertex) {
+        graph.node(vertex);
+        return roundedLabels(incomingLabels.get(vertex));
+    }
+
+    /** Authoritative exact labels {@code F(vertex,hub,t)}. */
+    public Map<Integer, ExactArrivalProfile> exactOutgoingLabels(int vertex) {
         graph.node(vertex);
         return outgoingLabels.get(vertex);
     }
 
-    /** Hubs h with labels (h,F(h,v,t)) for v. */
-    public Map<Integer, ExactTemporalProfile> incomingLabels(int vertex) {
+    /** Authoritative exact labels {@code F(hub,vertex,t)}. */
+    public Map<Integer, ExactArrivalProfile> exactIncomingLabels(int vertex) {
         graph.node(vertex);
         return incomingLabels.get(vertex);
     }
@@ -449,7 +478,7 @@ public final class THopIndex {
         Map<String, Long> work = new HashMap<>();
         long[] sampledPeak = {usedHeapBytes()};
         int commonHubs;
-        ExactTemporalProfile arrivals = ExactTemporalProfile.empty();
+        ExactArrivalProfile arrivals = ExactArrivalProfile.empty();
         TreeSet<Integer> intersection = new TreeSet<>(outgoingLabels.get(source).keySet());
         intersection.retainAll(incomingLabels.get(destination).keySet());
         commonHubs = intersection.size();
@@ -460,20 +489,21 @@ public final class THopIndex {
                     sampledPeak[0] = Math.max(sampledPeak[0], usedHeapBytes());
                 })) {
             for (int hub : intersection) {
-                ExactTemporalProfile sourceToHub = outgoingLabels.get(source).get(hub);
-                ExactTemporalProfile hubToDestination = incomingLabels.get(destination).get(hub);
-                ExactTemporalProfile candidate = sourceToHub
+                ExactArrivalProfile sourceToHub = outgoingLabels.get(source).get(hub);
+                ExactArrivalProfile hubToDestination = incomingLabels.get(destination).get(hub);
+                ExactArrivalProfile candidate = sourceToHub
                         .composeAfter(hubToDestination)
                         .restrict(queryInterval);
                 arrivals = arrivals.pointwiseMinimum(candidate);
             }
         }
 
-        ExactTemporalProfile travelTimes = arrivals.asTravelTime();
+        ExactArrivalProfile travelTimes = arrivals.asTravelTime();
         return new QueryResult(
                 source,
                 destination,
                 queryInterval,
+                travelTimes.roundedLegacyProjection(),
                 travelTimes,
                 new QueryStatistics(
                         System.nanoTime() - started,
@@ -487,6 +517,11 @@ public final class THopIndex {
     /** Arrival-time profile for internal composition by partitioned indexes. */
     ExactTemporalProfile queryArrivalProfile(
             int source, int destination, Domain queryInterval) {
+        return queryExactArrivalProfile(source, destination, queryInterval).roundedLegacyProjection();
+    }
+
+    ExactArrivalProfile queryExactArrivalProfile(
+            int source, int destination, Domain queryInterval) {
         graph.node(source);
         graph.node(destination);
         if (queryInterval == null || queryInterval.isEmpty()) {
@@ -495,11 +530,11 @@ public final class THopIndex {
         if (!queryInterval.difference(indexDomain).isEmpty()) {
             throw new IllegalArgumentException("query interval lies outside the index temporal domain");
         }
-        ExactTemporalProfile arrivals = ExactTemporalProfile.empty();
+        ExactArrivalProfile arrivals = ExactArrivalProfile.empty();
         TreeSet<Integer> intersection = new TreeSet<>(outgoingLabels.get(source).keySet());
         intersection.retainAll(incomingLabels.get(destination).keySet());
         for (int hub : intersection) {
-            ExactTemporalProfile candidate = outgoingLabels.get(source).get(hub)
+            ExactArrivalProfile candidate = outgoingLabels.get(source).get(hub)
                     .composeAfter(incomingLabels.get(destination).get(hub))
                     .restrict(queryInterval);
             arrivals = arrivals.pointwiseMinimum(candidate);
@@ -515,28 +550,34 @@ public final class THopIndex {
         return intersection.size();
     }
 
-    private static Map<Integer, Map<Integer, ExactTemporalProfile>> freeze(
-            Map<Integer, Map<Integer, ExactTemporalProfile>> source) {
-        Map<Integer, Map<Integer, ExactTemporalProfile>> result = new HashMap<>();
+    private static Map<Integer, ExactTemporalProfile> roundedLabels(Map<Integer, ExactArrivalProfile> labels) {
+        Map<Integer, ExactTemporalProfile> result = new HashMap<>();
+        labels.forEach((hub, profile) -> result.put(hub, profile.roundedLegacyProjection()));
+        return Map.copyOf(result);
+    }
+
+    private static Map<Integer, Map<Integer, ExactArrivalProfile>> freeze(
+            Map<Integer, Map<Integer, ExactArrivalProfile>> source) {
+        Map<Integer, Map<Integer, ExactArrivalProfile>> result = new HashMap<>();
         source.forEach((vertex, labels) -> result.put(vertex, Map.copyOf(labels)));
         return Map.copyOf(result);
     }
 
-    private static long countLabels(Map<Integer, Map<Integer, ExactTemporalProfile>> labels) {
+    private static long countLabels(Map<Integer, Map<Integer, ExactArrivalProfile>> labels) {
         return labels.values().stream().mapToLong(Map::size).sum();
     }
 
-    private static long countPieces(Map<Integer, Map<Integer, ExactTemporalProfile>> labels) {
+    private static long countPieces(Map<Integer, Map<Integer, ExactArrivalProfile>> labels) {
         return labels.values().stream()
                 .flatMap(map -> map.values().stream())
-                .mapToLong(ExactTemporalProfile::pieceCount)
+                .mapToLong(ExactArrivalProfile::pieceCount)
                 .sum();
     }
 
-    private static long countBreakpoints(Map<Integer, Map<Integer, ExactTemporalProfile>> labels) {
+    private static long countBreakpoints(Map<Integer, Map<Integer, ExactArrivalProfile>> labels) {
         return labels.values().stream()
                 .flatMap(map -> map.values().stream())
-                .mapToLong(ExactTemporalProfile::breakpointCount)
+                .mapToLong(ExactArrivalProfile::breakpointCount)
                 .sum();
     }
 
@@ -596,14 +637,19 @@ public final class THopIndex {
             int destination,
             Domain queryInterval,
             ExactTemporalProfile travelTimeProfile,
+            ExactArrivalProfile exactTravelTimeProfile,
             QueryStatistics statistics) {
         public boolean hasReachableDepartures() {
-            return !travelTimeProfile.isEmpty();
+            return !exactTravelTimeProfile.isEmpty();
         }
 
-        /** Travel time at a supported departure, or throws if unreachable. */
+        /** Final HALF_EVEN-rounded exact travel time at a supported departure. */
         public double travelTimeAt(double departureTime) {
-            return travelTimeProfile.valueAt(departureTime);
+            return exactTravelTimeProfile.valueAt(departureTime).toDisplayDouble();
+        }
+
+        public edu.ipcmax.baselines.exact.ExactTime exactTravelTimeAt(double departureTime) {
+            return exactTravelTimeProfile.valueAt(departureTime);
         }
     }
 }

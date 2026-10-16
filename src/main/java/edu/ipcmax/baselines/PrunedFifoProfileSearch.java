@@ -4,6 +4,9 @@ import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.profile.TemporalProfileWork;
+import edu.ipcmax.baselines.exact.ExactArrivalProfile;
+import edu.ipcmax.baselines.exact.ExactTemporalDomain;
+import edu.ipcmax.baselines.exact.ExactTime;
 
 import java.util.Comparator;
 import java.util.HashMap;
@@ -31,25 +34,36 @@ final class PrunedFifoProfileSearch {
     static SearchResult run(
             TDGraph graph,
             int root,
-            ExactTemporalProfile rootProfile,
+            ExactArrivalProfile rootProfile,
             Direction direction,
-            BiPredicate<Integer, ExactTemporalProfile> shouldExpand) {
+            BiPredicate<Integer, ExactArrivalProfile> shouldExpand) {
+        return run(graph, root, rootProfile, direction, Map.of(), shouldExpand);
+    }
+
+    static SearchResult run(
+            TDGraph graph,
+            int root,
+            ExactArrivalProfile rootProfile,
+            Direction direction,
+            Map<Integer, ExactArrivalProfile> exactArcArrivals,
+            BiPredicate<Integer, ExactArrivalProfile> shouldExpand) {
         Objects.requireNonNull(graph, "graph");
         Objects.requireNonNull(rootProfile, "rootProfile");
         Objects.requireNonNull(direction, "direction");
         Objects.requireNonNull(shouldExpand, "shouldExpand");
+        Objects.requireNonNull(exactArcArrivals, "exactArcArrivals");
         graph.node(root);
 
         long started = System.nanoTime();
         long initialHeap = usedHeapBytes();
         long[] workCounts = {0, 0};
-        Map<Integer, ExactTemporalProfile> best = new HashMap<>();
+        Map<Integer, ExactArrivalProfile> best = new HashMap<>();
         best.put(root, rootProfile);
         PriorityQueue<QueueEntry> queue = new PriorityQueue<>(Comparator
-                .comparingDouble(QueueEntry::minimumArrival)
+                .comparing(QueueEntry::minimumArrival)
                 .thenComparingInt(QueueEntry::node));
         Set<Integer> queued = new HashSet<>();
-        queue.add(new QueueEntry(root, rootProfile.minimumValue()));
+        queue.add(new QueueEntry(root, rootProfile.minimumValueOnClosure()));
         queued.add(root);
 
         long expanded = 0;
@@ -66,7 +80,7 @@ final class PrunedFifoProfileSearch {
             while (!queue.isEmpty()) {
                 QueueEntry entry = queue.poll();
                 queued.remove(entry.node());
-                ExactTemporalProfile prefixOrSuffix = best.get(entry.node());
+                ExactArrivalProfile prefixOrSuffix = best.get(entry.node());
                 expanded++;
                 if (!shouldExpand.test(entry.node(), prefixOrSuffix)) {
                     skipped++;
@@ -77,16 +91,17 @@ final class PrunedFifoProfileSearch {
                         ? graph.outgoingEdges(entry.node())
                         : graph.incomingEdges(entry.node());
                 for (Edge edge : edges) {
-                    ExactTemporalProfile edgeArrival = ExactTemporalProfile.edgeArrival(edge);
+                    ExactArrivalProfile edgeArrival = exactArcArrivals.get(edge.arcId());
+                    if (edgeArrival == null) edgeArrival = ExactArrivalProfile.edgeArrival(edge);
                     int adjacent = direction == Direction.FORWARD ? edge.target() : edge.source();
-                    ExactTemporalProfile candidate = direction == Direction.FORWARD
+                    ExactArrivalProfile candidate = direction == Direction.FORWARD
                             ? prefixOrSuffix.composeAfter(edgeArrival)
                             : edgeArrival.composeAfter(prefixOrSuffix);
                     if (candidate.isEmpty()) {
                         continue;
                     }
-                    ExactTemporalProfile current = best.get(adjacent);
-                    ExactTemporalProfile merged = current == null
+                    ExactArrivalProfile current = best.get(adjacent);
+                    ExactArrivalProfile merged = current == null
                             ? candidate
                             : current.pointwiseMinimum(candidate);
                     if (current != null && current.sameFunction(merged)) {
@@ -95,7 +110,7 @@ final class PrunedFifoProfileSearch {
                     best.put(adjacent, merged);
                     generated++;
                     if (queued.add(adjacent)) {
-                        queue.add(new QueueEntry(adjacent, merged.minimumValue()));
+                        queue.add(new QueueEntry(adjacent, merged.minimumValueOnClosure()));
                     }
                     sampledPeak = Math.max(sampledPeak, usedHeapBytes());
                 }
@@ -115,20 +130,21 @@ final class PrunedFifoProfileSearch {
                         sampledPeak));
     }
 
-    static Domain terminalArrivalDomain(TDGraph graph) {
-        double minimum = Double.POSITIVE_INFINITY;
-        double maximum = Double.NEGATIVE_INFINITY;
+    static ExactTemporalDomain terminalArrivalDomain(TDGraph graph) {
+        return terminalArrivalDomain(graph, Map.of());
+    }
+
+    static ExactTemporalDomain terminalArrivalDomain(
+            TDGraph graph, Map<Integer, ExactArrivalProfile> exactArcArrivals) {
+        ExactTemporalDomain result = ExactTemporalDomain.empty();
         for (Edge edge : graph.edges()) {
-            for (var cell : ExactTemporalProfile.edgeArrival(edge).cells()) {
-                for (var point : cell.breakpoints()) {
-                    minimum = Math.min(minimum, point.value());
-                    maximum = Math.max(maximum, point.value());
-                }
-            }
+            ExactArrivalProfile arrival = exactArcArrivals.get(edge.arcId());
+            if (arrival == null) arrival = ExactArrivalProfile.edgeArrival(edge);
+            result = result.union(arrival.imageDomain());
         }
-        return minimum == Double.POSITIVE_INFINITY
-                ? Domain.closed(0, 0)
-                : Domain.closed(minimum, maximum);
+        return result.isEmpty()
+                ? ExactTemporalDomain.of(ExactTemporalDomain.Interval.singleton(ExactTime.ZERO))
+                : result;
     }
 
     private static long usedHeapBytes() {
@@ -136,7 +152,7 @@ final class PrunedFifoProfileSearch {
         return runtime.totalMemory() - runtime.freeMemory();
     }
 
-    private record QueueEntry(int node, double minimumArrival) {
+    private record QueueEntry(int node, ExactTime minimumArrival) {
     }
 
     record SearchStatistics(
@@ -150,7 +166,7 @@ final class PrunedFifoProfileSearch {
     }
 
     record SearchResult(
-            Map<Integer, ExactTemporalProfile> profiles,
+            Map<Integer, ExactArrivalProfile> profiles,
             SearchStatistics statistics) {
     }
 }

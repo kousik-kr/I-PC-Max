@@ -1,10 +1,13 @@
 package edu.ipcmax.baselines;
 
 import edu.ipcmax.core.function.Domain;
-import edu.ipcmax.core.function.PiecewiseLinearFn;
 import edu.ipcmax.core.graph.Edge;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.profile.TemporalProfileWork;
+import edu.ipcmax.baselines.exact.ExactAffineSegment;
+import edu.ipcmax.baselines.exact.ExactArrivalProfile;
+import edu.ipcmax.baselines.exact.ExactTemporalDomain;
+import edu.ipcmax.baselines.exact.ExactTime;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -37,10 +40,16 @@ import java.util.Set;
  */
 public final class FifoFastestPathProfileSearch {
     private final TDGraph graph;
+    private final Map<Integer, ExactArrivalProfile> exactArcArrivals;
 
     public FifoFastestPathProfileSearch(TDGraph graph) {
+        this(graph, Map.of());
+    }
+
+    FifoFastestPathProfileSearch(TDGraph graph, Map<Integer, ExactArrivalProfile> exactArcArrivals) {
         this.graph = Objects.requireNonNull(graph, "graph");
-        validateFifoGraph(graph);
+        this.exactArcArrivals = Map.copyOf(exactArcArrivals);
+        validateFifoGraph(graph, this.exactArcArrivals);
     }
 
     /** Searches from {@code source} for all destinations over the given domain. */
@@ -52,8 +61,8 @@ public final class FifoFastestPathProfileSearch {
         long started = System.nanoTime();
         Map<String, Long> work = new HashMap<>();
         long initialHeap = usedHeapBytes();
-        ExactTemporalProfile identity = ExactTemporalProfile.identity(departureDomain);
-        Map<Integer, ExactTemporalProfile> best = new HashMap<>();
+        ExactArrivalProfile identity = ExactArrivalProfile.identity(departureDomain);
+        Map<Integer, ExactArrivalProfile> best = new HashMap<>();
         ProfileSearchCounts counts;
 
         try (TemporalProfileWork.Scope ignored = TemporalProfileWork.install(
@@ -79,15 +88,15 @@ public final class FifoFastestPathProfileSearch {
     /** Function-valued label-correcting search, valid for shared edge support. */
     private ProfileSearchCounts runProfileLabelCorrecting(
             int source,
-            ExactTemporalProfile identity,
-            Map<Integer, ExactTemporalProfile> best,
+            ExactArrivalProfile identity,
+            Map<Integer, ExactArrivalProfile> best,
             long initialHeap) {
         best.put(source, identity);
         PriorityQueue<ProfileQueueEntry> queue = new PriorityQueue<>(Comparator
-                .comparingDouble(ProfileQueueEntry::minimumArrival)
+                .comparing(ProfileQueueEntry::minimumArrival)
                 .thenComparingInt(ProfileQueueEntry::node));
         Set<Integer> queued = new HashSet<>();
-        queue.add(new ProfileQueueEntry(source, identity.minimumValue()));
+        queue.add(new ProfileQueueEntry(source, identity.minimumValueOnClosure()));
         queued.add(source);
         long expanded = 0;
         long generated = 1;
@@ -96,15 +105,15 @@ public final class FifoFastestPathProfileSearch {
         while (!queue.isEmpty()) {
             ProfileQueueEntry entry = queue.poll();
             queued.remove(entry.node());
-            ExactTemporalProfile prefix = best.get(entry.node());
+            ExactArrivalProfile prefix = best.get(entry.node());
             expanded++;
             for (Edge edge : graph.outgoingEdges(entry.node())) {
-                ExactTemporalProfile candidate = prefix.composeAfter(ExactTemporalProfile.edgeArrival(edge));
+                ExactArrivalProfile candidate = prefix.composeAfter(edgeArrival(edge));
                 if (candidate.isEmpty()) {
                     continue;
                 }
-                ExactTemporalProfile current = best.get(edge.target());
-                ExactTemporalProfile merged = current == null
+                ExactArrivalProfile current = best.get(edge.target());
+                ExactArrivalProfile merged = current == null
                         ? candidate
                         : current.pointwiseMinimum(candidate);
                 if (current != null && current.sameFunction(merged)) {
@@ -113,7 +122,7 @@ public final class FifoFastestPathProfileSearch {
                 best.put(edge.target(), merged);
                 generated++;
                 if (queued.add(edge.target())) {
-                    queue.add(new ProfileQueueEntry(edge.target(), merged.minimumValue()));
+                    queue.add(new ProfileQueueEntry(edge.target(), merged.minimumValueOnClosure()));
                 }
                 sampledPeak = Math.max(sampledPeak, usedHeapBytes());
             }
@@ -125,13 +134,13 @@ public final class FifoFastestPathProfileSearch {
     /** Partial-support fallback; every expanded function has a simple route witness. */
     private ProfileSearchCounts runSimpleRouteExpansion(
             int source,
-            ExactTemporalProfile identity,
-            Map<Integer, ExactTemporalProfile> best,
+            ExactArrivalProfile identity,
+            Map<Integer, ExactArrivalProfile> best,
             long initialHeap) {
         PriorityQueue<RouteLabel> queue = new PriorityQueue<>(LABEL_ORDER);
         RouteLabel initial = new RouteLabel(source, identity, List.of(), List.of(source), Set.of(source));
         queue.add(initial);
-        Map<StateKey, List<ExactTemporalProfile>> exactDuplicateStates = new HashMap<>();
+        Map<StateKey, List<ExactArrivalProfile>> exactDuplicateStates = new HashMap<>();
         exactDuplicateStates.put(new StateKey(source, initial.visitedNodes()), new ArrayList<>(List.of(identity)));
         long expanded = 0;
         long generated = 1;
@@ -140,7 +149,7 @@ public final class FifoFastestPathProfileSearch {
         while (!queue.isEmpty()) {
             RouteLabel label = queue.poll();
             expanded++;
-            ExactTemporalProfile prior = best.get(label.node());
+            ExactArrivalProfile prior = best.get(label.node());
             if (prior == null) {
                 best.put(label.node(), label.profile());
             } else {
@@ -150,8 +159,8 @@ public final class FifoFastestPathProfileSearch {
                 if (label.visitedNodes().contains(edge.target())) {
                     continue;
                 }
-                ExactTemporalProfile candidate = label.profile().composeAfter(
-                        ExactTemporalProfile.edgeArrival(edge));
+                ExactArrivalProfile candidate = label.profile().composeAfter(
+                edgeArrival(edge));
                 if (candidate.isEmpty()) {
                     continue;
                 }
@@ -161,7 +170,7 @@ public final class FifoFastestPathProfileSearch {
                 visited.add(edge.target());
                 Set<Integer> immutableVisited = Set.copyOf(visited);
                 StateKey state = new StateKey(edge.target(), immutableVisited);
-                List<ExactTemporalProfile> equivalent = exactDuplicateStates.computeIfAbsent(
+                List<ExactArrivalProfile> equivalent = exactDuplicateStates.computeIfAbsent(
                         state, ignoredState -> new ArrayList<>());
                 if (equivalent.stream().anyMatch(candidate::sameFunction)) {
                     continue;
@@ -177,9 +186,9 @@ public final class FifoFastestPathProfileSearch {
     }
 
     private boolean hasCommonSupportDomain() {
-        Domain common = null;
+        ExactTemporalDomain common = null;
         for (Edge edge : graph.edges()) {
-            Domain candidate = edge.travelTimeFunction().domain();
+            ExactTemporalDomain candidate = edgeArrival(edge).domain();
             if (common == null) {
                 common = candidate;
             } else if (!common.equals(candidate)) {
@@ -201,25 +210,39 @@ public final class FifoFastestPathProfileSearch {
         return runtime.totalMemory() - runtime.freeMemory();
     }
 
-    private static void validateFifoGraph(TDGraph graph) {
+    private ExactArrivalProfile edgeArrival(Edge edge) {
+        ExactArrivalProfile override = exactArcArrivals.get(edge.arcId());
+        return override == null ? ExactArrivalProfile.edgeArrival(edge) : override;
+    }
+
+    private static void validateFifoGraph(
+            TDGraph graph, Map<Integer, ExactArrivalProfile> exactArcArrivals) {
         for (Edge edge : graph.edges()) {
-            PiecewiseLinearFn function = edge.travelTimeFunction();
-            function.requireFifo("arc_id " + edge.arcId());
-            List<Domain.Interval> intervals = function.domain().intervals();
-            for (int index = 1; index < intervals.size(); index++) {
-                double priorArrival = function.arrivalTimeAtClosure(intervals.get(index - 1).end());
-                double nextArrival = function.arrivalTimeAtClosure(intervals.get(index).start());
-                if (priorArrival > nextArrival) {
+            ExactArrivalProfile override = exactArcArrivals.get(edge.arcId());
+            ExactArrivalProfile arrival = override == null ? ExactArrivalProfile.edgeArrival(edge) : override;
+            List<ExactAffineSegment> segments = arrival.segments();
+            for (ExactAffineSegment segment : segments) {
+                if (segment.slope().signum() < 0) {
+                    throw new IllegalArgumentException("arc_id " + edge.arcId() + ": non-FIFO arrival function");
+                }
+            }
+            List<ExactAffineSegment> ordered = arrival.segments();
+            for (int index = 1; index < ordered.size(); index++) {
+                ExactAffineSegment prior = ordered.get(index - 1);
+                ExactAffineSegment next = ordered.get(index);
+                ExactTime priorArrival = prior.valueAtClosure(prior.interval().end());
+                ExactTime nextArrival = next.valueAtClosure(next.interval().start());
+                if (priorArrival.compareTo(nextArrival) > 0) {
                     throw new IllegalArgumentException(
                             "arc_id " + edge.arcId()
-                                    + ": arrival function is non-FIFO across a domain gap");
+                                    + ": arrival function is non-FIFO across a profile boundary");
                 }
             }
         }
     }
 
     private static final Comparator<RouteLabel> LABEL_ORDER = Comparator
-            .comparingDouble((RouteLabel label) -> label.profile().minimumValue())
+            .comparing((RouteLabel label) -> label.profile().minimumValueOnClosure())
             .thenComparingInt(label -> label.arcIds().size())
             .thenComparing(RouteLabel::arcIds, FifoFastestPathProfileSearch::compareArcIds)
             .thenComparingInt(RouteLabel::node);
@@ -235,7 +258,7 @@ public final class FifoFastestPathProfileSearch {
         return Integer.compare(left.size(), right.size());
     }
 
-    private record ProfileQueueEntry(int node, double minimumArrival) {
+    private record ProfileQueueEntry(int node, ExactTime minimumArrival) {
     }
 
     private record ProfileSearchCounts(long expanded, long generated, long sampledPeakUsedHeapBytes) {
@@ -246,7 +269,7 @@ public final class FifoFastestPathProfileSearch {
 
     private record RouteLabel(
             int node,
-            ExactTemporalProfile profile,
+            ExactArrivalProfile profile,
             List<Integer> arcIds,
             List<Integer> nodeSequence,
             Set<Integer> visitedNodes) {
@@ -266,16 +289,20 @@ public final class FifoFastestPathProfileSearch {
         private final int source;
         private final Domain departureDomain;
         private final Map<Integer, ExactTemporalProfile> profiles;
+        private final Map<Integer, ExactArrivalProfile> exactProfiles;
         private final SearchStatistics statistics;
 
         private SearchResult(
                 int source,
                 Domain departureDomain,
-                Map<Integer, ExactTemporalProfile> profiles,
+                Map<Integer, ExactArrivalProfile> profiles,
                 SearchStatistics statistics) {
             this.source = source;
             this.departureDomain = departureDomain;
-            this.profiles = Map.copyOf(profiles);
+            Map<Integer, ExactTemporalProfile> rounded = new HashMap<>();
+            profiles.forEach((node, profile) -> rounded.put(node, profile.roundedLegacyProjection()));
+            this.profiles = Map.copyOf(rounded);
+            this.exactProfiles = Map.copyOf(profiles);
             this.statistics = statistics;
         }
 
@@ -287,12 +314,22 @@ public final class FifoFastestPathProfileSearch {
             return departureDomain;
         }
 
+        /** Rounded legacy projection. Use {@link #exactProfileTo(int)} for authoritative results. */
         public Optional<ExactTemporalProfile> profileTo(int destination) {
             return Optional.ofNullable(profiles.get(destination));
         }
 
+        /** Rounded legacy projections for source compatibility. */
         public Map<Integer, ExactTemporalProfile> profiles() {
             return profiles;
+        }
+
+        public Optional<ExactArrivalProfile> exactProfileTo(int destination) {
+            return Optional.ofNullable(exactProfiles.get(destination));
+        }
+
+        public Map<Integer, ExactArrivalProfile> exactProfiles() {
+            return exactProfiles;
         }
 
         public SearchStatistics statistics() {

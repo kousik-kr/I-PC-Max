@@ -191,8 +191,8 @@ class BoundaryTHopIndexTest {
         assertEquals(-1L, Files.mismatch(firstFile, loadedCopy));
         for (int source : metadata.boundaryVertexIds()) {
             for (int destination : metadata.boundaryVertexIds()) {
-                assertTrue(first.query(source, destination, HORIZON).travelTimeProfile().sameFunction(
-                        loaded.query(source, destination, HORIZON).travelTimeProfile()),
+                assertTrue(first.query(source, destination, HORIZON).exactTravelTimeProfile().sameFunction(
+                        loaded.query(source, destination, HORIZON).exactTravelTimeProfile()),
                         "save/reload mismatch " + source + "->" + destination);
             }
         }
