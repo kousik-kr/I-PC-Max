@@ -9,6 +9,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 
 import edu.ipcmax.core.function.Domain;
 import edu.ipcmax.core.pcmax.EnvelopeProfile;
@@ -16,11 +18,30 @@ import edu.ipcmax.core.pcmax.EnvelopeSegment;
 
 /** Deterministic serialization, statistics, and exact interval comparisons. */
 public final class ProfileSupport {
+    private static final ObjectMapper OBJECTIVE_JSON = new ObjectMapper()
+            .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
     private ProfileSupport() {
     }
 
     public static String checksum(EnvelopeProfile profile) {
         return sha256(canonical(profile));
+    }
+
+    /** Stable scientific output only: excludes preparation/query times and other diagnostics. */
+    public static String canonicalResult(AlgorithmResult result) {
+        if (result.profile() != null) return canonical(result.profile());
+        Object objective = result.scalars().get("objective_result");
+        if (objective == null) return null;
+        try {
+            return OBJECTIVE_JSON.writeValueAsString(objective) + "\n";
+        } catch (java.io.IOException failure) {
+            throw new IllegalArgumentException("objective result is not serializable", failure);
+        }
+    }
+
+    public static String resultChecksum(AlgorithmResult result) {
+        String canonical = canonicalResult(result);
+        return canonical == null ? null : sha256(canonical);
     }
 
     public static String canonical(EnvelopeProfile profile) {
@@ -50,6 +71,11 @@ public final class ProfileSupport {
         Map<String, Object> output = new LinkedHashMap<>();
         if (result.profile() == null) {
             addNullOutput(output);
+            if (result.scalars().get("objective_result") instanceof Map<?, ?> objective) {
+                objective.forEach((key, value) -> output.put(String.valueOf(key), value));
+                output.put("profile_checksum", resultChecksum(result));
+                output.put("objective_result", objective);
+            }
             return output;
         }
         EnvelopeProfile profile = result.profile();

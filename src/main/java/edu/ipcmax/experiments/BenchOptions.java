@@ -74,6 +74,7 @@ final class BenchOptions {
     String internalForcedStatus;
     String internalForcedReason;
     Path internalProgressFile;
+    final Map<String, String> objectiveOptions = new LinkedHashMap<>();
 
     static BenchOptions parse(String[] args) {
         BenchOptions options = new BenchOptions();
@@ -136,6 +137,10 @@ final class BenchOptions {
                                                 java.util.Locale.ROOT));
                 case "--rpq-step-minutes" -> options.rpqStepMinutes = wholeMinutes(tokens, ++index, option);
                 case "--baseline-k" -> options.baselineK = integer(tokens, ++index, option);
+                case "--thop-index-dir", "--thop-partitions", "--thop-domain-start",
+                        "--thop-domain-end", "--thop-lifecycle", "--sicsp-weights",
+                        "--sicsp-weight-bound" -> options.objectiveOptions.put(
+                                option.substring(2).replace('-', '_'), value(tokens, ++index, option));
                 case "--max-enumerated-paths" -> options.maxEnumeratedPaths = positiveLong(tokens, ++index, option);
                 case "--max-labels" -> options.maxLabels = positiveLong(tokens, ++index, option);
                 case "--max-expansions" -> options.maxExpansions = positiveLong(tokens, ++index, option);
@@ -240,6 +245,41 @@ final class BenchOptions {
         if (algorithm.equals("ksp-profile") && baselineK < 1) {
             throw new IllegalArgumentException("KSP requires --baseline-k >= 1");
         }
+        if (algorithm.equals("thop-partitioned")) {
+            requireObjectiveOption("thop_index_dir");
+            requireObjectiveOption("thop_partitions");
+            double start = Double.parseDouble(requireObjectiveOption("thop_domain_start"));
+            double end = Double.parseDouble(requireObjectiveOption("thop_domain_end"));
+            if (!Double.isFinite(start) || !Double.isFinite(end) || end < start) {
+                throw new IllegalArgumentException("THop requires a finite ordered index domain");
+            }
+            String lifecycle = objectiveOptions.getOrDefault("thop_lifecycle", "load");
+            if (!List.of("load", "build", "load-or-build").contains(lifecycle)) {
+                throw new IllegalArgumentException("THop lifecycle must be load, build or load-or-build");
+            }
+            if (!sharedPreprocessing && (timeoutSeconds > 0 || memoryLimitMb > 0)) {
+                throw new IllegalArgumentException("THop with resource limits requires --shared-preprocessing to retain prepared index state");
+            }
+            if (referenceAlgorithm != null || referenceJsonl != null || verifyOutput) {
+                throw new IllegalArgumentException("THop fastest-profile output requires its objective-specific reference workflow");
+            }
+        }
+        if (algorithm.equals("sicsp-native")) {
+            requireObjectiveOption("sicsp_weights");
+            double bound = Double.parseDouble(requireObjectiveOption("sicsp_weight_bound"));
+            if (!Double.isFinite(bound) || bound < 0) {
+                throw new IllegalArgumentException("native SICSP requires finite nonnegative --sicsp-weight-bound");
+            }
+            if (referenceAlgorithm != null || referenceJsonl != null || verifyOutput) {
+                throw new IllegalArgumentException("native SICSP uses its separate weight-bounded reproduction workflow");
+            }
+        }
+        for (String key : objectiveOptions.keySet()) {
+            if ((key.startsWith("thop_") && !algorithm.equals("thop-partitioned"))
+                    || (key.startsWith("sicsp_") && !algorithm.equals("sicsp-native"))) {
+                throw new IllegalArgumentException("objective option " + key + " is incompatible with " + algorithm);
+            }
+        }
         if (!budgetPolicy.equals("tight") && !budgetPolicy.equals("full-interval-feasible")) {
             throw new IllegalArgumentException("unknown --budget-policy: " + budgetPolicy);
         }
@@ -251,6 +291,26 @@ final class BenchOptions {
         }
         if (ablation == Ablation.SERIAL) {
             threads = 1;
+        }
+        captureObjectiveInputChecksum("thop_partitions");
+        captureObjectiveInputChecksum("sicsp_weights");
+    }
+
+    private void captureObjectiveInputChecksum(String key) {
+        String value = objectiveOptions.get(key);
+        if (value == null) return;
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (var input = java.nio.file.Files.newInputStream(Path.of(value))) {
+                byte[] buffer = new byte[65536];
+                int count;
+                while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+            }
+            objectiveOptions.put(key + "_sha256", java.util.HexFormat.of().formatHex(digest.digest()));
+        } catch (java.io.IOException failure) {
+            throw new IllegalArgumentException("cannot hash objective input " + value, failure);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
         }
     }
 
@@ -277,7 +337,8 @@ final class BenchOptions {
                 seed,
                 timeoutSeconds == 0
                         ? 0L
-                        : TimeUnit.SECONDS.toNanos(timeoutSeconds));
+                        : TimeUnit.SECONDS.toNanos(timeoutSeconds),
+                objectiveOptions);
     }
 
     Map<String, Object> normalized() {
@@ -323,6 +384,7 @@ final class BenchOptions {
         result.put("collect_memory", collectMemory);
         result.put("collect_internal_counters", collectInternalCounters);
         result.put("serialize_profile", serializeProfile);
+        result.put("objective_options", new java.util.TreeMap<>(objectiveOptions));
         if (queryFile == null || internalGeneratedQueries) {
             result.put("query_count", queryCount);
             result.put("query_seed", Long.toUnsignedString(querySeed));
@@ -332,6 +394,14 @@ final class BenchOptions {
             result.put("budget_policy", budgetPolicy);
         }
         return result;
+    }
+
+    private String requireObjectiveOption(String key) {
+        String value = objectiveOptions.get(key);
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("--" + key.replace('_', '-') + " is required for " + algorithm);
+        }
+        return value;
     }
 
     private static String value(List<String> tokens, int index, String option) {

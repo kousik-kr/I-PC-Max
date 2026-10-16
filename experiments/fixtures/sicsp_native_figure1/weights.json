@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "semantics": "native_sicsp_edge_weight",
+  "arcs": {
+    "0": [{"start": 0, "end": 100, "start_inclusive": true, "end_inclusive": true, "weight": 15}],
+    "1": [
+      {"start": 0, "end": 20, "start_inclusive": true, "end_inclusive": false, "weight": 10},
+      {"start": 20, "end": 60, "start_inclusive": true, "end_inclusive": false, "weight": 30},
+      {"start": 60, "end": 100, "start_inclusive": true, "end_inclusive": true, "weight": 20}
+    ]
+  }
+}

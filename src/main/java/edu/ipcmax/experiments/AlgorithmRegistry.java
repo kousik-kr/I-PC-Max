@@ -9,6 +9,8 @@ import edu.ipcmax.experiments.algorithms.PaceExperimentAlgorithm;
 import edu.ipcmax.experiments.algorithms.ProfileLabelingAlgorithm;
 import edu.ipcmax.experiments.algorithms.SicspPrefExperimentAlgorithm;
 import edu.ipcmax.experiments.algorithms.RpqAlgorithm;
+import edu.ipcmax.experiments.algorithms.ThopPartitionedExperimentAlgorithm;
+import edu.ipcmax.experiments.algorithms.SicspNativeExperimentAlgorithm;
 import edu.ipcmax.experiments.framework.ExperimentAlgorithm;
 
 /** Stable candidate identifier registry. */
@@ -27,6 +29,8 @@ public final class AlgorithmRegistry {
             case "iscope" -> new IScopeAlgorithm();
             case "allfp" -> new AllFpAlgorithm();
             case "sicsp-pref" -> new SicspPrefExperimentAlgorithm();
+            case "sicsp-native" -> new SicspNativeExperimentAlgorithm();
+            case "thop-partitioned" -> new ThopPartitionedExperimentAlgorithm();
             default -> throw new IllegalArgumentException("unknown --algorithm: " + id);
         };
     }

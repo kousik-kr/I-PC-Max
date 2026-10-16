@@ -240,9 +240,10 @@ public final class PaceBench {
                 ? Map.of() : referenceChecksums(options.referenceJsonl);
         Map<AllFpReuseKey, AllFpReusableExecution> allFpReuse =
                 new HashMap<>();
-        ExperimentAlgorithm algorithm = AlgorithmRegistry.create(options.algorithm);
-        ExperimentAlgorithm reference = options.referenceAlgorithm == null
+        try (ExperimentAlgorithm algorithm = AlgorithmRegistry.create(options.algorithm);
+             ExperimentAlgorithm reference = options.referenceAlgorithm == null
                 ? null : AlgorithmRegistry.create(options.referenceAlgorithm);
+        ) {
         long algorithmPreparationStarted = System.nanoTime();
         algorithm.prepare(loaded.graph, options.algorithmConfig());
         if (reference != null) {
@@ -311,6 +312,7 @@ public final class PaceBench {
             }
         }
         return failures == 0 ? 0 : 1;
+        }
     }
 
     private static int executeIsolated(BenchOptions options, String configHash) throws Exception {
@@ -720,8 +722,7 @@ public final class PaceBench {
         if (referenceProfile == null && externalReferences.containsKey(entry.queryId())) {
             quality.put("reference_profile_checksum", externalReferences.get(entry.queryId()));
         }
-        String actualChecksum = outcome.result.profile() == null
-                ? null : ProfileSupport.checksum(outcome.result.profile());
+        String actualChecksum = ProfileSupport.resultChecksum(outcome.result);
         String expectedChecksum = referenceProfile == null
                 ? externalReferences.get(entry.queryId()) : ProfileSupport.checksum(referenceProfile);
         boolean referenceAvailable = expectedChecksum != null;
@@ -737,11 +738,11 @@ public final class PaceBench {
         Map<String, Object> record = record(options, entry, runId, configHash, warmup, repetition,
                 preprocessingNanos, datasetRecord, systemRecord, outcome, result, quality,
                 referenceAvailable, verified, referenceNanos);
-        if (options.serializeProfile && result.profile() != null) {
+        if (options.serializeProfile && ProfileSupport.canonicalResult(result) != null) {
             long started = System.nanoTime();
             Files.createDirectories(options.profileOutputDir);
             Path profilePath = options.profileOutputDir.resolve(runId + ".profile.txt");
-            String canonical = ProfileSupport.canonical(result.profile());
+            String canonical = ProfileSupport.canonicalResult(result);
             Files.writeString(profilePath, canonical, StandardCharsets.UTF_8);
             @SuppressWarnings("unchecked")
             Map<String, Object> output = (Map<String, Object>) record.get("output");
@@ -1032,6 +1033,8 @@ public final class PaceBench {
                     case "iscope" -> "ANYTIME_VALIDATED_ENVELOPE";
                     case "allfp" -> "FASTEST_FUNCTIONAL_ENVELOPE";
                     case "sicsp-pref" -> "RETAINED_FRONTIER_UNRESOLVED";
+                    case "sicsp-native" -> "NATIVE_HEURISTIC_WEIGHT_BOUNDED";
+                    case "thop-partitioned" -> "EXACT_FASTEST_PROFILE";
                     default -> null;
                 });
         status.put(
@@ -1101,9 +1104,21 @@ public final class PaceBench {
             case "iscope" -> "ANYTIME_STREAMING_INTERVAL_PROFILE";
             case "allfp" -> "CONTINUOUS_FUNCTIONAL_ALL_FASTEST_PATHS";
             case "sicsp-pref" -> "SEQUENTIAL_SICSP_PREFERENCE_PROFILE";
+            case "sicsp-native" -> "NATIVE_WEIGHT_BOUNDED_MINIMUM_ARRIVAL_HEURISTIC";
+            case "thop-partitioned" -> "PARTITIONED_EXACT_RATIONAL_FASTEST_PROFILE";
             default -> "REDUCED_OUTPUT_EVALUATION_PROFILE";
         });
         result.put("preprocessing_accounting", "EXCLUDED");
+        result.put("objective_options", new java.util.TreeMap<>(options.objectiveOptions));
+        result.put("objective", switch (options.algorithm) {
+            case "thop-partitioned" -> "fastest_profile";
+            case "sicsp-native" -> "minimum_arrival_under_native_weight_bound";
+            default -> "preference_profile_with_travel_time_budget";
+        });
+        result.put("numerical_contract", options.algorithm.equals("thop-partitioned")
+                ? "exact_rational_after_decimal_canonical_input-v1"
+                : "legacy_canonical_12_decimal_profile_and_per_operation_replay-v1");
+        result.put("status_schema_version", 2);
         result.put("theta", pace == null ? null : pace.theta());
         result.put("anchor_limit", pace == null ? null
                 : (pace.anchorLimit() == Integer.MAX_VALUE ? "unbounded" : pace.anchorLimit()));
@@ -1169,11 +1184,9 @@ public final class PaceBench {
         result.put("single_midpoint_fastest_connector_enabled",
                 pace != null
                         && pace.singleMidpointFastestConnectorEnabled());
-        result.put("temporal_replay_contract",
-                options.algorithm.equals("iscope") || options.algorithm.equals("allfp")
-                        ? "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1"
-                        : pace == null ? null
-                                : "EXACT_CONTINUOUS_TEMPORAL_PROFILE-v1");
+        result.put("temporal_replay_contract", options.algorithm.equals("thop-partitioned")
+                ? "EXACT_RATIONAL_AFTER_DECIMAL_CANONICAL_INPUT-v1"
+                : "LEGACY_CANONICAL_PROFILE_COMPOSITION-v1");
         result.put("connector_cache_enabled", pace == null ? false
                 : pace.features().connectorCacheEnabled());
         result.put("profile_cache_enabled", pace == null ? false
@@ -1200,6 +1213,10 @@ public final class PaceBench {
                 "algorithm",
                 "ablation",
                 "execution_mode",
+                "objective",
+                "objective_options",
+                "numerical_contract",
+                "status_schema_version",
                 "theta",
                 "pivot_limit_l",
                 "connector_limit_kc",
@@ -1246,6 +1263,8 @@ public final class PaceBench {
             case "iscope" -> "ISCOPE_ANYTIME";
             case "allfp" -> "ALLFP_FUNCTIONAL";
             case "sicsp-pref" -> "SICSP_PREF_RETAINED_FRONTIER";
+            case "sicsp-native" -> "SICSP_NATIVE_HEURISTIC";
+            case "thop-partitioned" -> "THOP_PARTITIONED_EXACT_FASTEST_PROFILE";
             default -> null;
         };
     }
@@ -1261,7 +1280,7 @@ public final class PaceBench {
                     "NO_CAP_REACHED");
             case "iscope" -> List.of(
                     "EXHAUSTIVE_LOOPLESS_PATH_ENUMERATION",
-                    "EXACT_FULL_WINDOW_PATH_PROFILES",
+                    "LEGACY_CANONICAL_FULL_WINDOW_PATH_PROFILES",
                     "SCORE_MAXIMIZING_FEASIBLE_ENVELOPE",
                     "NO_CAP_REACHED");
             case "allfp" -> List.of(
@@ -1269,6 +1288,10 @@ public final class PaceBench {
                     "ADMISSIBLE_REVERSE_MIN_EDGE_LOWER_BOUND",
                     "LOWER_BORDER_OR_QUEUE_EXHAUSTION_PROOF",
                     "NO_CAP_REACHED");
+            case "thop-partitioned" -> List.of(
+                    "FASTEST_PROFILE_OBJECTIVE_ONLY", "EXACT_RATIONAL_LABELS",
+                    "VERSION_2_GRAPH_VALIDATED_INDEX", "SUPPORTED_DEPARTURE_DOMAIN",
+                    "EXHAUSTIVE_BOUNDARY_COMBINATIONS");
             default -> List.of();
         };
     }
@@ -1312,6 +1335,11 @@ public final class PaceBench {
         result.put("dataset_path", dataset.path);
         result.put("runtime_graph_semantic_checksum",
                 graphSemanticChecksum(graph));
+        if (List.of("demo", "sicsp-figure1", "timeout-test").contains(dataset.path)) {
+            result.put("dataset_identity_kind", "bundled_synthetic_semantic_definition");
+            result.put("fixture_semantic_identity_sha256", graphSemanticChecksum(graph));
+            result.put("fixture_semantic_identity_scope", "canonical_runtime_graph_semantics-v1");
+        }
         result.put("dataset_payload_checksum",
                 dataset.datasetPayloadChecksum);
         result.put("dataset_structure_checksum",
@@ -1442,6 +1470,10 @@ public final class PaceBench {
     }
 
     private static LoadedDataset loadDataset(String value) throws IOException {
+        if (value.equals("sicsp-figure1")) {
+            return new LoadedDataset(ExperimentDatasets.sicspFigureOne(),
+                    "sicsp-figure1", "sicsp-figure1", 0L, null, null, null);
+        }
         if (value.equals("demo") || value.equals("tiny")) {
             return new LoadedDataset(
                     ExperimentDatasets.demo(), "demo", "demo", 42L,

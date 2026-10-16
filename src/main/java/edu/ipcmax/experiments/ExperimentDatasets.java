@@ -5,6 +5,9 @@ import java.util.List;
 import edu.ipcmax.core.function.PiecewiseConstFn;
 import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.graph.TinyGraphBuilder;
+import edu.ipcmax.core.graph.Edge;
+import edu.ipcmax.core.graph.Node;
+import edu.ipcmax.core.function.PiecewiseLinearFn;
 
 /** Small deterministic datasets bundled for infrastructure smoke tests. */
 public final class ExperimentDatasets {
@@ -29,6 +32,24 @@ public final class ExperimentDatasets {
                 .edge(3, 4, 40, PiecewiseConstFn.zeroFullDay())
                 .edge(1, 4, 25, PiecewiseConstFn.zeroFullDay())
                 .build();
+    }
+
+    /** Yuan et al., Figure 1 travel functions; native weights are supplied separately. */
+    public static TDGraph sicspFigureOne() {
+        var first = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 10),
+                new PiecewiseLinearFn.Breakpoint(40, 30),
+                new PiecewiseLinearFn.Breakpoint(100, 40)));
+        var second = new PiecewiseLinearFn(List.of(
+                new PiecewiseLinearFn.Breakpoint(0, 40),
+                new PiecewiseLinearFn.Breakpoint(50, 40),
+                new PiecewiseLinearFn.Breakpoint(80, 10),
+                new PiecewiseLinearFn.Breakpoint(100, 10)));
+        return new TDGraph(List.of(new Node(1, 0, 0), new Node(2, 0, 0), new Node(3, 0, 0)),
+                List.of(new Edge(0, 1, 2, 1, first.minTravelTime(), first,
+                                PiecewiseConstFn.constant(first.domain(), 0)),
+                        new Edge(1, 2, 3, 1, second.minTravelTime(), second,
+                                PiecewiseConstFn.constant(second.domain(), 0))));
     }
 
     /** Dense acyclic graph used only to verify external timeout handling in infrastructure tests. */

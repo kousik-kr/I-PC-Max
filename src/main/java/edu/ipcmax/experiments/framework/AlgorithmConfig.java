@@ -1,5 +1,7 @@
 package edu.ipcmax.experiments.framework;
 
+import java.util.Map;
+
 import edu.ipcmax.core.pcmax.PaceEngineMode;
 import edu.ipcmax.core.pcmax.PaceExecutionPolicy;
 import edu.ipcmax.core.pcmax.PaceFeatures;
@@ -26,7 +28,26 @@ public record AlgorithmConfig(
         int maxFrontierFragments,
         boolean deterministic,
         long seed,
-        long queryTimeLimitNanos) {
+        long queryTimeLimitNanos,
+        Map<String, String> objectiveOptions) {
+
+    public AlgorithmConfig {
+        objectiveOptions = objectiveOptions == null ? Map.of() : Map.copyOf(objectiveOptions);
+    }
+
+    /** Source-compatible constructor before objective-specific adapter options. */
+    public AlgorithmConfig(String algorithm, Ablation ablation, PaceEngineMode paceEngineMode,
+            int theta, int pivotLimitL, int connectorLimitKc, int frontierLimitKf,
+            long connectorExpansionCapMc, int breakpointCapMb, long queryWorkCapMq,
+            int threads, int rpqStepMinutes, int baselineK, long maxEnumeratedPaths,
+            long maxLabels, long maxExpansions, int maxFrontierFragments,
+            boolean deterministic, long seed, long queryTimeLimitNanos) {
+        this(algorithm, ablation, paceEngineMode, theta, pivotLimitL, connectorLimitKc,
+                frontierLimitKf, connectorExpansionCapMc, breakpointCapMb, queryWorkCapMq,
+                threads, rpqStepMinutes, baselineK, maxEnumeratedPaths, maxLabels,
+                maxExpansions, maxFrontierFragments, deterministic, seed,
+                queryTimeLimitNanos, Map.of());
+    }
 
     /** Compatibility constructor for callers predating internal query deadlines. */
     public AlgorithmConfig(

@@ -4,7 +4,7 @@ import edu.ipcmax.core.graph.TDGraph;
 import edu.ipcmax.core.pcmax.QuerySpec;
 
 /** One common benchmark interface for all candidate methods. */
-public interface ExperimentAlgorithm {
+public interface ExperimentAlgorithm extends AutoCloseable {
     String id();
 
     /**
@@ -14,6 +14,11 @@ public interface ExperimentAlgorithm {
     default void prepare(
             TDGraph graph,
             AlgorithmConfig config) {
+    }
+
+    /** Releases prepared state. Persistent on-disk indexes remain available for reuse. */
+    @Override
+    default void close() {
     }
 
     AlgorithmResult run(
