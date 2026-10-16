@@ -5,6 +5,11 @@ sources.txt
 *.class
 __pycache__/
 *.pyc
+# Local NYC v2 dataset inputs and derived graph/profile data.
+case_studies/nyc_shuttle/v2/raw/
+case_studies/nyc_shuttle/v2/intermediate/
+case_studies/nyc_shuttle/v2/processed/
+case_studies/nyc_shuttle/v2/manifests/nyc_queries.jsonl
 results/raw/*
 results/profiles/*
 results/summaries/*
