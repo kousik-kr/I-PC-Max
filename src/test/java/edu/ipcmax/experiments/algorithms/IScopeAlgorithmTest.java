@@ -23,6 +23,8 @@ import edu.ipcmax.experiments.framework.AlgorithmConfig;
 import edu.ipcmax.experiments.framework.ExactnessScope;
 import edu.ipcmax.experiments.framework.ExperimentInstrumentation;
 import edu.ipcmax.experiments.framework.ExperimentStatus;
+import edu.ipcmax.testoracle.ExactFraction;
+import edu.ipcmax.testoracle.TinyContinuousEnvelopeOracle;
 
 class IScopeAlgorithmTest {
     @Test
@@ -46,6 +48,48 @@ class IScopeAlgorithmTest {
         assertEquals(2L, result.scalars().get("distinct_selected_paths"));
         assertTrue((Boolean) result.scalars().get("output_loopless"));
         assertTrue((Boolean) result.scalars().get("output_feasible"));
+    }
+
+    @Test
+    void exhaustiveTinyQueryMatchesIndependentContinuousOracle() {
+        TDGraph graph = switchingScoreGraph();
+        QuerySpec query = new QuerySpec(1, 4, 0, 10, 20, 1);
+
+        var expected = TinyContinuousEnvelopeOracle.solve(graph, query);
+        var actual = new IScopeAlgorithm().run(
+                graph,
+                query,
+                config("iscope", 10_000, 10_000_000_000L),
+                new ExperimentInstrumentation());
+
+        assertEquals(ExperimentStatus.CERTIFIED_COMPLETE, actual.status());
+        assertEquals(ExactnessScope.GLOBAL_CERTIFIED, actual.exactnessScope());
+        for (var oracleSegment : expected) {
+            List<Double> probes = new java.util.ArrayList<>();
+            if (oracleSegment.startInclusive()) {
+                probes.add(oracleSegment.start().toDouble());
+            }
+            if (oracleSegment.endInclusive()) {
+                probes.add(oracleSegment.end().toDouble());
+            }
+            if (oracleSegment.start().compareTo(oracleSegment.end()) < 0) {
+                probes.add(oracleSegment.start().add(oracleSegment.end())
+                        .divide(ExactFraction.of(2)).toDouble());
+            }
+            for (double departure : probes) {
+                var expectedPath = oracleSegment.path();
+                var actualSegment = actual.profile().segmentAt(departure);
+                assertTrue(actualSegment != null,
+                        "iSCOPE omitted oracle-supported departure " + departure);
+                assertEquals(expectedPath.isEmpty(), actualSegment.noPath(),
+                        "iSCOPE feasibility differs at departure " + departure);
+                if (expectedPath.isPresent()) {
+                    assertEquals(expectedPath.orElseThrow(),
+                            actualSegment.path().arcIds(),
+                            "iSCOPE selected a different route at departure " + departure);
+                }
+            }
+        }
     }
 
     @Test
