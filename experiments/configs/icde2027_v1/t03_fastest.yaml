@@ -1,0 +1,82 @@
+{
+  "schema_version": 3,
+  "study_id": "T03-FASTEST-2027-V1",
+  "stage": "main",
+  "mode": "execute",
+  "datasets": [
+    "NY",
+    "FLA",
+    "CAL"
+  ],
+  "split": "evaluation",
+  "pairs_per_dataset": 100,
+  "centers": [
+    510,
+    1110
+  ],
+  "trials": 3,
+  "algorithms": [
+    {
+      "id": "thop-partitioned",
+      "datasets": [
+        "NY"
+      ],
+      "variant": "rational-search-first-prune-second-v2",
+      "parameters": {
+        "threads": 1,
+        "thop_index_dir": "data/indices/icde2027_v1/NY",
+        "thop_partitions": "data/indices/icde2027_v1/NY/partitions.json",
+        "thop_domain_start": 0,
+        "thop_domain_end": 10080,
+        "thop_lifecycle": "load"
+      }
+    },
+    {
+      "id": "thop-partitioned",
+      "datasets": [
+        "FLA"
+      ],
+      "variant": "rational-search-first-prune-second-v2",
+      "parameters": {
+        "threads": 1,
+        "thop_index_dir": "data/indices/icde2027_v1/FLA",
+        "thop_partitions": "data/indices/icde2027_v1/FLA/partitions.json",
+        "thop_domain_start": 0,
+        "thop_domain_end": 10080,
+        "thop_lifecycle": "load"
+      }
+    },
+    {
+      "id": "thop-partitioned",
+      "datasets": [
+        "CAL"
+      ],
+      "variant": "rational-search-first-prune-second-v2",
+      "parameters": {
+        "threads": 1,
+        "thop_index_dir": "data/indices/icde2027_v1/CAL",
+        "thop_partitions": "data/indices/icde2027_v1/CAL/partitions.json",
+        "thop_domain_start": 0,
+        "thop_domain_end": 10080,
+        "thop_lifecycle": "load"
+      }
+    }
+  ],
+  "axes": [
+    {
+      "window_minutes": 120,
+      "budget_overhead": 0.3
+    }
+  ],
+  "reference_algorithm": null,
+  "objective": "minimize_arrival_time_profile",
+  "quality_policy": "NO_REFERENCE_NO_SCORE_GAP",
+  "historical_predecessor": null,
+  "preference_score_gap_applicable": false,
+  "budget_constraint_applicable": false,
+  "materialization_requirements": [
+    "Explicit graph-bound complete partition assignments for each dataset",
+    "Build and freeze BTHP/PTHP v2 once before query timing; this configuration only loads",
+    "Record source construction schedule SEARCH_FIRST_THEN_PRUNE_MATERIALIZE"
+  ]
+}

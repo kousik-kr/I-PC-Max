@@ -84,6 +84,21 @@ public final class SicspPrefExperimentAlgorithm implements ExperimentAlgorithm {
         instrumentation.addCounter("sampled_heap_bytes", stats.sampledHeapBytes());
 
         Map<String, Object> scalars = new LinkedHashMap<>();
+        // P1-B is not an optimality-scope issue: scalar replay and composed
+        // profiles disagree at fractional temporal boundaries. Preserve the
+        // research output, but do not certify even the retained frontier.
+        scalars.put("objective", "PREFERENCE_MAX_PROFILE");
+        scalars.put("numerical_contract", "LEGACY_MIXED_PROFILE_AND_SCALAR_12DP-v1");
+        scalars.put("scalar_replay_numerical_contract", "CANONICAL_PER_OPERATION_12DP-v1");
+        scalars.put("profile_numerical_contract", "CANONICAL_CONTINUOUS_PWL_12DP-v1");
+        scalars.put("known_temporal_issue", "P1-B");
+        scalars.put("temporal_correctness_verified", false);
+        scalars.put("numerical_repair_status", "UNRESOLVED");
+        scalars.put("candidate_scope", "NATIVE_SICSP_RETAINED_SIMPLE_ROUTES");
+        scalars.put("reported_feasibility_model", "LEGACY_COMPOSED_PROFILE");
+        scalars.put("oracle_numerical_contract", "CANONICAL_CONTINUOUS_PWL_12DP-v1");
+        scalars.put("oracle_is_independent_temporal_validation", false);
+        scalars.put("oracle_quality_gap_interpretation", "LEGACY_PROFILE_MODEL_DIAGNOSTIC_ONLY");
         scalars.put("query_execution_nanos", stats.queryExecutionNanos());
         scalars.put("candidate_generation_nanos", stats.candidateGenerationNanos());
         scalars.put("candidate_adaptation_nanos", stats.candidateAdaptationNanos());
@@ -151,7 +166,7 @@ public final class SicspPrefExperimentAlgorithm implements ExperimentAlgorithm {
                 feasible ? ExperimentStatus.COMPLETED
                         : ExperimentStatus.UNRESOLVED_NO_GENERATED_CANDIDATE,
                 result.envelope(),
-                ExactnessScope.RETAINED_FRONTIER,
+                ExactnessScope.NOT_CERTIFIED,
                 scalars,
                 null,
                 null);

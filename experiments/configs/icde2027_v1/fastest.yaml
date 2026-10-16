@@ -1,0 +1,222 @@
+{
+  "schema_version": 3,
+  "experiment_id": "icde2027_v1_fastest",
+  "profile": "icde2027_v1",
+  "datasets": [
+    "NY",
+    "FLA",
+    "CAL"
+  ],
+  "dataset_configs": {
+    "NY": "experiments/configs/datasets/ny.yaml",
+    "FLA": "experiments/configs/datasets/fla.yaml",
+    "CAL": "experiments/configs/datasets/cal.yaml"
+  },
+  "studies": [
+    "experiments/configs/icde2027_v1/t03_fastest.yaml"
+  ],
+  "seeds": {
+    "graph_main": 42,
+    "query_evaluation": 20260722,
+    "query_pilot": 20260723,
+    "query_warmup": 20260724,
+    "schedule": 20260725,
+    "bootstrap": 20260726,
+    "tiny_graph_properties": 20260727,
+    "robustness_graphs": [
+      42,
+      43,
+      44
+    ]
+  },
+  "workload": {
+    "pair_splits": {
+      "pilot": 20,
+      "warmup": 10,
+      "evaluation": 100
+    },
+    "distance_bands": 5,
+    "time_centers_minutes": [
+      510,
+      1110
+    ],
+    "window_lengths_minutes": [
+      120,
+      180,
+      240,
+      300,
+      360
+    ],
+    "default_window_minutes": 120,
+    "budget_overheads": [
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5
+    ],
+    "default_budget_overhead": 0.3,
+    "evaluation_grid_minutes": 1,
+    "budget_definition": "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME",
+    "require_horizon_fit": true,
+    "allow_time_wrapping": false
+  },
+  "protocol": {
+    "warmup_passes": 1,
+    "measured_trials": 3,
+    "process_isolation": false,
+    "shared_preprocessing": true,
+    "algorithm_comparison_threads": 1,
+    "retry_infrastructure_failures": 1,
+    "retry_algorithm_failures": 0,
+    "metric_definition_version": "icde2027-objective-specific-v1",
+    "preprocessing_accounting": "SEPARATE_FROM_QUERY",
+    "prepared_query_reporting": "FIRST_COLD_AND_SUBSEQUENT_WARM",
+    "completion_policy": "STATUS_AND_COMPLETED_FLAG_MUST_AGREE",
+    "memory_measurement": "PROCESS_PEAK_RSS_AND_JAVA_HEAP_REPORTED_SEPARATELY"
+  },
+  "pace_b_defaults": {
+    "theta": 2,
+    "pivot_limit_l": 4,
+    "connector_limit_kc": 4,
+    "frontier_limit_kf": 2,
+    "score_density": 0.2,
+    "threads": 1,
+    "pilot_resolved_fields": [
+      "pivot_limit_l",
+      "connector_limit_kc",
+      "frontier_limit_kf"
+    ],
+    "connector_expansion_cap_mc": 250000,
+    "breakpoint_cap_mb": 100000,
+    "query_work_cap_mq": 5000000,
+    "query_work_accounting_contract": "PACE-MQ-TOTAL-WORK-v3",
+    "resolved_configuration": "resolved_pace_b.yaml",
+    "semantic_version": "pace-b-fb-witness-grid-v1"
+  },
+  "resolved_pace_b_required": false,
+  "resources": {
+    "timeout_seconds": 10,
+    "algorithm_timeout_seconds": {
+      "thop-partitioned": 10
+    },
+    "timeout_result_policy": {
+      "thop-partitioned": "TIMEOUT_ONLY_EXCLUDE_FROM_COMPLETED"
+    },
+    "preprocessing_timeout_seconds": 1800,
+    "memory_limit_mb": 256000,
+    "max_concurrent": 1,
+    "max_threads_per_query": 1,
+    "parallel_thread_candidates": [
+      1
+    ],
+    "require_server_profile_for_full_run": true
+  },
+  "planning": {
+    "estimated_raw_bytes_per_job": 131072,
+    "estimated_fixed_release_bytes": 104857600,
+    "max_disk_bytes": 107374182400,
+    "runtime_upper_bound_definition": "Sum of explicit per-method query caps; preprocessing excluded and reported separately."
+  },
+  "query_generation": {
+    "java_main_class": "edu.ipcmax.experiments.querygen.QuerySetGenerator",
+    "paper_java_main_class": "edu.ipcmax.experiments.querygen.PaperQuerySetGenerator",
+    "configuration": "experiments/configs/query_generation.yaml",
+    "manifest_pattern": "experiments/manifests/queries/{dataset}/paper_q1.jsonl",
+    "required_contract": "paper-q1-v1"
+  },
+  "dataset_generation": {
+    "configuration": "experiments/configs/dataset_generation.yaml",
+    "required_conversion_contract": "declared_centisecond_normalization-v1"
+  },
+  "paths": {
+    "data_root": "data/input",
+    "results_root": "experiments/results/icde2027_v1/fastest",
+    "matrix_root": "experiments/manifests/icde2027_v1/matrices",
+    "query_root": "experiments/manifests/queries",
+    "jar": "target/pace-bench-icde2027-v1.jar"
+  },
+  "historical_result_reuse": false,
+  "freeze_required_before_execution": true,
+  "required_result_identity": [
+    "source_commit",
+    "source_tree",
+    "clean_source",
+    "jar_sha256",
+    "graph_checksum",
+    "dataset_manifest_sha256",
+    "config_sha256",
+    "query_manifest_sha256",
+    "runner_sha256",
+    "aggregator_sha256",
+    "random_seed",
+    "status_schema_version",
+    "numerical_contract",
+    "objective"
+  ],
+  "release_gate": {
+    "execute_medium_or_large_campaign": false,
+    "requires_explicit_M6_or_M7_authorization": true,
+    "historical_rows_allowed": false,
+    "identity_manifest": "docs/ICDE_2027_BENCHMARK_FREEZE_MANIFEST.md"
+  },
+  "numerical_contracts": {
+    "pace-b": "legacy_canonical_12_decimal_per_operation-v1",
+    "pace-x": "legacy_canonical_12_decimal_per_operation-v1",
+    "iscope": "legacy_canonical_12_decimal_per_operation-v1",
+    "sicsp-pref": "LEGACY_MIXED_PROFILE_AND_SCALAR_12DP-v1",
+    "thop-partitioned": "exact_rational_after_decimal_canonical_input-v1"
+  },
+  "objective_track": "fastest_profile",
+  "freeze_manifest": "experiments/manifests/icde2027_v1/freezes/fastest.json",
+  "reporting": {
+    "all_methods": [
+      "source_commit",
+      "jar_sha256",
+      "graph_checksum",
+      "config_hash",
+      "query_manifest_sha256",
+      "random_seed",
+      "numerical_contract",
+      "status_schema_version",
+      "completion_status",
+      "completed",
+      "cap_triggered",
+      "threads",
+      "preparation_mode",
+      "query_total_ns",
+      "preprocessing_ns",
+      "memory_measurement_type"
+    ],
+    "preference": [
+      "feasible_coverage_fraction",
+      "integrated_preference_score",
+      "average_selected_score",
+      "profile_cell_count",
+      "path_switches",
+      "timed_out_or_incomplete_share",
+      "score_gap_only_against_GLOBAL_CERTIFIED_reference"
+    ],
+    "fastest_profile": [
+      "fastest_profile_query_time_ns",
+      "boundary_preprocessing_ns",
+      "inner_preprocessing_ns",
+      "index_loading_ns",
+      "disk_index_bytes",
+      "profile_pieces",
+      "functional_compositions",
+      "envelope_work",
+      "supported_departure_coverage",
+      "fastest_travel_time_profile"
+    ],
+    "native_sicsp": [
+      "native_weight_bound",
+      "weight_bound_feasible",
+      "earliest_arrival",
+      "selected_departure",
+      "O_point_count",
+      "W_point_count",
+      "native_heuristic_oracle_deviation"
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "schema_version": 3,
+  "study_id": "T01-REFERENCE-2027-V1",
+  "stage": "exactness",
+  "mode": "execute",
+  "datasets": [
+    "NY-EXACT"
+  ],
+  "split": "evaluation",
+  "pairs_per_dataset": 20,
+  "centers": [
+    510,
+    1110
+  ],
+  "trials": 1,
+  "algorithms": [
+    {
+      "id": "pace-x",
+      "variant": "conditional-certificate-reference",
+      "parameters": {
+        "threads": 1,
+        "theta": 32
+      }
+    },
+    {
+      "id": "pace-b",
+      "variant": "bounded-primary",
+      "parameters": {
+        "resolved_pace_b": false,
+        "theta": 2,
+        "threads": 1,
+        "pivot_limit_l": 4,
+        "connector_limit_kc": 4,
+        "frontier_limit_kf": 2
+      }
+    },
+    {
+      "id": "iscope",
+      "variant": "anytime-5s",
+      "parameters": {
+        "threads": 1,
+        "max_enumerated_paths": 100000
+      }
+    },
+    {
+      "id": "sicsp-pref",
+      "variant": "native-event-retained-candidates",
+      "parameters": {
+        "threads": 1
+      }
+    }
+  ],
+  "axes": [
+    {
+      "window_minutes": 120,
+      "budget_overhead": 0.1
+    }
+  ],
+  "reference_algorithm": "pace-x",
+  "objective": "maximize_preference_under_travel_time_budget",
+  "quality_policy": "GLOBAL_CERTIFIED_REFERENCE_ONLY",
+  "historical_predecessor": "experiments/configs/studies/t01_exactness_oracle.yaml"
+}

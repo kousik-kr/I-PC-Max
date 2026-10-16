@@ -195,6 +195,9 @@ def _resolved_pace_b(
 def _command(
     job: dict[str, Any], design: dict[str, Any], run_root: Path, query_file: Path, java_output: Path
 ) -> list[str]:
+    if design.get("profile") == "icde2027_v1":
+        from experiments.scripts.common.benchmark_freeze import capture_run_freeze
+        capture_run_freeze(design, run_root)
     resources = design["resources"]
     # Query timeouts must start after the isolated worker has loaded and
     # validated the dataset.  PaceBench otherwise falls back to the query
@@ -237,7 +240,9 @@ def _command(
         parameters.update(_resolved_pace_b(run_root, design))
     parameters.update(job.get("axis") or {})
     dataset_path = "demo"
-    if job["dataset_id"] != "demo":
+    if job["dataset_id"] == "sicsp-figure1":
+        dataset_path = "sicsp-figure1"
+    elif job["dataset_id"] != "demo":
         # Use the checked-in dataset definition for the base payload.  Dataset
         # IDs are logical names and are not required to be filesystem-safe
         # spellings (NY-EXACT is materialized as data/input/NY-Exact).
@@ -293,6 +298,10 @@ def _command(
         "rpq_step_minutes": "--rpq-step-minutes", "baseline_k": "--baseline-k",
         "max_enumerated_paths": "--max-enumerated-paths", "max_labels": "--max-labels",
         "max_expansions": "--max-expansions", "max_frontier_fragments": "--max-frontier-fragments",
+        "thop_index_dir": "--thop-index-dir", "thop_partitions": "--thop-partitions",
+        "thop_domain_start": "--thop-domain-start", "thop_domain_end": "--thop-domain-end",
+        "thop_lifecycle": "--thop-lifecycle", "sicsp_weights": "--sicsp-weights",
+        "sicsp_weight_bound": "--sicsp-weight-bound",
     }
     for name, flag in flags.items():
         if name in parameters:

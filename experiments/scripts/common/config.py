@@ -287,6 +287,48 @@ def _validate_scalability_5s(
         raise ValueError("T03 continuation must not overwrite the historical live JAR")
 
 
+def validate_icde2027(design: dict[str, Any], studies: list[dict[str, Any]]) -> None:
+    """Validate the new prospective family without changing historic profiles."""
+    track = design.get("objective_track")
+    allowed = {
+        "preference": {"pace-b", "iscope", "sicsp-pref"},
+        "fastest_profile": {"thop-partitioned"},
+        "tiny_preference_reference": {"pace-x", "pace-b", "iscope", "sicsp-pref"},
+    }
+    if track not in allowed:
+        raise ValueError("unknown ICDE2027 objective track")
+    methods = {a["id"] for s in studies for a in s.get("algorithms", [])}
+    if methods != allowed[track]:
+        raise ValueError(f"objective track {track} requires exactly {sorted(allowed[track])}")
+    resources = design["resources"]
+    timeouts = resources.get("algorithm_timeout_seconds", {})
+    policies = resources.get("timeout_result_policy", {})
+    for method in methods:
+        if method not in timeouts or not isinstance(timeouts[method], int) or timeouts[method] < 1:
+            raise ValueError(f"ICDE2027 requires an explicit positive cap for {method}")
+        if method not in policies:
+            raise ValueError(f"ICDE2027 requires an explicit timeout policy for {method}")
+    if "iscope" in methods and timeouts["iscope"] != 5:
+        raise ValueError("ICDE2027 iSCOPE requires the explicit five-second cap")
+    if design["protocol"].get("algorithm_comparison_threads") != 1:
+        raise ValueError("ICDE2027 primary comparisons require one thread")
+    for study in studies:
+        for algorithm in study.get("algorithms", []):
+            if algorithm.get("parameters", {}).get("threads") != 1:
+                raise ValueError("ICDE2027 algorithms must explicitly request one thread")
+            if track == "preference" and any(k in algorithm for k in ["axes", "pairs_per_dataset", "datasets"]):
+                raise ValueError("preference methods must share the study workload")
+    if track == "tiny_preference_reference":
+        if set(design["datasets"]) != {"NY-EXACT"}:
+            raise ValueError("PACE-X reference is restricted to NY-EXACT")
+        if design.get("reference_result_policy") != "GLOBAL_CERTIFIED_ONLY":
+            raise ValueError("PACE-X reference quality requires GLOBAL_CERTIFIED_ONLY")
+    if not design["paths"]["results_root"].startswith("experiments/results/icde2027_v1/"):
+        raise ValueError("prospective results require a new ICDE2027 namespace")
+    if design.get("historical_result_reuse") is not False:
+        raise ValueError("dirty historical result reuse must be explicitly disabled")
+
+
 def load_design(path: Path) -> dict[str, Any]:
     path = path.resolve()
     design = load_document(path)
@@ -333,6 +375,10 @@ def load_design(path: Path) -> dict[str, Any]:
         expected = {f"T0{index}" for index in range(1, 7)}
     elif profile == "scalability_5s":
         expected = {"T03"}
+    elif profile == "icde2027_v1":
+        expected = set(study_ids)
+        if not expected:
+            raise ValueError("ICDE2027 requires explicit objective-specific studies")
     else:
         expected = {f"E{index:02d}" for index in range(14)}
     if study_ids != expected:
@@ -350,7 +396,9 @@ def load_design(path: Path) -> dict[str, Any]:
             raise ValueError(
                 "query_generation is missing: " + ", ".join(query_missing)
             )
-    if not design.get("smoke", False) and profile == "scalability_5s":
+    if not design.get("smoke", False) and profile == "icde2027_v1":
+        validate_icde2027(design, studies)
+    elif not design.get("smoke", False) and profile == "scalability_5s":
         _validate_scalability_5s(design, studies)
     elif not design.get("smoke", False) and profile == "two_track":
         _validate_two_track(design, studies)

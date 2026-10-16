@@ -121,14 +121,16 @@ class ExperimentAlgorithmsTest {
     }
 
     @Test
-    void sicspPrefIsRegisteredAndReportsRetainedFrontierMetrics() {
+    void sicspPrefIsRegisteredAndReportsUncertifiedRetainedCandidateMetrics() {
         ExperimentInstrumentation instrumentation = new ExperimentInstrumentation();
         var algorithm = AlgorithmRegistry.create("sicsp-pref");
         var result = algorithm.run(
                 ExperimentDatasets.demo(), QUERY, config("sicsp-pref"), instrumentation);
 
         assertEquals("sicsp-pref", algorithm.id());
-        assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
+        assertEquals(ExactnessScope.NOT_CERTIFIED, result.exactnessScope());
+        assertEquals("P1-B", result.scalars().get("known_temporal_issue"));
+        assertEquals(false, result.scalars().get("temporal_correctness_verified"));
         assertTrue(result.profile().segments().stream().anyMatch(segment -> segment.found()));
         assertTrue(((Number) result.scalars().get("query_execution_nanos")).longValue() > 0);
         assertTrue(((Number) result.scalars().get("forward_search_calls")).longValue() > 0);
@@ -149,7 +151,7 @@ class ExperimentAlgorithmsTest {
                 new ExperimentInstrumentation());
 
         assertEquals(ExperimentStatus.UNRESOLVED_NO_GENERATED_CANDIDATE, result.status());
-        assertEquals(ExactnessScope.RETAINED_FRONTIER, result.exactnessScope());
+        assertEquals(ExactnessScope.NOT_CERTIFIED, result.exactnessScope());
         assertFalse(result.completeProfile());
         assertTrue(result.profile().segments().stream().allMatch(segment -> !segment.found()));
     }

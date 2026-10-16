@@ -1,0 +1,1276 @@
+{
+  "datasets": [
+    {
+      "artifact_sha256": {
+        "markers/main.complete.json": null,
+        "markers/queries.complete.json": null,
+        "plan/matrices/t03.jsonl": "bf49a6fb6728edb2cbdd34a50f39324a62bad8246ad7a6753448f9292d60ae28",
+        "provenance/IMMUTABLE.json": "aebb7be495b5abdf5c4f225c70dcabdea423f9fe079553e65e3b715c156c2362",
+        "provenance/effective_config.json": "372587ff043bd9747ff5513e24abd154b9f0ab050d9b2287e0074f74a12a35d4",
+        "provenance/environment.json": "ea9b9cb96d77739ab054aba8c993dcf48ca7f9ddc8f63124de1841418d9c4843",
+        "provenance/preflight.json": "7a093d5f06c82b4b1c1e30981319a43fbca270103c31787ea7cee4dd36b6b183",
+        "provenance/progress.json": "2f49a34afaaefdf2a0e4c02b62e50f53a5694135fcd2257a9d5b2771317e8a97"
+      },
+      "dataset": "NY",
+      "environment": {
+        "fingerprint": "9467e2d3dd578beaae15e1835f08983fe86971ae09ba8becc9cd455ddee048f6",
+        "git": {
+          "commit": "ed0eef27ac63860d40ca8aee679be26e0cde47c5",
+          "dirty": true,
+          "working_tree_hash": "847fcf3a29d8ce43b6886170441e2e17b2d45306581eb14bc4490ccf51c6ae28"
+        },
+        "hostname": "koushik",
+        "java": "openjdk version \"21.0.7\" 2025-04-15",
+        "logical_cores": 32,
+        "machine": "x86_64",
+        "maven": "\u001b[1mApache Maven 3.6.3\u001b[m",
+        "operating_system": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+        "physical_cores": 32,
+        "processor": "x86_64",
+        "python": "3.10.12"
+      },
+      "historical_source_disposition": "HISTORICAL SOURCE NOT FULLY REPRODUCIBLE",
+      "identity": {
+        "duplicate_job_ids": {},
+        "duplicate_ledger_job_ids": {},
+        "input_or_serialized_identity_mismatches": [],
+        "unknown_job_ids": []
+      },
+      "ledger_rows_all_datasets": 135000,
+      "ledger_sha256": "c1e97ec5faa46d39c36ef3cc9b2d181c0fbb8957bc56f952b0d98e4be5f155cc",
+      "methods": {
+        "allfp": {
+          "capped_partial_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_coverage": {
+            "count": 20,
+            "mean": 1.0,
+            "median": 1.0
+          },
+          "completed_only_runtime_s": {
+            "count": 20,
+            "mean": 1.7728356153500002,
+            "median": 0.490110545
+          },
+          "completed_only_score": {
+            "count": 20,
+            "mean": 101.92763175349327,
+            "median": 98.16245105237576
+          },
+          "completed_rows": 20,
+          "completion_percentage": 6.172839506172839,
+          "effective_timeout_seconds": [
+            10
+          ],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 14676,
+          "missing_job_ids": null,
+          "missing_job_ids_first_20": [
+            "0005a2b1d133ed3e40972022",
+            "000f794fce950d7d7c40455d",
+            "0013d772ab578dd9d7c7ce92",
+            "0017db214926b7c7a76cf0a6",
+            "001bc104831232c025c76006",
+            "00216bd4b6b8eb397b73a159",
+            "002711da2557f6b1d909e965",
+            "002ae59e86f02ad9ff92a385",
+            "002b764e6d3ff0c67e34148b",
+            "002df96b9ebe7b31e18ad632",
+            "003488cc59722ecf1e52562a",
+            "003828ce04183d4f1b87fd0b",
+            "003aac47922f8277e351ed19",
+            "003dbdf723de2b98802e833b",
+            "004325c781280f9d1ddbf078",
+            "00436b23c15866d1c7c49f33",
+            "0044c049f3132a88bf68fc4e",
+            "004511427038693a288af991",
+            "004754c9623d76c446fdffa1",
+            "00482d382dd5558ef3fda976"
+          ],
+          "missing_job_ids_sha256": "f1954fb2b450fdecf7166777af905ea1aa7b57937d3be6bbebe56c28b6e81cd4",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {
+            "SUCCESS": 20,
+            "TIMEOUT": 304
+          },
+          "terminal_rows": 324,
+          "time_capped_rows": 0,
+          "time_capped_valid_profile_rows": 0,
+          "timeout_rows": 304,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 324,
+          "unique_query_ids": 108,
+          "valid_profile_rows": 20
+        },
+        "iscope": {
+          "capped_partial_coverage": {
+            "count": 15000,
+            "mean": 0.3142666666666667,
+            "median": 0.0
+          },
+          "capped_partial_runtime_s": {
+            "count": 15000,
+            "mean": 4.5221734582292,
+            "median": 4.517464921
+          },
+          "capped_partial_score": {
+            "count": 4714,
+            "mean": 266.3507687681167,
+            "median": 249.67193793844277
+          },
+          "completed_only_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_rows": 0,
+          "completion_percentage": 0.0,
+          "effective_timeout_seconds": [
+            5
+          ],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 0,
+          "missing_job_ids": [],
+          "missing_job_ids_first_20": [],
+          "missing_job_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {
+            "TIME_CAPPED_NOT_CERTIFIED": 15000
+          },
+          "terminal_rows": 15000,
+          "time_capped_rows": 15000,
+          "time_capped_valid_profile_rows": 15000,
+          "timeout_rows": 0,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 15000,
+          "unique_query_ids": 5000,
+          "valid_profile_rows": 15000
+        },
+        "pace-b": {
+          "capped_partial_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_coverage": {
+            "count": 15000,
+            "mean": 1.0,
+            "median": 1.0
+          },
+          "completed_only_runtime_s": {
+            "count": 15000,
+            "mean": 3.3432583821021336,
+            "median": 3.2947159135
+          },
+          "completed_only_score": {
+            "count": 15000,
+            "mean": 327.0311658333333,
+            "median": 291.18333333333334
+          },
+          "completed_rows": 15000,
+          "completion_percentage": 100.0,
+          "effective_timeout_seconds": [
+            10
+          ],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 0,
+          "missing_job_ids": [],
+          "missing_job_ids_first_20": [],
+          "missing_job_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {
+            "SUCCESS": 15000
+          },
+          "terminal_rows": 15000,
+          "time_capped_rows": 0,
+          "time_capped_valid_profile_rows": 0,
+          "timeout_rows": 0,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 15000,
+          "unique_query_ids": 5000,
+          "valid_profile_rows": 15000
+        }
+      },
+      "original_main_marker_present": false,
+      "original_marker": null,
+      "other_dataset_raw_rows": {
+        "FLA": 3650
+      },
+      "query_manifest_identity": {
+        "matches_archived_marker": null,
+        "observed_now_sha256": "d825450cbc9f7a0b244ce3e35c5c61a82813c0862eeb5b630bb6928350c8f244",
+        "path": "experiments/manifests/queries/NY/paper_q1.jsonl",
+        "recorded_marker_sha256": null
+      },
+      "raw_rows_all_datasets": 33974,
+      "raw_tree": {
+        "bytes": 476006210,
+        "definition": "sha256(sorted(relative_path UTF8 + NUL + file_sha256 ASCII + NUL))",
+        "files": 33974,
+        "sha256": "f14fce3e9168e227f7a7b4a545f9d08334d8932f312f188c0c2ff0c6dbce32da"
+      },
+      "recorded_dataset_checksums": [
+        {
+          "checksum_scope_version": "pace-explicit-dataset-checksum-scopes-v1",
+          "contract_id": "declared_centisecond_normalization-v1",
+          "dataset_checksum": "97999bd124ed9639234bc1a9334b0426911a234b1ed80b5093ec1b30a8ade675",
+          "dataset_id": "NY",
+          "dataset_payload_checksum": "fbaaaaaa189604fffa8641d3d1810dce7fa556817bcec07ab082b669e6862c7b",
+          "directed_arcs": 733846,
+          "errors": [],
+          "fifo_arrival_functions": 733846,
+          "nodes": 264346,
+          "path": "/home/koushik/Kousik/I-PC-Max/data/input/NY",
+          "positive_lower_bound_edges": 733846,
+          "score_density": 0.2,
+          "seed": 42,
+          "selected_score_edges": 146769,
+          "support_end": 10080,
+          "temporal_attribute_checksum": "d13b5d1080e9520a82df780831265e63bbfe6a518db73d793b3f5ae4d8d548f3"
+        }
+      ],
+      "run_identity": {
+        "backend": "local",
+        "config_hash": "1ac22e4668a684e7e52a3c277f762ae3e1912e91eecc05175a2725e93917a4b3",
+        "git": {
+          "commit": "ed0eef27ac63860d40ca8aee679be26e0cde47c5",
+          "dirty": true,
+          "working_tree_hash": "847fcf3a29d8ce43b6886170441e2e17b2d45306581eb14bc4490ccf51c6ae28"
+        },
+        "run_id": "pace_q1_t03_mixed_10s_20260805",
+        "schema_version": 1
+      },
+      "scope": "Byte identity, ledger coverage and recorded terminal status only; no source reconstruction or algorithm-output certification."
+    },
+    {
+      "artifact_sha256": {
+        "markers/main.complete.json": null,
+        "markers/queries.complete.json": "d9c4a9eae0f9ccf869371ac5b0dc1d9ed270365da052783c90efb9d8108141da",
+        "plan/matrices/t03.jsonl": "c86ba5cf4a9535a99c1d50ef1c6141f8ae378fa093b460381e1cb3e1362a44bf",
+        "provenance/IMMUTABLE.json": "7affe8cc93adadf56c486b8d658ef0d4a946aae59b8fc7446113d9140a07bb11",
+        "provenance/effective_config.json": "f10569d2137dbdc92b26ab29c8a7a62d7cd09b28d40c717044bb9f813a6651bd",
+        "provenance/environment.json": "9725bfceda122f034286e5aaeddc3f5675b7b0cbb890235c75a029419ea24224",
+        "provenance/preflight.json": "92cde451cbbaf51943b6eb2edeccb390a67c455a58a8aa10c40ea8b2887d8f1e",
+        "provenance/progress.json": "398857a2534e412c3e39e91cb6851119dfea75f7b0f6cd89faf5f9b4add9039f"
+      },
+      "dataset": "FLA",
+      "environment": {
+        "fingerprint": "9029d67cf4a17898a3cda87aab6295e963dce20c25f8615e5cb9e9e588996e3b",
+        "git": {
+          "commit": "eebb1f79600d2cda1ea8f1839d965bc76637987d",
+          "dirty": true,
+          "working_tree_hash": "4b0b6308b39726937e016b759d3b586f04dcec58da57ba6df582ff502d4f8206"
+        },
+        "hostname": "koushik",
+        "java": "openjdk version \"21.0.7\" 2025-04-15",
+        "logical_cores": 32,
+        "machine": "x86_64",
+        "maven": "\u001b[1mApache Maven 3.6.3\u001b[m",
+        "operating_system": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+        "physical_cores": 32,
+        "processor": "x86_64",
+        "python": "3.10.12"
+      },
+      "historical_source_disposition": "HISTORICAL SOURCE NOT FULLY REPRODUCIBLE",
+      "identity": {
+        "duplicate_job_ids": {},
+        "duplicate_ledger_job_ids": {},
+        "input_or_serialized_identity_mismatches": [],
+        "unknown_job_ids": []
+      },
+      "ledger_rows_all_datasets": 90000,
+      "ledger_sha256": "ed6d9831a8a872aab3347dddfc71d1ea3f6b6cc1f56dd92b606f1a68cf40ad4d",
+      "methods": {
+        "allfp": {
+          "capped_partial_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_rows": 0,
+          "completion_percentage": null,
+          "effective_timeout_seconds": [],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 15000,
+          "missing_job_ids": null,
+          "missing_job_ids_first_20": [
+            "0005317b433bcf846041b24e",
+            "0011dd16696f5e0f80bae32d",
+            "00138251b875e80a2ed1a474",
+            "0014a08d3eb5b7277e754546",
+            "001708151ecf5098f256fa62",
+            "001bfafd32f9a2d83dc57f90",
+            "001e9524958b3a4299cccb08",
+            "001f806a10827474a617fc60",
+            "0026526b4f44d1caee473a52",
+            "0026e52b4ee14fe51c02eca3",
+            "002702d84ad98b23a76876cd",
+            "002d3a1c84cd3f33a78aa343",
+            "002e8d50b26f71e04b1ccd16",
+            "0039c064355b7e76ca4bd1d6",
+            "00434c2aad502facdf1c7d30",
+            "0046a57aae12ea8e51e66434",
+            "0049ba97f5b12be0ef981606",
+            "0049e13a868fa28b24a60c12",
+            "0054ddd572b4ae24ddf50812",
+            "0057c031b25ad0166808c205"
+          ],
+          "missing_job_ids_sha256": "104b6b73802e5e58de57242346b9a45eb4c5207e1d372780e26debdb15047f32",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {},
+          "terminal_rows": 0,
+          "time_capped_rows": 0,
+          "time_capped_valid_profile_rows": 0,
+          "timeout_rows": 0,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 0,
+          "unique_query_ids": 0,
+          "valid_profile_rows": 0
+        },
+        "iscope": {
+          "capped_partial_coverage": {
+            "count": 15000,
+            "mean": 0.49593333333333334,
+            "median": 0.0
+          },
+          "capped_partial_runtime_s": {
+            "count": 15000,
+            "mean": 4.515384884322667,
+            "median": 4.510211743
+          },
+          "capped_partial_score": {
+            "count": 7439,
+            "mean": 169.51869552607954,
+            "median": 151.08621472558366
+          },
+          "completed_only_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_rows": 0,
+          "completion_percentage": 0.0,
+          "effective_timeout_seconds": [
+            5
+          ],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 0,
+          "missing_job_ids": [],
+          "missing_job_ids_first_20": [],
+          "missing_job_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {
+            "TIME_CAPPED_NOT_CERTIFIED": 15000
+          },
+          "terminal_rows": 15000,
+          "time_capped_rows": 15000,
+          "time_capped_valid_profile_rows": 15000,
+          "timeout_rows": 0,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 15000,
+          "unique_query_ids": 5000,
+          "valid_profile_rows": 15000
+        },
+        "pace-b": {
+          "capped_partial_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_coverage": {
+            "count": 12743,
+            "mean": 1.0,
+            "median": 1.0
+          },
+          "completed_only_runtime_s": {
+            "count": 12743,
+            "mean": 8.686583198252295,
+            "median": 8.672804485
+          },
+          "completed_only_score": {
+            "count": 12743,
+            "mean": 211.70750806543023,
+            "median": 195.66
+          },
+          "completed_rows": 12743,
+          "completion_percentage": 84.95333333333333,
+          "effective_timeout_seconds": [
+            10
+          ],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 0,
+          "missing_job_ids": [],
+          "missing_job_ids_first_20": [],
+          "missing_job_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {
+            "SUCCESS": 12743,
+            "TIMEOUT": 2257
+          },
+          "terminal_rows": 15000,
+          "time_capped_rows": 0,
+          "time_capped_valid_profile_rows": 0,
+          "timeout_rows": 2257,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 15000,
+          "unique_query_ids": 5000,
+          "valid_profile_rows": 12743
+        }
+      },
+      "original_main_marker_present": false,
+      "original_marker": null,
+      "other_dataset_raw_rows": {
+        "CAL": 4083
+      },
+      "query_manifest_identity": {
+        "matches_archived_marker": true,
+        "observed_now_sha256": "5380579aa05085892db9984f1f259f1262af7e20678a8bc3341bacf84dcbbcad",
+        "path": "experiments/manifests/queries/ny-budget-matched/FLA/paper_q1.jsonl",
+        "recorded_marker_sha256": "5380579aa05085892db9984f1f259f1262af7e20678a8bc3341bacf84dcbbcad"
+      },
+      "raw_rows_all_datasets": 34083,
+      "raw_tree": {
+        "bytes": 422828445,
+        "definition": "sha256(sorted(relative_path UTF8 + NUL + file_sha256 ASCII + NUL))",
+        "files": 34083,
+        "sha256": "de658f9e418474536405c07158842f9d76ec2beff115a02956fc7b5c35529770"
+      },
+      "recorded_dataset_checksums": [
+        {
+          "checksum_scope_version": "pace-explicit-dataset-checksum-scopes-v1",
+          "contract_id": "declared_centisecond_normalization-v1",
+          "dataset_checksum": "19329caf5c0f725589bd30667f513ea4b6b6bbd24854cebd0ad36aa8b3e7b34d",
+          "dataset_id": "FLA",
+          "dataset_payload_checksum": "22cd3c8caa79aacdfe27ecc9d3e0b9985802b8f1a9d8d4a082b26958c8dd3c4e",
+          "directed_arcs": 2712798,
+          "errors": [],
+          "fifo_arrival_functions": 2712798,
+          "nodes": 1070376,
+          "path": "/home/koushik/Kousik/I-PC-Max/data/input/FLA",
+          "positive_lower_bound_edges": 2712798,
+          "score_density": 0.2,
+          "seed": 42,
+          "selected_score_edges": 542559,
+          "support_end": 10080,
+          "temporal_attribute_checksum": "d07f1ca2fa37efccfb8f7e43584241aabd5976033aa8aee74483b00403a235b9"
+        }
+      ],
+      "run_identity": {
+        "backend": "local",
+        "config_hash": "107f22a2da9a1bcfc8d1018238b696789cfc448257d6a15e1a96e050efc84f3c",
+        "git": {
+          "commit": "eebb1f79600d2cda1ea8f1839d965bc76637987d",
+          "dirty": true,
+          "working_tree_hash": "4b0b6308b39726937e016b759d3b586f04dcec58da57ba6df582ff502d4f8206"
+        },
+        "run_id": "pace_q1_t03_ny_budget_matched_fla_cal_20260807",
+        "schema_version": 1
+      },
+      "scope": "Byte identity, ledger coverage and recorded terminal status only; no source reconstruction or algorithm-output certification."
+    },
+    {
+      "artifact_sha256": {
+        "markers/main.complete.json": "d1c28b377502ff68c944f4039a39b2e36e168b47bf8d018953f96e4fb4d7ebf4",
+        "markers/queries.complete.json": "5c86224de5ab5f6962d2ae263b92a4a66778f0c5a45890263a473648b3fd3756",
+        "plan/matrices/t03.jsonl": "5083429a044ae9622bc34472782adbb077757f02ea0aecbd073bbcc5b612124f",
+        "provenance/IMMUTABLE.json": "3f8ebe1cf12b71729b1d9dee78e874fc33d856dc777b1077658323d7b2871e2c",
+        "provenance/effective_config.json": "285ed2fd6056255239b5f2d2a900ef141b8015558fec31cc1d41e462aef6b5b6",
+        "provenance/environment.json": "1ea4a16a644e8a5f379e077b20c2212c42dfee4e41ebd3f54b6b151253662b89",
+        "provenance/preflight.json": "52bd550c1fc23b4d959f068c0e4bea2dc0aacc4e48a85fe9eeee899fc8fce77e",
+        "provenance/progress.json": "8d4e3c96d2388126635c7464cd8061a3e70c999474e7d9ef4f2c42fdf491944b"
+      },
+      "dataset": "CAL",
+      "environment": {
+        "fingerprint": "8a3814539fbdf13c3b156d440a720e0c839b8b5e1977b7ef9b89cc51f520d735",
+        "git": {
+          "commit": "d4f740a80834395cb83feda928ec671bde6e7e95",
+          "dirty": true,
+          "working_tree_hash": "b7f4b57f8a0d5b743be7de576205e611e48b8308752598e0fa514678593993ce"
+        },
+        "hostname": "koushik",
+        "java": "openjdk version \"21.0.7\" 2025-04-15",
+        "logical_cores": 32,
+        "machine": "x86_64",
+        "maven": "\u001b[1mApache Maven 3.6.3\u001b[m",
+        "operating_system": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+        "physical_cores": 32,
+        "processor": "x86_64",
+        "python": "3.10.12"
+      },
+      "historical_source_disposition": "HISTORICAL SOURCE NOT FULLY REPRODUCIBLE",
+      "identity": {
+        "duplicate_job_ids": {},
+        "duplicate_ledger_job_ids": {},
+        "input_or_serialized_identity_mismatches": [],
+        "unknown_job_ids": []
+      },
+      "ledger_rows_all_datasets": 45000,
+      "ledger_sha256": "71099720a274b21780c048f09efb981468bc719913561d4c10ddbcaad8693fbb",
+      "methods": {
+        "allfp": {
+          "capped_partial_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_rows": 0,
+          "completion_percentage": null,
+          "effective_timeout_seconds": [],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 15000,
+          "missing_job_ids": null,
+          "missing_job_ids_first_20": [
+            "0001d7d01de0c317e5066dc6",
+            "000561d6e4cc2d94bf5ffdea",
+            "00063601a30ab65c85c63a2e",
+            "000c25a06e89a2b3f93d582f",
+            "0013d2a7c08adcd4cc556e6f",
+            "0017bddcfe1cba6890fb06b6",
+            "001a8869dcae2ad9c74d2c23",
+            "001e90859d259ad4c24fc1db",
+            "00203eb4fb05b6d21d22d034",
+            "002664519c5a49568895f567",
+            "00280487c4f2bf3260e9f2c4",
+            "002b07d84071cc0786dd8c02",
+            "00306fc2a6949a9892fcb6b4",
+            "003672c70ac7b986f7241d80",
+            "0037fb838f1cdae2810deba9",
+            "003ab9a71cafd59c401d1278",
+            "004627f1429919439504f481",
+            "0049cad4ae038f75b5bf363e",
+            "004a5e985abf05d68e4eeb56",
+            "004bff2600df66a8f2f1bfd2"
+          ],
+          "missing_job_ids_sha256": "18721716424496648f30e0903002fc84bfb2e5730dec8050fca3b5a474310423",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {},
+          "terminal_rows": 0,
+          "time_capped_rows": 0,
+          "time_capped_valid_profile_rows": 0,
+          "timeout_rows": 0,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 0,
+          "unique_query_ids": 0,
+          "valid_profile_rows": 0
+        },
+        "iscope": {
+          "capped_partial_coverage": {
+            "count": 15000,
+            "mean": 0.3228666666666667,
+            "median": 0.0
+          },
+          "capped_partial_runtime_s": {
+            "count": 15000,
+            "mean": 4.5173298544196,
+            "median": 4.5120636715
+          },
+          "capped_partial_score": {
+            "count": 4843,
+            "mean": 165.23043679535226,
+            "median": 147.75109316870484
+          },
+          "completed_only_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_rows": 0,
+          "completion_percentage": 0.0,
+          "effective_timeout_seconds": [
+            5
+          ],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 0,
+          "missing_job_ids": [],
+          "missing_job_ids_first_20": [],
+          "missing_job_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {
+            "TIME_CAPPED_NOT_CERTIFIED": 15000
+          },
+          "terminal_rows": 15000,
+          "time_capped_rows": 15000,
+          "time_capped_valid_profile_rows": 15000,
+          "timeout_rows": 0,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 15000,
+          "unique_query_ids": 5000,
+          "valid_profile_rows": 15000
+        },
+        "pace-b": {
+          "capped_partial_coverage": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_runtime_s": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "capped_partial_score": {
+            "count": 0,
+            "mean": null,
+            "median": null
+          },
+          "completed_only_coverage": {
+            "count": 15000,
+            "mean": 1.0,
+            "median": 1.0
+          },
+          "completed_only_runtime_s": {
+            "count": 15000,
+            "mean": 1.2746739715900668,
+            "median": 1.05748831
+          },
+          "completed_only_score": {
+            "count": 15000,
+            "mean": 270.6323072222222,
+            "median": 278.2977777777778
+          },
+          "completed_rows": 15000,
+          "completion_percentage": 100.0,
+          "effective_timeout_seconds": [
+            10
+          ],
+          "failed_error_rows": 0,
+          "missing_job_id_count": 0,
+          "missing_job_ids": [],
+          "missing_job_ids_first_20": [],
+          "missing_job_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "path_capped_rows": 0,
+          "planned_rows": 15000,
+          "resource_truncated_rows": 0,
+          "status_counts": {
+            "SUCCESS": 15000
+          },
+          "terminal_rows": 15000,
+          "time_capped_rows": 0,
+          "time_capped_valid_profile_rows": 0,
+          "timeout_rows": 0,
+          "uncertainty": "Not inferred: original full-matrix summary has no archived confidence-interval definition.",
+          "unique_job_ids": 15000,
+          "unique_query_ids": 5000,
+          "valid_profile_rows": 15000
+        }
+      },
+      "original_main_marker_present": true,
+      "original_marker": {
+        "identity": {
+          "backend": "local",
+          "config_hash": "03a4c26e3686eaf58df636d51c93ca8a924cad2a0ce2d8a370a9a4f4c58fc92a",
+          "git": {
+            "commit": "d4f740a80834395cb83feda928ec671bde6e7e95",
+            "dirty": true,
+            "working_tree_hash": "b7f4b57f8a0d5b743be7de576205e611e48b8308752598e0fa514678593993ce"
+          },
+          "run_id": "pace_q1_t03_cal_breakpoint_merge_20260810",
+          "schema_version": 1
+        },
+        "result": {
+          "jobs": 30000,
+          "status_counts": {
+            "SUCCESS": 15000,
+            "TIME_CAPPED_NOT_CERTIFIED": 15000
+          }
+        },
+        "stage": "main"
+      },
+      "other_dataset_raw_rows": {},
+      "query_manifest_identity": {
+        "matches_archived_marker": true,
+        "observed_now_sha256": "1ec64f72b59683b42c9bab1f2fc14efc8f0aa24f8d78af3fa49d19560a779663",
+        "path": "experiments/manifests/queries/ny-budget-matched/CAL/paper_q1.jsonl",
+        "recorded_marker_sha256": "1ec64f72b59683b42c9bab1f2fc14efc8f0aa24f8d78af3fa49d19560a779663"
+      },
+      "raw_rows_all_datasets": 30000,
+      "raw_tree": {
+        "bytes": 454136475,
+        "definition": "sha256(sorted(relative_path UTF8 + NUL + file_sha256 ASCII + NUL))",
+        "files": 30000,
+        "sha256": "dae6c7afa4135ffd0a0f32d5c5bc0f1671b89d174eed4b5966c7f6ea88949444"
+      },
+      "recorded_dataset_checksums": [
+        {
+          "checksum_scope_version": "pace-explicit-dataset-checksum-scopes-v1",
+          "contract_id": "declared_centisecond_normalization-v1",
+          "dataset_checksum": "13e4c7b0c625fedb110c1af4c392122cda95aac29ec67f6f61fb6b24ed5fc52b",
+          "dataset_id": "CAL",
+          "dataset_payload_checksum": "20d5e5371e6a56f5a2c07a45ffa4aa3feba2b1dfa2bad07163404b5e12aaad87",
+          "directed_arcs": 4657742,
+          "errors": [],
+          "fifo_arrival_functions": 4657742,
+          "nodes": 1890815,
+          "path": "/home/koushik/Kousik/I-PC-Max/data/input/CAL",
+          "positive_lower_bound_edges": 4657742,
+          "score_density": 0.2,
+          "seed": 42,
+          "selected_score_edges": 931548,
+          "support_end": 10080,
+          "temporal_attribute_checksum": "a6321260b73f67ba1cc6b5ed0b5d4733d2dded95266857cd2b22eb10e9533db9"
+        }
+      ],
+      "run_identity": {
+        "backend": "local",
+        "config_hash": "03a4c26e3686eaf58df636d51c93ca8a924cad2a0ce2d8a370a9a4f4c58fc92a",
+        "git": {
+          "commit": "d4f740a80834395cb83feda928ec671bde6e7e95",
+          "dirty": true,
+          "working_tree_hash": "b7f4b57f8a0d5b743be7de576205e611e48b8308752598e0fa514678593993ce"
+        },
+        "run_id": "pace_q1_t03_cal_breakpoint_merge_20260810",
+        "schema_version": 1
+      },
+      "scope": "Byte identity, ledger coverage and recorded terminal status only; no source reconstruction or algorithm-output certification."
+    }
+  ],
+  "historical_source_reconstructed": false,
+  "manuscript_reaggregation": {
+    "aggregator_path": "manuscript_artifacts/internal_superseded_ol/scripts/00_extract_and_freeze_manuscript_data.py",
+    "aggregator_sha256": "12431f2b41da09e3088bea283ecee1ee4e4e536a9d1ba0b9805ac3e1b223a8e0",
+    "input_tree": {
+      "bytes": 1415157667,
+      "definition": "sha256(sorted(relative_path UTF8 + NUL + file_sha256 ASCII + NUL))",
+      "files": 11,
+      "sha256": "d29eb3cdb77591d8416f5555ac18b5d505ff4b86a6e8bbe8ece270c454cb6ed2"
+    },
+    "status": "RECOMPUTED_WITH_ARCHIVED_FUNCTIONS",
+    "summaries": [
+      {
+        "completed_only_trial_runtime_s": {
+          "count": 600,
+          "mean": 3.2222709546966666,
+          "median": 3.2865620685
+        },
+        "completed_only_trial_score": {
+          "count": 600,
+          "mean": 401.81850000000003,
+          "median": 376.89166666666665
+        },
+        "completed_trial_rows": 600,
+        "completion_delta": 0.0,
+        "completion_pct": 100.0,
+        "coverage": 1.0,
+        "dataset": "NY",
+        "definition": "Median of per-query trial medians; score is median of query average_selected_score, not arithmetic mean across queries.",
+        "filters": {
+          "algorithm": "pace-b",
+          "dataset": "NY",
+          "declared_workload": "100 evaluation pairs x 2 centers",
+          "density_pct": 20,
+          "fasttrack_candidate_query_count": 0,
+          "fasttrack_candidate_record_count": 0,
+          "fasttrack_complete": false,
+          "observed_config_signatures": [
+            "theta=2;L=1;Kc=1;Kf=1;Mb=100000;Mq=5000000;threads=24"
+          ],
+          "rho": 0.3,
+          "study_id": "T03",
+          "window": 120
+        },
+        "frozen_values": {
+          "dataset": "NY",
+          "pace_completion_pct": 100.0,
+          "pace_runtime_s": 3.2853846475,
+          "pace_score": 376.8916666667
+        },
+        "method": "pace-b",
+        "observed_thread_counts": [
+          24.0
+        ],
+        "query_count": 200,
+        "recorded_query_caps_seconds": [
+          10.0
+        ],
+        "runtime_delta": 0.0,
+        "runtime_s": 3.2853846475,
+        "score": 376.89166666666665,
+        "score_delta": -3.3367086871294305e-11,
+        "selected_trial_rows": 600,
+        "source_files": [
+          "NY/work/batch-9cf12fc8bd016f3940fcf9c0/java-results.jsonl"
+        ],
+        "trial_status_counts": {
+          "COMPLETED": 600
+        }
+      },
+      {
+        "completed_only_trial_runtime_s": {
+          "count": 0,
+          "mean": null,
+          "median": null
+        },
+        "completed_only_trial_score": {
+          "count": 0,
+          "mean": null,
+          "median": null
+        },
+        "completed_trial_rows": 0,
+        "completion_pct": 0.0,
+        "coverage": 1.0,
+        "dataset": "NY",
+        "definition": "Median of per-query trial medians; score is median of query average_selected_score, not arithmetic mean across queries.",
+        "filters": {
+          "algorithm": "iscope",
+          "dataset": "NY",
+          "declared_workload": "100 evaluation pairs x 2 centers",
+          "density_pct": 20,
+          "fasttrack_candidate_query_count": 0,
+          "fasttrack_candidate_record_count": 0,
+          "fasttrack_complete": false,
+          "observed_config_signatures": [
+            "theta=<missing>;L=<missing>;Kc=<missing>;Kf=<missing>;Mb=<missing>;Mq=<missing>;threads=1"
+          ],
+          "rho": 0.3,
+          "study_id": "T03",
+          "window": 120
+        },
+        "method": "iscope",
+        "observed_thread_counts": [
+          1.0
+        ],
+        "query_count": 200,
+        "recorded_query_caps_seconds": [
+          5.0
+        ],
+        "runtime_s": 4.5059635364999995,
+        "score": 295.496798908341,
+        "selected_trial_rows": 600,
+        "source_files": [
+          "NY/work/batch-56f61cca317ea7e097ae7410/java-results.jsonl"
+        ],
+        "trial_status_counts": {
+          "TIME_CAPPED_NOT_CERTIFIED": 600
+        }
+      },
+      {
+        "completed_only_trial_runtime_s": {
+          "count": 600,
+          "mean": 0.9405886650399999,
+          "median": 0.8873358185
+        },
+        "completed_only_trial_score": {
+          "count": 600,
+          "mean": 241.07320833333333,
+          "median": 222.22916666666669
+        },
+        "completed_trial_rows": 600,
+        "completion_delta": 0.0,
+        "completion_pct": 100.0,
+        "coverage": 1.0,
+        "dataset": "FLA",
+        "definition": "Median of per-query trial medians; score is median of query average_selected_score, not arithmetic mean across queries.",
+        "filters": {
+          "algorithm": "pace-b",
+          "dataset": "FLA",
+          "declared_workload": "100 evaluation pairs x 2 centers",
+          "density_pct": 20,
+          "fasttrack_candidate_query_count": 200,
+          "fasttrack_candidate_record_count": 600,
+          "fasttrack_complete": true,
+          "observed_config_signatures": [
+            "theta=2;L=1;Kc=1;Kf=1;Mb=100000;Mq=5000000;threads=24"
+          ],
+          "rho": 0.3,
+          "study_id": "FT-SCALABILITY-REPAIR",
+          "window": 120
+        },
+        "frozen_values": {
+          "dataset": "FLA",
+          "pace_completion_pct": 100.0,
+          "pace_runtime_s": 0.8874258385,
+          "pace_score": 222.2291666667
+        },
+        "method": "pace-b",
+        "observed_thread_counts": [
+          24.0
+        ],
+        "query_count": 200,
+        "recorded_query_caps_seconds": [
+          5.0
+        ],
+        "runtime_delta": 0.0,
+        "runtime_s": 0.8874258385,
+        "score": 222.22916666666669,
+        "score_delta": -3.3310243452433497e-11,
+        "selected_trial_rows": 600,
+        "source_files": [
+          "manuscript_missing_runs/results/fasttrack_scalability_repairs_reuse_final/work/batch-b5ea9c3f25ed0d69d4f57dbb/java-results.jsonl"
+        ],
+        "trial_status_counts": {
+          "COMPLETED": 600
+        }
+      },
+      {
+        "completed_only_trial_runtime_s": {
+          "count": 0,
+          "mean": null,
+          "median": null
+        },
+        "completed_only_trial_score": {
+          "count": 0,
+          "mean": null,
+          "median": null
+        },
+        "completed_trial_rows": 0,
+        "completion_pct": 0.0,
+        "coverage": 1.0,
+        "dataset": "FLA",
+        "definition": "Median of per-query trial medians; score is median of query average_selected_score, not arithmetic mean across queries.",
+        "filters": {
+          "algorithm": "iscope",
+          "dataset": "FLA",
+          "declared_workload": "100 evaluation pairs x 2 centers",
+          "density_pct": 20,
+          "fasttrack_candidate_query_count": 0,
+          "fasttrack_candidate_record_count": 0,
+          "fasttrack_complete": false,
+          "observed_config_signatures": [
+            "theta=<missing>;L=<missing>;Kc=<missing>;Kf=<missing>;Mb=<missing>;Mq=<missing>;threads=1"
+          ],
+          "rho": 0.3,
+          "study_id": "T03",
+          "window": 120
+        },
+        "method": "iscope",
+        "observed_thread_counts": [
+          1.0
+        ],
+        "query_count": 200,
+        "recorded_query_caps_seconds": [
+          5.0
+        ],
+        "runtime_s": 4.504820992,
+        "score": 173.89629962443513,
+        "selected_trial_rows": 600,
+        "source_files": [
+          "FLA/work/batch-4a73475fdbb5d931c58986d0/java-results.jsonl"
+        ],
+        "trial_status_counts": {
+          "TIME_CAPPED_NOT_CERTIFIED": 600
+        }
+      },
+      {
+        "completed_only_trial_runtime_s": {
+          "count": 600,
+          "mean": 1.1180409048183333,
+          "median": 0.9637621009999999
+        },
+        "completed_only_trial_score": {
+          "count": 600,
+          "mean": 308.4207916666667,
+          "median": 306.6166666666667
+        },
+        "completed_trial_rows": 600,
+        "completion_delta": 0.0,
+        "completion_pct": 100.0,
+        "coverage": 1.0,
+        "dataset": "CAL",
+        "definition": "Median of per-query trial medians; score is median of query average_selected_score, not arithmetic mean across queries.",
+        "filters": {
+          "algorithm": "pace-b",
+          "dataset": "CAL",
+          "declared_workload": "100 evaluation pairs x 2 centers",
+          "density_pct": 20,
+          "fasttrack_candidate_query_count": 0,
+          "fasttrack_candidate_record_count": 0,
+          "fasttrack_complete": false,
+          "observed_config_signatures": [
+            "theta=2;L=1;Kc=1;Kf=1;Mb=100000;Mq=5000000;threads=24"
+          ],
+          "rho": 0.3,
+          "study_id": "T03",
+          "window": 120
+        },
+        "frozen_values": {
+          "dataset": "CAL",
+          "pace_completion_pct": 100.0,
+          "pace_runtime_s": 0.967245197,
+          "pace_score": 306.6166666667
+        },
+        "method": "pace-b",
+        "observed_thread_counts": [
+          24.0
+        ],
+        "query_count": 200,
+        "recorded_query_caps_seconds": [
+          10.0
+        ],
+        "runtime_delta": 0.0,
+        "runtime_s": 0.967245197,
+        "score": 306.6166666666667,
+        "score_delta": -3.3310243452433497e-11,
+        "selected_trial_rows": 600,
+        "source_files": [
+          "CAL/work/batch-79a34e97c6e908e47ec930b5/java-results.jsonl"
+        ],
+        "trial_status_counts": {
+          "COMPLETED": 600
+        }
+      },
+      {
+        "completed_only_trial_runtime_s": {
+          "count": 0,
+          "mean": null,
+          "median": null
+        },
+        "completed_only_trial_score": {
+          "count": 0,
+          "mean": null,
+          "median": null
+        },
+        "completed_trial_rows": 0,
+        "completion_pct": 0.0,
+        "coverage": 1.0,
+        "dataset": "CAL",
+        "definition": "Median of per-query trial medians; score is median of query average_selected_score, not arithmetic mean across queries.",
+        "filters": {
+          "algorithm": "iscope",
+          "dataset": "CAL",
+          "declared_workload": "100 evaluation pairs x 2 centers",
+          "density_pct": 20,
+          "fasttrack_candidate_query_count": 0,
+          "fasttrack_candidate_record_count": 0,
+          "fasttrack_complete": false,
+          "observed_config_signatures": [
+            "theta=<missing>;L=<missing>;Kc=<missing>;Kf=<missing>;Mb=<missing>;Mq=<missing>;threads=1"
+          ],
+          "rho": 0.3,
+          "study_id": "T03",
+          "window": 120
+        },
+        "method": "iscope",
+        "observed_thread_counts": [
+          1.0
+        ],
+        "query_count": 200,
+        "recorded_query_caps_seconds": [
+          5.0
+        ],
+        "runtime_s": 4.5080162425,
+        "score": 82.62585480254657,
+        "selected_trial_rows": 600,
+        "source_files": [
+          "CAL/work/batch-2986b18a313f519b98798b5e/java-results.jsonl"
+        ],
+        "trial_status_counts": {
+          "TIME_CAPPED_NOT_CERTIFIED": 600
+        }
+      }
+    ],
+    "uncertainty": "No archived uncertainty definition for this scalability table; none invented."
+  },
+  "raw_preservation_comparison": {
+    "identical": true,
+    "prior_attestation_sha256": "380729fd25525b7c134d21daee9cbf74fe55c834505e3bc4783e5e74a7b2be71"
+  },
+  "record_type": "VALIDATED_ATTESTATION",
+  "schema_version": 1,
+  "snapshot": "/home/koushik/Kousik/I-PC-Max/experiments/results/Final-result",
+  "source_recovery": {
+    "archived_jar_candidates": [
+      {
+        "bytes": 3523141,
+        "path": "experiments/results/_artifacts/pace-bench-ny-5-10-exact-parameter-study.jar",
+        "sha256": "b3bcc53d96403b66ea6a67089f2e5ce1383ae8f4a45d60594e1420fac4aecc13"
+      },
+      {
+        "bytes": 3523141,
+        "path": "experiments/results/_artifacts/pace-bench-ny-5-15-exact-parameter-study.jar",
+        "sha256": "b3bcc53d96403b66ea6a67089f2e5ce1383ae8f4a45d60594e1420fac4aecc13"
+      },
+      {
+        "bytes": 3611611,
+        "path": "experiments/results/Final-result/NYC-real-shuttle-v2/provenance/execution/pace-bench-v1-control.jar",
+        "sha256": "983b99e7a795f5cf6cf027375a1a5eedcac9a9acc079330156c310ac4310771a"
+      },
+      {
+        "bytes": 3611938,
+        "path": "experiments/results/Final-result/NYC-real-shuttle-v2/provenance/execution/pace-bench-v2.jar",
+        "sha256": "3d73adce5bea68f1248e807627a42f075d8a1a864fe3437b9031a0508e0963e1"
+      }
+    ],
+    "disposition": "HISTORICAL SOURCE NOT FULLY REPRODUCIBLE",
+    "historical_revisions": [
+      {
+        "base_commit_tree": "0fc75bb48a3a7366cf7a5053716d21da1a702a42",
+        "complete_dirty_patch_or_untracked_bundle_found": false,
+        "dataset": "NY",
+        "recorded": {
+          "commit": "ed0eef27ac63860d40ca8aee679be26e0cde47c5",
+          "dirty": true,
+          "working_tree_hash": "847fcf3a29d8ce43b6886170441e2e17b2d45306581eb14bc4490ccf51c6ae28"
+        }
+      },
+      {
+        "base_commit_tree": "a203d72609253e9619f095135609f3c1e0773dc4",
+        "complete_dirty_patch_or_untracked_bundle_found": false,
+        "dataset": "FLA",
+        "recorded": {
+          "commit": "eebb1f79600d2cda1ea8f1839d965bc76637987d",
+          "dirty": true,
+          "working_tree_hash": "4b0b6308b39726937e016b759d3b586f04dcec58da57ba6df582ff502d4f8206"
+        }
+      },
+      {
+        "base_commit_tree": "3dddf21e447b4b111757db4e2af1202a88c4879d",
+        "complete_dirty_patch_or_untracked_bundle_found": false,
+        "dataset": "CAL",
+        "recorded": {
+          "commit": "d4f740a80834395cb83feda928ec671bde6e7e95",
+          "dirty": true,
+          "working_tree_hash": "b7f4b57f8a0d5b743be7de576205e611e48b8308752598e0fa514678593993ce"
+        }
+      }
+    ],
+    "recovery_limit": "A dirty working_tree_hash is SHA256 of binary diff plus untracked path/content; it is not a Git tree ID. No archived complete dirty patch/untracked bundle or run-bound JAR was found. Unreachable tracked-tree candidates cannot recover missing untracked content.",
+    "stash": [],
+    "unreachable_commits": [
+      "028372efdb072411cbc5e25b3d11daea310118eb 5f41794dac8e53568ca234d60d12f62c467b710e 2026-10-15T15:44:21+00:00 Add baseline reference papers",
+      "8f94aa5590663571c9e837e265e5c209c21deb4c 738a66abc3e840bd5c12f18ef821bacb7aa0f37e 2026-07-31T05:17:55+00:00 Implement deterministic bounded PACE candidate engine updates"
+    ],
+    "unreachable_full_root_trees_inventoried": 36,
+    "unreachable_object_counts": {
+      "blob": 185,
+      "commit": 2,
+      "tree": 341
+    },
+    "worktrees": [
+      "worktree /home/koushik/Kousik/I-PC-Max",
+      "HEAD 56ea1012b53d7d7c72424c85f21175d56508a64f",
+      "branch refs/heads/feature/icde27-baseline-implementation"
+    ]
+  },
+  "validated_at_utc": "2026-10-16T02:01:56.965814+00:00",
+  "validator_revision": "56ea1012b53d7d7c72424c85f21175d56508a64f",
+  "validator_sha256": "109652aa752e3d70c15db2a008f30fa6efde43ea490e3ed2c875344a3214632d"
+}
