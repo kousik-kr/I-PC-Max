@@ -54,7 +54,7 @@
 \cortext[cor1]{Corresponding author}
 
 \begin{abstract}
-Routing systems increasingly need to optimize time-varying user or operational preferences while respecting a travel-time budget. Existing fixed-departure methods and interval-best formulations do not provide a route decision for every possible departure within a window. We formulate the \emph{constrained preference path profile query}, which returns a compact mapping from maximal departure-time subranges to their best feasible paths. We then introduce \emph{PACE}, a profile-aware query-processing framework for time-dependent road networks. PACE constructs an interval-safe query region, ranks score-bearing edges as pivots, assembles structural candidates through pivot-free connectors, and replays the resulting paths to form a sparse temporal envelope. PACE-X exhaustively explores certifiable instances, whereas PACE-B scales candidate generation through top-\(L\) pivot selection, a deterministic single-connector policy, bounded partial-state retention, and temporal breakpoint control. We prove query-region preservation, safe residual-budget pruning, sound temporal composition and layered assembly, exact envelope construction over a fixed candidate registry, and sufficient conditions for global PACE-X certification. On a controlled tractable NY workload, PACE-X supplies certified reference profiles while PACE-B maintains nearly constant query time at an explicitly increasing preference-quality gap. On the large NY, FLA, and CAL workloads, PACE-B completes within the bounded protocol and returns higher preference scores than the time-capped iSCOPE baseline, demonstrating the practical value of profile-aware preference routing over continuous departure intervals.
+Routing systems increasingly need to optimize time-varying user or operational preferences while respecting a travel-time budget. Existing fixed-departure methods and interval-best formulations do not provide a route decision for every possible departure within a window. We formulate the \emph{constrained preference path profile query}, which returns a compact mapping from maximal departure-time subranges to their best feasible paths. We then introduce \emph{PACE}, a profile-aware query-processing framework for time-dependent road networks. PACE constructs an interval-safe query region, ranks score-bearing edges as pivots, assembles structural candidates through pivot-free connectors, and replays the resulting paths to form a sparse temporal envelope. PACE-X exhaustively explores certifiable instances, whereas PACE-B scales candidate generation through top-\(L\) pivot selection, a deterministic single-connector policy, bounded partial-state retention, and temporal breakpoint control. We prove query-region preservation, safe residual-budget pruning, sound temporal composition and layered assembly, exact envelope construction over a fixed candidate registry, and sufficient conditions for global PACE-X certification. Archived tractable NY results report certified PACE-X reference profiles and a PACE-B quality/runtime trade-off, but those artifacts also need revision-specific validation. Archived NY, FLA, and CAL results report higher PACE-B scores than time-capped iSCOPE outputs, but those records use mixed caps and unrecovered dirty source trees. These artifacts do not establish performance for the implementation revision described here and must be validated or replaced before publication.
 \end{abstract}
 
 \begin{keywords}
@@ -2354,14 +2354,14 @@ ratio.
 \section{Experimental Evaluation}
 \label{sec:experiments}
 
-The evaluation first uses PACE-X on a controlled tractable NY workload to establish a certified reference for PACE-B. It then compares PACE-B with iSCOPE on NY, FLA, and CAL, and analyzes the mechanisms responsible for bounded-mode cost and quality. All values below are frozen from the validated publication ledger.
+The evaluation reports a controlled tractable NY study and archived NY, FLA, and CAL scalability results. The large-network artifacts are historical evidence, not results validated for the implementation revision described in this manuscript. The associated dirty source revisions and exact binaries were not recovered. The archived scalability values were reaggregated from preserved records, but their lineage remains unresolved; the main comparison and figure must be replaced from a separately authorized clean run before publication. The NY exactness, stage, sensitivity, and parallel artifacts have separate provenance questions and are not cleared by that reaggregation.
 
 \subsection{Experimental Setup}
 \label{subsec:exp_setup}
 
 \subsubsection{Implementation, platform, and datasets}
 
-PACE and iSCOPE are implemented in Java~21 and executed through a common Maven-based experimental framework. All methods share the graph loader, temporal-function representation, numerical tolerances, query manifests, and result-collection code. The experiments run on an Intel Xeon Gold 6242 server with 16 physical cores (32 hardware threads) and 300~GB RAM. Unless otherwise stated, PACE uses at most 24 worker threads and a per-process memory limit of 256000~MB.
+PACE and iSCOPE are implemented in Java~21 and use a common Maven-based runner and graph input format. Their temporal arithmetic is not a single exact-real implementation: the legacy PACE/iSCOPE profile path uses 12-decimal canonicalization, SICSP-Pref currently mixes scalar replay and continuous PWL composition, and partitioned THop uses exact rational arithmetic after decimal input conversion. A fractional-root counterexample shows that SICSP-Pref's scalar and composed results can disagree, changing both a selected route and a budget-feasibility decision; its results are therefore marked NOT_CERTIFIED. The archived runs were collected on an Intel Xeon Gold 6242 server with 16 physical cores (32 hardware threads) and 300~GB RAM. Their method-specific thread limits are stated with the historical scalability results below.
 
 Query time is measured after graph loading. Loading and reusable preprocessing costs are recorded separately. Each configuration is preceded by an untimed warm-up and then executed in three process-level trials; the query-level median is used for aggregation. We report medians, interquartile ranges, completion rates, and paired statistics on common query instances. Timeouts and memory-limit terminations remain in the experimental record.
 
@@ -2423,7 +2423,7 @@ B=(1+\rho)\widehat T_{\mathrm{ref}},
 \]
 with default \(\rho=0.30\). The one-minute grid is used only to construct manifests and selected evaluation summaries; PACE processes continuous temporal functions.
 
-PACE-B and iSCOPE receive the same 5~s query limit in the bounded comparison. A time-capped run is distinguished from a normally completed run. Quality summaries use only validated profiles available at termination and retain the associated capped status and coverage, so capped outputs are not presented as complete exact answers.
+The archived 200-query comparison did not use a common time or thread limit. Recorded PACE-B caps were 10~s for NY and CAL and 5~s for the FLA fasttrack subset, with 24 threads; iSCOPE used 5~s and one thread on all three networks. The new prospective configurations specify one thread and explicit method-specific caps, but they have not been executed. A time-capped result is incomplete and is not counted as a completed search.
 
 Unless varied explicitly, PACE-B uses
 \[
@@ -2442,7 +2442,7 @@ PACE-X is the exhaustive policy used on the small-budget NY workload. It exposes
 PACE-B is the scalable proposed policy. It uses top-\(L\) pivots, depth \(\theta\), one lower-bound-fastest connector per request, at most \(K_f\) states per state group, and breakpoint threshold \(M_b\). Its output is bounded rather than globally certified, but every path-valued assignment is replayed and validated with the original edge functions.
 
 \paragraph{iSCOPE.}
-iSCOPE is the interval constrained-preference baseline adapted to the profile comparison. It receives the same graph, departure interval, travel-time budget, score functions, and 5~s limit as PACE-B. The implementation maintains an envelope only from fully generated and replayed destination paths completed within the available execution time; an in-progress path is never committed. A capped iSCOPE profile is therefore valid over its reported coverage but is not treated as globally complete.
+iSCOPE is the interval constrained-preference baseline adapted to the profile comparison. It receives matched graph, departure interval, travel-time budget, and score inputs. In the historical scalability records its cap was 5~s on one thread, while PACE-B used the mixed caps and 24-thread setting stated above. The implementation maintains an envelope only from fully generated and replayed destination paths completed within the available execution time; an in-progress path is never committed. A capped iSCOPE profile is therefore an anytime output and is not treated as a completed search or a globally complete answer. Its adaptation differs materially from the optimized parallel method evaluated in the source paper; see the implementation-fidelity limitation in the reproducibility report.
 
 \begin{table}[t]
 \centering
@@ -2545,17 +2545,17 @@ Figure~\ref{fig:exact_quality} makes both parts of this trade-off visible. The l
 \subsection{Scalability on Large Road Networks}
 \label{subsec:exp_scalability}
 
-The main comparison evaluates PACE-B and iSCOPE on NY, FLA, and CAL under the common bounded protocol. Table~\ref{tab:scalability_main} reports runtime, completion, and returned preference score. iSCOPE is explicitly marked as time-capped; its rows are not completed exact solutions.
+The archived main comparison reports PACE-B and iSCOPE records on NY, FLA, and CAL. The values below were reaggregated from the saved query records, but their dirty source and binary identities remain unrecovered. These rows are historical and are not measurements of the implementation revision described here. All 600 iSCOPE trial rows per network are time-capped; the PACE-B rows are below their recorded caps but used different caps and thread counts across datasets. The table and figure are scheduled for replacement with a clean prospective preference comparison that includes SICSP-Pref.
 
 \begin{table*}[t]
 \centering
-\caption{End-to-end scalability under the common bounded protocol. PACE-B completes the final 200-query workload on each network. iSCOPE is time-capped at the 5~s limit, so its returned scores are capped-profile outputs rather than completed exact solutions.}
+\caption{Historical archived scalability aggregates, not validated for the implementation revision in this manuscript. The 200-query slice used PACE-B caps of 10~s (NY, CAL) and 5~s (FLA fasttrack), 24 threads, and iSCOPE caps of 5~s and one thread. Every iSCOPE trial was time-capped. The score column is the median across logical queries of each query's median trial value of average selected score; it is not an arithmetic mean. Replace this table before publication with results from the frozen prospective comparison.}
 \label{tab:scalability_main}
 \scriptsize
 \setlength{\tabcolsep}{5pt}
 \begin{tabular}{@{}llrrr@{}}
 \toprule
-\textbf{Dataset} & \textbf{Method} & \textbf{Runtime (s)} & \textbf{Completion/status} & \textbf{Mean returned score} \\
+\textbf{Dataset} & \textbf{Method} & \textbf{Runtime (s)} & \textbf{Completion/status} & \textbf{Median returned score} \\
 \midrule
 NY  & PACE-B & 3.285385 & 100\% / completed & 376.891667 \\
     & iSCOPE & 4.505964 & time-capped & 295.496799 \\
@@ -2569,12 +2569,16 @@ CAL & PACE-B & 0.967245 & 100\% / completed & 306.616667 \\
 \end{tabular}
 \end{table*}
 
-PACE-B is faster than iSCOPE and returns a higher mean preference score on all three tested networks. Its completion rate is 100\% on each 200-query workload, whereas iSCOPE is time-capped under the common 5~s protocol. Figure~\ref{fig:scalability_main} presents runtime and score jointly; the cap status in Table~\ref{tab:scalability_main} prevents the comparison from presenting iSCOPE as a completed exact method.
+The saved rows report lower median runtime and higher median query-average score for PACE-B on each of the three datasets. This is a descriptive historical comparison under unequal resource settings, not a controlled comparison or evidence for the current source. Its score is the median of per-query trial medians, not a mean over all trials. Figure~\ref{fig:scalability_main} has the same historical status and must be replaced with the table.
 
 \begin{figure*}[H]
 \centering
-\includegraphics[width=\textwidth]{experiments/results/Final-result/manuscript_artifacts/figures/scalability_runtime_score.pdf}
-\caption{Large-network comparison of PACE-B and iSCOPE on NY, FLA, and CAL. (a) Query runtime. (b) Mean returned preference score under the common bounded protocol; iSCOPE is time-capped.}
+\fbox{\begin{minipage}{0.92\textwidth}
+\centering
+\textbf{Historical plot withheld from this manuscript revision.}\\[0.5em]
+The archived PDF labels the score panel as a mean, while the recovered aggregation is a median of per-query trial medians. The plot also summarizes runs with mixed caps, thread counts, and unrecovered dirty source identities. The original PDF remains preserved in the experiment archive. A replacement plot requires a clean, authorized prospective comparison.
+\end{minipage}}
+\caption{Replacement for the historical scalability plot is pending a clean prospective comparison. The archived figure is preserved in the experiment snapshot and is not used here because its score label and run provenance do not support a current-revision comparison.}
 \label{fig:scalability_main}
 \end{figure*}
 
@@ -2847,7 +2851,7 @@ Future work will investigate adaptive connector sets and data-dependent paramete
 
 We introduced the constrained preference path profile query, which maps each maximal portion of a departure interval to its best budget-feasible path. PACE processes this query through interval-safe graph reduction, score-relevant pivots, pivot-free connectors, layered candidate construction, exact temporal replay, and sparse envelope extraction. The accompanying analysis proves safe reduction and pruning, sound candidate construction, exact envelope selection over a fixed registry, and sufficient conditions for global PACE-X certification. For PACE-B, it establishes valid path assignments, explicit unresolved-cell semantics, termination on finite inputs, and deterministic normally completed execution.
 
-The experiments separate certification from scale. On the controlled NY execution workload, PACE-X supplies certified reference profiles, but its median runtime grows from \(0.0355\)~s at \(B=5\) to \(13.7548\)~s at \(B=15\). PACE-B keeps median query time near \(0.024\)~s and complete resolved coverage on this workload, at an explicitly increasing median preference-quality gap. On NY, FLA, and CAL, PACE-B completes the 200-query workloads faster than the time-capped iSCOPE baseline and returns higher mean preference scores. The stage and sensitivity analyses explain the cost and failure modes of bounded execution, while parallel runs verify deterministic output without material single-query latency scaling. These results support profile-aware candidate construction as a practical basis for time-dependent preference routing when the actual departure time is known only within a window. Future work will consider adaptive connector alternatives, data-dependent bounded policies, and multidimensional constrained profile queries.
+The algorithmic analysis establishes properties of PACE under its stated mathematical model. The archived NY exactness, stage, sensitivity, parallel, and large-network measurements require revision-specific source and artifact validation; the large-network table additionally used mixed caps and thread counts, and its score is a median rather than a mean. The dirty historical source trees were not recovered, so these measurements do not establish performance of the implementation revision described here. Before publication, replace the scalability table and figure with a clean prospective comparison and validate or replace the other empirical artifacts against their own frozen identities. Future work will consider adaptive connector alternatives, data-dependent bounded policies, and multidimensional constrained profile queries.
 
 \bibliographystyle{cas-model2-names}
 \bibliography{cas-refs}

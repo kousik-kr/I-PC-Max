@@ -3,12 +3,16 @@
 Audit revision: 508a1d8cc422fd4595ad36857e51990fd86c562e on feature/icde27-baseline-implementation.
 Classification: **NOT READY**; see the full repository audit for findings and acceptance gates.
 
+## M5-R superseding status (2026-10-16)
+
+PACE-X's contradictory incomplete-empty-frontier result is repaired and covered by `PaceCompletionInvariantTest`; its certification remains conditional on the reviewed completeness conditions. PACE-B search is unchanged and its bounded candidate scope remains explicit. The full iSCOPE publication is now available locally and was read; the current one-thread continuous-profile implementation is a material deviation from the paper's optimized partial-function, temporal-splitting, breakpoint-merging, randomized, parallel method. Native SICSP's original weight objective and candidate search remain unchanged and now have a separate CLI adapter. SICSP-Pref remains numerically unresolved: independent tests show wrong score/winner and false budget feasibility, so its result scope is `NOT_CERTIFIED`. THop remains exact-rational for its fastest-profile objective, with its search-first then prune/materialize schedule disclosed as a paper deviation. See [M5 repair report](ICDE_2027_M5_REPAIR_REPORT.md) for gate-level evidence.
+
 ## Source materials
 
 | Method | Paper/specification | Availability and scope |
 |---|---|---|
 | PACE | Tracked manuscript PACE.tex, especially query model and algorithm sections | Source of the proposed objective, candidate construction, certificate and experimental claims; claims are checked against current code and result provenance. |
-| iSCOPE | Dutta and Gunturi, WISE 2025, “Interval Based Constrained Path Optimization in Time-Dependent Road Networks,” DOI 10.1007/978-981-95-7251-9_12 | Bibliographic page and abstract available at https://link.springer.com/chapter/10.1007/978-981-95-7251-9_12. Full paper was not present locally and publisher full text was not accessible in this audit. |
+| iSCOPE | Dutta and Gunturi, WISE 2025, “Interval Based Constrained Path Optimization in Time-Dependent Road Networks,” DOI 10.1007/978-981-95-7251-9_12 | Full 12-page paper read from `Baseline papar/WISE 2025.pdf` during M5-R; SHA-256 `50016f19605f7e32dc6de9c3a5e2e684e5131937497ca7d5f451057fecdceffc`. The earlier M5 audit's missing-paper note describes its audit-time state. Fidelity is now reviewed and explicitly classified as DEVIATION. |
 | Native SICSP / ICSP | Yuan et al., PVLDB 12(10), 2019, pp. 1058–1070, DOI 10.14778/3339490.3339491 | Local source PDF p1058-yuan.pdf was read. The paper specifies time-dependent edge travel, piecewise-constant edge weight, bounded earliest arrival and the O-point heuristic. |
 | THop | Li, Wang and Zhou, ICDE 2019, DOI 10.1109/ICDE.2019.00085 | Local Time-Dependent_Hop_Labeling_on_Road_Network.pdf and the M2/M2C implementation audits were read. |
 
@@ -19,10 +23,10 @@ Classification: **NOT READY**; see the full repository audit for findings and ac
 | Query returns a preference-maximizing route profile over a continuous departure interval, subject to travel-time budget | QuerySpec, ExactPathProfileBuilder, CandidateProfile, EnvelopeExtractor and PACE | Path profiles are restricted by budget support and replayed through edge functions. Score is evaluated at actual edge-entry time. Legacy time values are canonicalized at 12 decimal places. |
 | Routes must be vertex-simple and traversal is no-wait | Path/profile validation and loopless candidate generation in core/pcmax | Public API and oracle tests check route feasibility, looplessness and entry-time replay on tractable cases. No waiting is inserted to align a prefix with a breakpoint event. |
 | PACE-X exhaustively certifies only under stated sufficient conditions | ForwardLayeredFrontierGenerator.exactness(): no cap, selected pivots equal score-relevant pivots, and theta at least selected-pivot count | The certificate is conditional. PACE-X naming alone does not imply global exactness. The tiny continuous oracle independently enumerates all vertex-simple paths; fixed-seed corpus size is 1,000 DAGs. |
-| Empty output means no feasible path only after global search | completion() currently maps any uncapped empty PACE-X frontier to NO_FEASIBLE_PATH; PaceGenerationResult requires GLOBAL_CERTIFIED for this status | This condition is violated when the pivot/depth conditions are insufficient: an empty partial frontier yields an exception. See P1-A and reproduction in the full audit. |
+| Empty output means no feasible path only after global search | M5-R `PaceGenerationOutcome` resolves completion and exactness together from cap, emptiness, and pivot/depth coverage facts | `PaceCompletionInvariantTest` confirms that an incomplete empty frontier is `UNRESOLVED_NO_GENERATED_CANDIDATE / NOT_CERTIFIED`; a global empty result still requires complete coverage. The original P1-A throw is fixed. |
 | Endpoint and breakpoint ownership | Domain interval algebra, piecewise travel and score functions, envelope/profile classes | Tests cover open/closed endpoints, singleton intervals, score steps, ties and crossings. The model is the repository's canonical 12-decimal semantics, not arbitrary real arithmetic. |
 
-The 1,000-case PACE-X differential corpus uses fixed seed 0x50414345, FIFO DAGs with parallel arcs, and an independent rational simple-route oracle. The oracle independently evaluates edge travel and edge-entry scores and forms the candidate envelope. It is not derived from PACE composition or pruning. This is strong tiny-instance evidence, not a proof for arbitrary graph sizes or a cure for P1-A.
+The 1,000-case PACE-X differential corpus uses fixed seed 0x50414345, FIFO DAGs with parallel arcs, and an independent rational simple-route oracle. The oracle independently evaluates edge travel and edge-entry scores and forms the candidate envelope. It is not derived from PACE composition or pruning. This is strong tiny-instance evidence, not a proof for arbitrary graph sizes or for agreement with arbitrary-real arithmetic.
 
 ## PACE-B
 
@@ -48,7 +52,7 @@ The tracked manuscript claims safety of corridor reduction, residual-budget prun
 | Stop/status | Query deadline and path cap reported as TIME_CAPPED_NOT_CERTIFIED or PATH_CAPPED_NOT_CERTIFIED, scope NOT_CERTIFIED | Search exhaustion without caps is globally certified for this implementation's candidate space (all simple paths). |
 | Independent validation | IScopeAlgorithmTest now has exhaustiveTinyQueryMatchesIndependentContinuousOracle | Added in M5 because existing tests lacked an independent continuous-profile comparison. It checks feasibility and path identity at oracle endpoints and midpoints. |
 
-This audit verifies the source implementation's behavior, not full fidelity to the original paper. The complete iSCOPE text is unavailable; the paper's abstract alone cannot settle whether exhaustive vertex-simple enumeration is a faithful baseline or a materially different adaptation. The new test is also a probe comparison, not a coefficient-by-coefficient proof of the full score envelope.
+The full WISE 2025 paper is now available locally and was read in M5-R. The current implementation is a material deviation: deterministic, single-threaded vertex-simple route DFS with continuous profile adaptation, rather than the paper's optimized partial-function recursion, temporal splitting, breakpoint merging/randomized choice, and parallel work stealing. `IScopeWholeProfileOracleTest` now compares complete cells, scores, routes, affine arrival functions and endpoint ownership on supported tiny fixtures. Those fixtures do not clear the separate fractional-root shared arithmetic counterexample; see [ISCOPE_FIDELITY_AND_ORACLE.md](repairs/ISCOPE_FIDELITY_AND_ORACLE.md).
 
 ## Native SICSP / ICSP
 
@@ -85,7 +89,7 @@ The native independent oracle enumerates simple paths and independently replays 
 | Native may yield repeated-vertex route witnesses | Adaptation filters vertex-simple routes after generation | Some raw native candidates are intentionally removed. |
 | Native candidate output and O/W diagnostics | Adaptation separately records raw, simple, in-query, retained and feasible route registries | Global oracle, raw generated set and dominance-retained set remain distinct. |
 
-The SICSP-Pref envelope is exact over its retained candidate registry. It is not globally exact over every graph route, because SICSP event search can miss routes. The source tests compare the global simple-path oracle, best feasible raw candidate and best feasible retained candidate separately. A documented fixture also shows a one-tick mismatch: profile arrival 60.0 versus scalar replay 60.000000000001 at departure 6.666666666667. This is P1-B; see the full audit.
+The SICSP-Pref search still reuses native SICSP events, and raw, simple, retained, and global-oracle candidate sets remain distinct. However, the implementation's composed profile and scalar replay disagree at departure `6.666666666667` (60.0 versus 60.000000000001). Expanded independent fixtures also establish a wrong selected route/score and false budget-feasible point. The adapter therefore reports `NOT_CERTIFIED`; no retained-frontier correctness claim is currently made. P1-B remains open; see [SICSP_PREF_TEMPORAL_CORRECTNESS.md](repairs/SICSP_PREF_TEMPORAL_CORRECTNESS.md).
 
 ## THop
 
@@ -108,7 +112,7 @@ THop optimizes travel-time arrival profiles. It has no preference score objectiv
 | Model | Arithmetic scope | Meaning of exact |
 |---|---|---|
 | PACE shared model | 12-decimal canonical times; legacy per-operation function evaluation and arrival addition | Exact only relative to the declared finite-tick operations and endpoint rules, not arbitrary real-valued temporal functions. |
-| SICSP / SICSP-Pref | Same legacy model for LST/EAT/profile and edge-entry replay | Exactness is bounded by that model; SICSP-Pref has a demonstrated profile/replay mismatch at a fractional root. |
+| SICSP / SICSP-Pref | Legacy LST/EAT and scalar edge-entry replay; SICSP-Pref also composes continuous PWL profiles | SICSP-Pref scalar/profile mismatch is demonstrated; its experiment result scope is `NOT_CERTIFIED`. Native SICSP retains its original heuristic weight objective. |
 | THop | Input graph canonicalization followed by rational composition, restriction, preimages, envelopes and storage | Exact over decimal-canonical input coefficients; not exact relative to any higher precision values discarded at input conversion. |
 
 No exactness result transfers between these rows.
