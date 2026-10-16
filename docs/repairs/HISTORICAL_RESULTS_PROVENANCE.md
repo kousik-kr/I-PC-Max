@@ -21,6 +21,8 @@ python3 -m pytest -q experiments/tests/test_historical_provenance.py
 
 The second scan's raw-tree hashes and byte counts match the first scan. The digest is SHA-256 over sorted `(relative filename UTF-8, NUL, file SHA-256 ASCII, NUL)` records. It includes **all** files under each dataset snapshot's `raw/T03`, including rows belonging to another dataset.
 
+Final M5-R read-only revalidation ran on 2026-10-16 and wrote `/tmp/icde2027-historical-revalidation.json`. It reports `raw_preservation_comparison.identical=true` against the tracked attestation, no duplicate/missing/unknown ledger job IDs, and no input/serialized identity mismatches. It still reports `historical_source_reconstructed=false` and `HISTORICAL SOURCE NOT FULLY REPRODUCIBLE` for NY, FLA, and CAL. The revalidation did not write into any historical raw-result directory.
+
 | Snapshot directory | Raw files | Raw bytes | Raw-tree SHA-256 |
 |---|---:|---:|---|
 | NY | 33,974 | 476,006,210 | `f14fce3e9168e227f7a7b4a545f9d08334d8932f312f188c0c2ff0c6dbce32da` |

@@ -1,0 +1,53 @@
+{
+  "milestone": "M5-R",
+  "initial_head": "0d0fa20c8b979b1db9916d5489649d73e8cc4993",
+  "branch": "feature/icde27-baseline-implementation",
+  "initial_status": {
+    "exit_code": 0,
+    "output": "# branch.oid 0d0fa20c8b979b1db9916d5489649d73e8cc4993\n# branch.head feature/icde27-baseline-implementation"
+  },
+  "remote": {
+    "exit_code": 0,
+    "output": "origin\thttps://github.com/kousik-kr/I-PC-Max.git (fetch)\norigin\thttps://github.com/kousik-kr/I-PC-Max.git (push)"
+  },
+  "java": {
+    "exit_code": 0,
+    "output": "openjdk version \"21.0.7\" 2025-04-15\nOpenJDK Runtime Environment (build 21.0.7+6-Ubuntu-0ubuntu122.04)\nOpenJDK 64-Bit Server VM (build 21.0.7+6-Ubuntu-0ubuntu122.04, mixed mode, sharing)"
+  },
+  "maven": {
+    "exit_code": 0,
+    "output": "\u001b[1mApache Maven 3.6.3\u001b[m\nMaven home: /usr/share/maven\nJava version: 21.0.7, vendor: Ubuntu, runtime: /usr/lib/jvm/java-21-openjdk-amd64\nDefault locale: en, platform encoding: UTF-8\nOS name: \"linux\", version: \"6.8.0-138-generic\", arch: \"amd64\", family: \"unix\""
+  },
+  "python": {
+    "version": "3.10.12 (main, Jun 22 2026, 18:55:27) [GCC 11.4.0]",
+    "executable": "/usr/bin/python3",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35"
+  },
+  "papers": [
+    {
+      "path": "Baseline papar/Time-Dependent_Hop_Labeling_on_Road_Network.pdf",
+      "bytes": 920830,
+      "sha256": "3553a8898a2f3e4a4d71008dc863753f295812d742dd5fb1b5b73b858d048c57"
+    },
+    {
+      "path": "Baseline papar/WISE 2025.pdf",
+      "bytes": 882873,
+      "sha256": "50016f19605f7e32dc6de9c3a5e2e684e5131937497ca7d5f451057fecdceffc"
+    },
+    {
+      "path": "Baseline papar/p1058-yuan.pdf",
+      "bytes": 370386,
+      "sha256": "9bcf3d2fd26badfbea6afec432d5b89163c62f6a9bade22fbd9ba43155992aee"
+    }
+  ],
+  "java_production_files": 213,
+  "java_test_files": 72,
+  "registry_source_sha256": "2c67d9954c72b91c3690dbcc8b8f6d6f1f23fa5069a5161074f3d22a1fc0a984",
+  "existing_run_manifests": [
+    "experiments/results/Final-result/CAL/provenance/IMMUTABLE.json",
+    "experiments/results/Final-result/FLA/provenance/IMMUTABLE.json",
+    "experiments/results/Final-result/NY/provenance/IMMUTABLE.json",
+    "experiments/results/Final-result/NY-EXACT/provenance/IMMUTABLE.json",
+    "experiments/results/Final-result/USA/provenance/IMMUTABLE.json"
+  ]
+}
