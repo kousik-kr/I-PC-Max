@@ -186,6 +186,12 @@ class SicspPrefTemporalContractTest {
         assertEquals(List.of(3), oracle.stream().filter(cell -> contains(cell.start(), cell.end(),
                 cell.startInclusive(), cell.endInclusive(), fraction(departure)))
                 .findFirst().orElseThrow().path().orElseThrow());
+        ExactFraction switchingPoint = ExactFraction.of(20).divide(ExactFraction.of(3));
+        assertEquals(List.of(0, 1, 2), oracle.stream().filter(cell -> contains(cell.start(), cell.end(),
+                cell.startInclusive(), cell.endInclusive(), switchingPoint))
+                .findFirst().orElseThrow().path().orElseThrow());
+        assertEquals(List.of(0, 1, 2), bestLegacyAt(graph,
+                SicspSmallGraphOracle.enumerateSimplePaths(graph, 1, 4), 6.666666666668, 80));
 
         var reported = result.envelope().segmentAt(departure);
         assertEquals(List.of(0, 1, 2), reported.path().arcIds());
