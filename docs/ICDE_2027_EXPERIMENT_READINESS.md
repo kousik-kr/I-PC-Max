@@ -67,7 +67,7 @@ The six manuscript table aggregates were reproduced from the archived selector a
 ## Measurement and reproducibility
 
 - Java: OpenJDK 21.0.7; Maven 3.6.3; Maven compiler release 21.
-- Initial audit commands passed 309 Java tests and 39 Python tests. M5-R final commands passed 350 Java tests and 50 Python tests.
+- Initial audit commands passed 309 Java tests and 39 Python tests. M5-R passed 350 Java tests and 50 Python tests; M5-R2 passed 361 Java tests and 50 Python tests with the exact-profile config and refreshed unapproved freezes.
 - Capped iSCOPE outputs return `TIME_CAPPED_NOT_CERTIFIED`, with `completed=false` and `terminal=true`. Do not treat capped anytime profiles as completed searches.
 - The T03 plan distinguishes query runtime and caps in its runner/provenance; actual experiment aggregation still needs revalidation against the exact source revision and completion manifests.
 - Dataset inputs occupy 4.1 GB locally and are ignored. Their existing preflight/provenance checksums must be reused; no large data were copied, removed or rewritten during this audit.
@@ -86,7 +86,7 @@ The six manuscript table aggregates were reproduced from the archived selector a
 | G6 THop oracle | PASS WITH DOCUMENTED DEVIATION | Exact rational tiny oracle and v2 serialization pass; schedule deviation and absent large indices are disclosed. |
 | G7 Shared temporal model | FAIL | SICSP-Pref final retained-registry output is exact. PACE-X, PACE-B and iSCOPE still use legacy temporal/pruning operations; no common exact comparison model exists. |
 | G8 Registration/accounting | PASS | Six method IDs/adapters, prospective config family, freeze guard, and capped completion semantics pass tests. |
-| G9 Reproducible build | PASS | 350 Java tests, 50 Python tests, clean-source JAR and preference/reference identity freezes; THop index is pending. |
+| G9 Reproducible build | PASS | M5-R2 passes 361 Java tests and 50 Python tests; clean-source JAR and refreshed preference/reference identity freezes are recorded; THop index is pending. |
 | G10 No unresolved P0/P1 | FAIL | Historical P1-C remains unresolved and quarantined; cross-algorithm numerical contracts remain incompatible. |
 
 ## Corrective sequence before M6

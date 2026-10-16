@@ -1,18 +1,18 @@
 # ICDE 2027 prospective benchmark freeze
 
-Date: 2026-10-16. This document records identity only. **Both freezes have `readiness.approved=false`; no benchmark campaign was started or approved.** They do not cure historical provenance or the unresolved SICSP-Pref numerical defect.
+Date: 2026-10-16. This document records identity only. **Both M5-R2 freezes have `readiness.approved=false`; no benchmark campaign was started or approved.** SICSP-Pref's final evaluator is repaired only for its retained candidate registry. These freezes do not cure historical provenance or establish a common exact numerical contract across preference algorithms.
 
 ## Source and executable
 
 | Item | Frozen value |
 |---|---|
 | Branch | `feature/icde27-baseline-implementation` |
-| Clean source commit | `e1912754a9d9356e019f1f3899e120ccc339c227` |
-| Git tree | `6bf1af229f28b2f294cb175172b5b1a2766351e7` |
+| Clean source commit | `72005400036bd244fae407cc65e9a219cd6657d4` |
+| Git tree | `954c118a530c56d42486c880019830798955d19e` |
 | Source status | Clean release checkout; `source.clean=true` |
 | Build command | `mvn -B -ntp -DskipTests package` |
-| Build result | `BUILD SUCCESS`, 8.607 s from a clean worktree at the frozen source commit; Maven Shade reported overlapping dependency metadata/resources |
-| JAR | `target/pace-bench-icde2027-v1.jar`, 3,909,320 bytes, SHA-256 `d947f8f9ed44a2d3dcb7772992c4dbc50c447099c5aa4c9cc58c9970386ae96d` |
+| Build result | `BUILD SUCCESS`, 8.000 s from a clean worktree at the frozen source commit; Maven Shade reported overlapping dependency metadata/resources |
+| JAR | `target/pace-bench.jar`, 3,941,325 bytes, SHA-256 `ca26344145908f14595ccac63a9d1879991aa29fbc8b017669f9afbd238f0a53` |
 | Java / Maven / Python | OpenJDK 21.0.7 / Maven 3.6.3 / Python 3.10.12 |
 | OS | Linux 6.8.0-138-generic, x86_64 |
 
@@ -20,15 +20,16 @@ The JAR is a local ignored build artifact; the freeze records its checksum and t
 
 ## Preference comparison identity
 
-Machine record: [`experiments/manifests/icde2027_v1/freezes/preference.json`](../experiments/manifests/icde2027_v1/freezes/preference.json)
+Machine record: [`experiments/manifests/icde2027_v1/freezes/preference_m5r2.json`](../experiments/manifests/icde2027_v1/freezes/preference_m5r2.json). The earlier `preference.json` remains preserved as the pre-repair identity.
 
 | Identity | Value |
 |---|---|
-| Run series | `icde2027-v1-preference-identity-only-20261016` |
+| Run series | `icde2027-v1-preference-identity-only-20261016-m5r2` |
 | Configuration | `experiments/configs/icde2027_v1/preference.yaml` |
-| Effective config hash | `0e86c5544c7b0354241070690035b66be3221599a107f6a2fc0366b94f1c1edc` |
+| Effective config hash | `77c1abbc34a962c16b2a5fda0e950bba97ecdd77306dc85122d505641561e2e5` |
 | Methods | PACE-B, iSCOPE, SICSP-Pref; same workload identity per dataset |
 | Objective | Continuous-interval preference profile; THop is excluded from this track |
+| SICSP-Pref numerical contract | `EXACT_RATIONAL_PREFERENCE_PROFILE-v1`, scoped to its generated retained registry |
 | Per-method caps | PACE-B 10 s; iSCOPE 5 s; SICSP-Pref 10 s |
 | Threads | 1 per query |
 | Datasets | NY, FLA, CAL, seed 42, declared centisecond normalization |
@@ -45,13 +46,13 @@ The complete machine records also hash every manifest-listed graph payload, quer
 
 ## Tractable reference identity
 
-Machine record: [`experiments/manifests/icde2027_v1/freezes/reference.json`](../experiments/manifests/icde2027_v1/freezes/reference.json)
+Machine record: [`experiments/manifests/icde2027_v1/freezes/reference_m5r2.json`](../experiments/manifests/icde2027_v1/freezes/reference_m5r2.json). The earlier `reference.json` remains preserved as the pre-repair identity.
 
 | Identity | Value |
 |---|---|
-| Run series | `icde2027-v1-reference-identity-only-20261016` |
+| Run series | `icde2027-v1-reference-identity-only-20261016-m5r2` |
 | Configuration | `experiments/configs/icde2027_v1/reference.yaml` |
-| Effective config hash | `a80c54e979cbf1f02178d02072aa3bd08f6b2d9ff5b7cde7d6cc1be931fb9ac2` |
+| Effective config hash | `3292e0f3fbf919e679868e35710f93d8ba2ff88de6b33e4ebe2fa52013889763` |
 | Dataset | NY-EXACT, seed 42 |
 | Methods | PACE-X, PACE-B, iSCOPE, SICSP-Pref |
 | Caps | PACE-X 30 s, PACE-B 10 s, iSCOPE 5 s, SICSP-Pref 10 s |
@@ -61,7 +62,7 @@ Machine record: [`experiments/manifests/icde2027_v1/freezes/reference.json`](../
 | Query manifest SHA-256 | `fb7e0ffaa5a3378af3d516a8c45d1af9c39485de8af72a47ebf4323be7a25314` |
 | Execution approval | **false** |
 
-PACE-X output is a certified reference only when the actual result carries `GLOBAL_CERTIFIED`. SICSP-Pref remains `NOT_CERTIFIED` under the known temporal counterexample; this freeze does not change that status.
+PACE-X output is a certified reference only when the actual result carries `GLOBAL_CERTIFIED`. SICSP-Pref can report `RETAINED_FRONTIER` only over its exact, nonempty generated retained registry; it does not claim global completeness. The current freeze does not approve execution.
 
 ## Separate objective and missing freeze inputs
 
@@ -75,4 +76,4 @@ The six historical manuscript scalability values are validated as archival aggre
 
 ## Readiness
 
-These records establish reproducible input identities for the preference track and tractable reference on this workspace. They do not authorize execution. SICSP-Pref's incorrect score winner and false-feasibility counterexample keep M6 blocked. The THop fastest-profile freeze is incomplete until real partition/index artifacts exist. Historical result reproducibility remains unresolved independently of future-run reproducibility.
+These records bind the post-repair source/JAR and input identities for the preference track and tractable reference on this workspace. They do not authorize execution. Cross-algorithm preference quality comparisons remain blocked until PACE-X, PACE-B and iSCOPE search-time pruning and final profiles use a compatible numerical contract or comparisons are explicitly qualified. The THop fastest-profile freeze is incomplete until real partition/index artifacts exist. Historical result reproducibility remains unresolved independently of future-run reproducibility.

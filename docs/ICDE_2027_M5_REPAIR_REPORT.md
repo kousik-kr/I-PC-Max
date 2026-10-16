@@ -8,6 +8,22 @@ The independent rational oracle validates complete temporal cells for the genera
 
 This repairs the SICSP-Pref final-evaluation P1-B defect. It does not approve experiments: PACE-X, PACE-B and iSCOPE still use legacy temporal profiles and/or pruning; historical P1-C remains unresolved; the benchmark freeze remains unapproved; and no M6/M7 work was started.
 
+### M5-R2 implementation, validation and identity
+
+| Item | Result |
+|---|---|
+| Source commit / tree | `72005400036bd244fae407cc65e9a219cd6657d4` / `954c118a530c56d42486c880019830798955d19e` |
+| Clean-built JAR | `target/pace-bench.jar`; 3,941,325 bytes; SHA-256 `ca26344145908f14595ccac63a9d1879991aa29fbc8b017669f9afbd238f0a53` |
+| `mvn -B -ntp clean test` | 361 tests, 0 failures/errors/skips; BUILD SUCCESS; 24.596 s |
+| `python3 -m pytest -q experiments/tests` | 50 passed; 30.97 s on the final prospective config and freeze records |
+| Focused exact/SICSP/iSCOPE/PACE/THop/adapter selection | 125 tests passed, including the retained-vs-raw-vs-global registry assertion, all named oracle suites, native SICSP, and adapter CLI. |
+| `git diff --check` | Passed before source commit; documentation/freeze-only updates are checked again at closeout. |
+| Tiny direct `sicsp-pref` CLI | Three rows: two `COMPLETED` / `RETAINED_FRONTIER`, one `UNRESOLVED_NO_GENERATED_CANDIDATE` / `NOT_CERTIFIED`. Exact profile schema/checksum written. |
+
+One direct tiny demo run's first query reported 3 retained routes, 9 exact profile pieces, 0 score-event preimages, 0 budget roots, 9 envelope comparisons, maximum rational component bit length 9, and 854 serialized bytes. The single-run query time was 127,779,141 ns, exact replay 37,093,307 ns, envelope construction 10,936,407 ns, serialization 678,008 ns, and sampled heap 53,444,680 bytes. This is instrumentation from a deterministic tiny graph, not a benchmark estimate; the full-network campaign remains unrun.
+
+The updated prospective preference and reference identities are in [`preference_m5r2.json`](../experiments/manifests/icde2027_v1/freezes/preference_m5r2.json) and [`reference_m5r2.json`](../experiments/manifests/icde2027_v1/freezes/reference_m5r2.json). Both bind the same clean source/JAR, declare the exact SICSP-Pref contract, and keep `readiness.approved=false`. The prior pre-repair freeze files remain unchanged.
+
 Date: 2026-10-16. Branch: `feature/icde27-baseline-implementation`. Audited starting revision: `508a1d8cc422fd4595ad36857e51990fd86c562e`; implementation baseline at M5-R start: `0d0fa20c8b979b1db9916d5489649d73e8cc4993`.
 
 ## Executive result
