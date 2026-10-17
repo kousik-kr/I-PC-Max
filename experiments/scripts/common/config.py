@@ -350,11 +350,11 @@ def _validate_icde2027_compact(
     if set(design["datasets"]) != {"NY", "FLA", "CAL", "NY-EXACT"}:
         raise ValueError("compact family requires NY, FLA, CAL, and NY-EXACT")
     if {item["id"] for item in primary.get("algorithms", [])} != {
-        "pace-b", "iscope", "thop-partitioned"
+        "pace-b", "iscope-optimized", "iscope-basic", "thop-partitioned"
     }:
-        raise ValueError("C01 must compare PACE-B, iSCOPE, and THop")
+        raise ValueError("C01 must compare PACE-B, optimized/basic iSCOPE, and THop")
     if {item["id"] for item in controlled.get("algorithms", [])} != {
-        "pace-x", "pace-b", "iscope", "sicsp-pref"
+        "pace-x", "pace-b", "iscope-basic", "sicsp-pref"
     }:
         raise ValueError("C02 must compare all four preference methods")
     if set(primary.get("datasets", [])) != {"NY", "FLA", "CAL"}:
@@ -374,6 +374,7 @@ def _validate_icde2027_compact(
     resources = design["resources"]
     expected_timeouts = {
         "pace-b": "unlimited", "iscope": 5,
+        "iscope-basic": 5, "iscope-opt1": 5, "iscope-optimized": 5,
         "thop-partitioned": "unlimited", "pace-x": "unlimited",
         "sicsp-pref": "unlimited",
     }
@@ -387,6 +388,9 @@ def _validate_icde2027_compact(
     expected_policies = {
         "pace-b": "NO_WALL_TIMEOUT_REPORT_INTRINSIC_WORK_CAPS",
         "iscope": "ANYTIME_PROFILE_WITHIN_CAP_NOT_CERTIFIED",
+        "iscope-basic": "ANYTIME_PROFILE_WITHIN_CAP_NOT_CERTIFIED",
+        "iscope-opt1": "EXACT_PARTIAL_FUNCTION_PRUNED_PROFILE",
+        "iscope-optimized": "APPROXIMATE_SEARCH_EXACT_RETAINED_ROUTE_PROFILE_NOT_CERTIFIED",
         "thop-partitioned": "NO_WALL_TIMEOUT_REPORT_RESOURCE_FAILURES",
         "pace-x": "GLOBAL_CERTIFICATE_AND_ORACLE_REQUIRED",
         "sicsp-pref": "CONTROLLED_ONLY_LARGE_NETWORK_SCOPE_PILOT_DEPENDENT",
@@ -400,6 +404,11 @@ def _validate_icde2027_compact(
         for study in studies for algorithm in study.get("algorithms", [])
     ):
         raise ValueError("compact algorithm entries must explicitly request one thread")
+    if not any(item["id"] == "iscope-optimized" for item in primary["algorithms"]):
+        raise ValueError("C01 primary iSCOPE method must explicitly use iscope-optimized")
+    optimized = next(item for item in primary["algorithms"] if item["id"] == "iscope-optimized")
+    if optimized.get("parameters", {}).get("iscope_opt2_breakpoint_threshold_minutes") != 2:
+        raise ValueError("C01 must freeze the documented Opt2 breakpoint threshold")
     if design.get("historical_result_reuse") is not False:
         raise ValueError("compact family must disable historical result reuse")
     if design["paths"]["results_root"] != "experiments/results/icde2027_compact_v1" and not design["paths"]["results_root"].startswith(

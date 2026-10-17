@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeSet;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /** Exact lower-envelope, dominance and crossing operations for rational profiles. */
 public final class ExactProfileEnvelope {
@@ -61,9 +63,15 @@ public final class ExactProfileEnvelope {
 
     /** Every exact root where two overlapping affine pieces have equal values. */
     public static List<ExactTime> breakpointCrossings(ExactArrivalProfile left, ExactArrivalProfile right) {
+        return breakpointCrossings(left, right, () -> false);
+    }
+
+    public static List<ExactTime> breakpointCrossings(
+            ExactArrivalProfile left, ExactArrivalProfile right, BooleanSupplier cancellationRequested) {
         TreeSet<ExactTime> crossings = new TreeSet<>();
         for (ExactAffineSegment a : left.segments()) {
             for (ExactAffineSegment b : right.segments()) {
+                checkCancelled(cancellationRequested);
                 ExactTemporalDomain.Interval overlap = a.interval().intersection(b.interval());
                 if (overlap == null || a.slope().equals(b.slope())) continue;
                 ExactTime root = b.intercept().subtract(a.intercept())
@@ -72,6 +80,12 @@ public final class ExactProfileEnvelope {
             }
         }
         return List.copyOf(crossings);
+    }
+
+    private static void checkCancelled(BooleanSupplier cancellationRequested) {
+        if (cancellationRequested != null && cancellationRequested.getAsBoolean()) {
+            throw new CancellationException("exact profile envelope operation cancelled");
+        }
     }
 
     public static boolean dominates(ExactArrivalProfile left, ExactArrivalProfile right) {

@@ -17,6 +17,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeSet;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /** Piecewise-affine function whose support and all coefficients are rational. */
 public final class ExactArrivalProfile {
@@ -80,30 +82,41 @@ public final class ExactArrivalProfile {
 
     /** Converts the accepted edge decimals into exact affine arrival pieces. */
     public static ExactArrivalProfile edgeArrival(Edge edge) {
+        return edgeArrival(edge, () -> false);
+    }
+
+    public static ExactArrivalProfile edgeArrival(Edge edge, BooleanSupplier cancellationRequested) {
         Objects.requireNonNull(edge, "edge");
         PiecewiseLinearFn function = edge.travelTimeFunction();
         List<PiecewiseLinearFn.Breakpoint> points = function.breakpoints();
-        List<ExactTime> knotTimes = points.stream()
-                .map(point -> ExactTime.fromCanonicalDouble(point.minute())).toList();
-        List<ExactTime> knotValues = points.stream()
-                .map(point -> ExactTime.fromCanonicalDouble(point.value())).toList();
+        List<ExactTime> knotTimes = new ArrayList<>(points.size());
+        List<ExactTime> knotValues = new ArrayList<>(points.size());
+        for (PiecewiseLinearFn.Breakpoint point : points) {
+            checkCancelled(cancellationRequested);
+            knotTimes.add(ExactTime.fromCanonicalDouble(point.minute()));
+            knotValues.add(ExactTime.fromCanonicalDouble(point.value()));
+        }
         List<ExactAffineSegment> result = new ArrayList<>();
         ExactTemporalDomain edgeDomain = ExactTemporalDomain.fromLegacy(function.domain());
         for (ExactTemporalDomain.Interval component : edgeDomain.intervals()) {
+            checkCancelled(cancellationRequested);
             TreeSet<ExactTime> cuts = new TreeSet<>();
             cuts.add(component.start());
             cuts.add(component.end());
             for (ExactTime knot : knotTimes) {
+                checkCancelled(cancellationRequested);
                 if (knot.compareTo(component.start()) > 0 && knot.compareTo(component.end()) < 0) cuts.add(knot);
             }
             List<ExactTime> orderedCuts = List.copyOf(cuts);
             if (orderedCuts.size() == 1) {
+                checkCancelled(cancellationRequested);
                 ExactTime time = orderedCuts.getFirst();
                 ExactTime travel = exactTravelAt(time, knotTimes, knotValues);
                 result.add(new ExactAffineSegment(ExactTime.ZERO, time.add(travel), component));
                 continue;
             }
             for (int i = 0; i + 1 < orderedCuts.size(); i++) {
+                checkCancelled(cancellationRequested);
                 ExactTime start = orderedCuts.get(i);
                 ExactTime end = orderedCuts.get(i + 1);
                 if (start.equals(end)) continue;
@@ -169,7 +182,12 @@ public final class ExactArrivalProfile {
     }
 
     public ExactTime valueAtExact(ExactTime time) {
+        return valueAtExact(time, () -> false);
+    }
+
+    public ExactTime valueAtExact(ExactTime time, BooleanSupplier cancellationRequested) {
         for (ExactAffineSegment segment : segments) {
+            checkCancelled(cancellationRequested);
             if (segment.interval().contains(time)) return segment.valueAt(time);
         }
         throw new IllegalArgumentException("time is outside exact profile support: " + time);
@@ -180,9 +198,15 @@ public final class ExactArrivalProfile {
     }
 
     public ExactArrivalProfile restrict(ExactTemporalDomain requested) {
+        return restrict(requested, () -> false);
+    }
+
+    public ExactArrivalProfile restrict(ExactTemporalDomain requested, BooleanSupplier cancellationRequested) {
         List<ExactAffineSegment> result = new ArrayList<>();
         for (ExactAffineSegment segment : segments) {
+            checkCancelled(cancellationRequested);
             for (ExactTemporalDomain.Interval interval : requested.intervals()) {
+                checkCancelled(cancellationRequested);
                 ExactAffineSegment restricted = segment.restrict(interval);
                 if (restricted != null) result.add(restricted);
             }
@@ -192,10 +216,16 @@ public final class ExactArrivalProfile {
 
     /** Exact root domain on which this profile maps into {@code target}. */
     public ExactTemporalDomain preimage(ExactTemporalDomain target) {
+        return preimage(target, () -> false);
+    }
+
+    public ExactTemporalDomain preimage(ExactTemporalDomain target, BooleanSupplier cancellationRequested) {
         Objects.requireNonNull(target, "target");
         List<ExactTemporalDomain.Interval> result = new ArrayList<>();
         for (ExactAffineSegment segment : segments) {
+            checkCancelled(cancellationRequested);
             for (ExactTemporalDomain.Interval targetInterval : target.intervals()) {
+                checkCancelled(cancellationRequested);
                 ExactTemporalDomain.Interval roots = preimage(segment, targetInterval);
                 if (roots == null) continue;
                 ExactTemporalDomain.Interval overlap = segment.interval().intersection(roots);
@@ -207,12 +237,19 @@ public final class ExactArrivalProfile {
 
     /** Returns {@code outer(this(t))} on exactly the preimage-supported domain. */
     public ExactArrivalProfile composeAfter(ExactArrivalProfile outer) {
+        return composeAfter(outer, () -> false);
+    }
+
+    public ExactArrivalProfile composeAfter(
+            ExactArrivalProfile outer, BooleanSupplier cancellationRequested) {
         Objects.requireNonNull(outer, "outer");
         if (isEmpty() || outer.isEmpty()) return empty();
         TemporalProfileWork.increment("thop_temporal_compositions");
         List<ExactAffineSegment> result = new ArrayList<>();
         for (ExactAffineSegment inner : segments) {
+            checkCancelled(cancellationRequested);
             for (ExactAffineSegment after : outer.segments) {
+                checkCancelled(cancellationRequested);
                 ExactTemporalDomain.Interval preimage = preimage(inner, after.interval());
                 if (preimage == null) continue;
                 ExactTemporalDomain.Interval overlap = inner.interval().intersection(preimage);
@@ -220,6 +257,12 @@ public final class ExactArrivalProfile {
             }
         }
         return ofSegments(result);
+    }
+
+    private static void checkCancelled(BooleanSupplier cancellationRequested) {
+        if (cancellationRequested != null && cancellationRequested.getAsBoolean()) {
+            throw new CancellationException("exact arrival-profile operation cancelled");
+        }
     }
 
     public ExactArrivalProfile pointwiseMinimum(ExactArrivalProfile other) {

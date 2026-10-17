@@ -14,8 +14,13 @@
       "parameters": {"theta": 2, "threads": 1, "resolved_pace_b": false}
     },
     {
-      "id": "iscope",
-      "variant": "basic-iscope-five-second-cap",
+      "id": "iscope-optimized",
+      "variant": "opt1-plus-opt2-five-second-cap-exact-retained-route-evaluation",
+      "parameters": {"threads": 1, "max_enumerated_paths": 100000, "iscope_opt2_breakpoint_threshold_minutes": 2}
+    },
+    {
+      "id": "iscope-basic",
+      "variant": "unpruned-basic-iscope-ablation-five-second-cap",
       "parameters": {"threads": 1, "max_enumerated_paths": 100000}
     },
     {
@@ -31,5 +36,5 @@
       }
     }
   ],
-  "purpose": "Same 50 frozen historical logical queries and two measured trials for PACE-B, basic iSCOPE, and preference-free THop. THop ignores preference scores and travel-time budgets."
+  "purpose": "Same 50 frozen logical queries and two measured trials for PACE-B, primary iscope-optimized, the distinct iscope-basic ablation, and preference-free THop. THop ignores preference scores and travel-time budgets. No C01 jobs are dispatched during M5-R4."
 }

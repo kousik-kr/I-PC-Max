@@ -31,6 +31,7 @@ from experiments.scripts.executors.slurm import submit, write_array_script
 JAVA_STATUS = {
     "COMPLETED": CompletionStatus.SUCCESS.value,
     "CERTIFIED_COMPLETE": CompletionStatus.SUCCESS.value,
+    "UNRESOLVED_NO_GENERATED_CANDIDATE": CompletionStatus.SUCCESS.value,
     "NO_FEASIBLE_PATH": CompletionStatus.SUCCESS.value,
     "TIME_CAPPED_NOT_CERTIFIED": CompletionStatus.TIME_CAPPED_NOT_CERTIFIED.value,
     "PATH_CAPPED_NOT_CERTIFIED": CompletionStatus.PATH_CAPPED_NOT_CERTIFIED.value,
@@ -310,6 +311,7 @@ def _command(
         "thop_domain_start": "--thop-domain-start", "thop_domain_end": "--thop-domain-end",
         "thop_lifecycle": "--thop-lifecycle", "sicsp_weights": "--sicsp-weights",
         "sicsp_weight_bound": "--sicsp-weight-bound",
+        "iscope_opt2_breakpoint_threshold_minutes": "--iscope-opt2-breakpoint-threshold-minutes",
     }
     for name, flag in flags.items():
         if name in parameters:

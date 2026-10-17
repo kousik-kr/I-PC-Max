@@ -29,6 +29,18 @@ public final class ExactFraction implements Comparable<ExactFraction> {
         return value == 0 ? ZERO : new ExactFraction(BigInteger.valueOf(value), BigInteger.ONE);
     }
 
+    public static ExactFraction of(BigInteger numerator, BigInteger denominator) {
+        return new ExactFraction(numerator, denominator);
+    }
+
+    public BigInteger numerator() {
+        return numerator;
+    }
+
+    public BigInteger denominator() {
+        return denominator;
+    }
+
     /** Converts the exact decimal spelling returned by {@link BigDecimal#valueOf(double)}. */
     public static ExactFraction fromDouble(double value) {
         if (!Double.isFinite(value)) {

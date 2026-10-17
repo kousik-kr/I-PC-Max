@@ -12,6 +12,8 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /** Piecewise-constant score values on exact rational, endpoint-owned domains. */
 public final class ExactScoreProfile {
@@ -77,11 +79,16 @@ public final class ExactScoreProfile {
 
     /** Converts already-canonicalized input score pieces to exact rational supports. */
     public static ExactScoreProfile edgeScore(Edge edge) {
+        return edgeScore(edge, () -> false);
+    }
+
+    public static ExactScoreProfile edgeScore(Edge edge, BooleanSupplier cancellationRequested) {
         PiecewiseConstFn function = edge.scoreFunction();
         List<PiecewiseConstFn.Interval> pieces = function.intervals();
         List<Segment> result = new ArrayList<>();
         ExactTemporalDomain edgeDomain = ExactTemporalDomain.fromLegacy(function.domain());
         for (int i = 0; i < pieces.size(); i++) {
+            checkCancelled(cancellationRequested);
             PiecewiseConstFn.Interval piece = pieces.get(i);
             ExactTime start = ExactTime.fromCanonicalDouble(piece.startMinute());
             ExactTime end = ExactTime.fromCanonicalDouble(piece.endMinute());
@@ -91,6 +98,7 @@ public final class ExactScoreProfile {
                     ? ExactTemporalDomain.Interval.singleton(start)
                     : new ExactTemporalDomain.Interval(start, end, true, endIncluded);
             for (ExactTemporalDomain.Interval support : edgeDomain.intervals()) {
+                checkCancelled(cancellationRequested);
                 ExactTemporalDomain.Interval supported = interval.intersection(support);
                 if (supported != null) result.add(new Segment(BigInteger.valueOf(piece.value()), supported));
             }
@@ -104,7 +112,12 @@ public final class ExactScoreProfile {
     public long pieceCount() { return segments.size(); }
 
     public BigInteger valueAt(ExactTime time) {
+        return valueAt(time, () -> false);
+    }
+
+    public BigInteger valueAt(ExactTime time, BooleanSupplier cancellationRequested) {
         for (Segment segment : segments) {
+            checkCancelled(cancellationRequested);
             if (segment.interval().contains(time)) return segment.value();
         }
         throw new IllegalArgumentException("time is outside exact score support: " + time);
@@ -112,9 +125,15 @@ public final class ExactScoreProfile {
 
     /** Pulls score steps back through every exact affine cell of an arrival profile. */
     public ExactScoreProfile pullback(ExactArrivalProfile mapping) {
+        return pullback(mapping, () -> false);
+    }
+
+    public ExactScoreProfile pullback(ExactArrivalProfile mapping, BooleanSupplier cancellationRequested) {
         List<Segment> result = new ArrayList<>();
         for (var affine : mapping.segments()) {
+            checkCancelled(cancellationRequested);
             for (Segment score : segments) {
+                checkCancelled(cancellationRequested);
                 ExactTemporalDomain.Interval preimage = preimage(
                         affine.slope(), affine.intercept(), score.interval(), affine.interval());
                 if (preimage == null) continue;
@@ -127,9 +146,15 @@ public final class ExactScoreProfile {
 
     /** Pointwise sum, using unbounded integers for the accumulated score. */
     public ExactScoreProfile plus(ExactScoreProfile other) {
+        return plus(other, () -> false);
+    }
+
+    public ExactScoreProfile plus(ExactScoreProfile other, BooleanSupplier cancellationRequested) {
         List<Segment> result = new ArrayList<>();
         for (Segment left : segments) {
+            checkCancelled(cancellationRequested);
             for (Segment right : other.segments) {
+                checkCancelled(cancellationRequested);
                 ExactTemporalDomain.Interval overlap = left.interval().intersection(right.interval());
                 if (overlap != null) result.add(new Segment(left.value().add(right.value()), overlap));
             }
@@ -138,14 +163,26 @@ public final class ExactScoreProfile {
     }
 
     public ExactScoreProfile restrict(ExactTemporalDomain requested) {
+        return restrict(requested, () -> false);
+    }
+
+    public ExactScoreProfile restrict(ExactTemporalDomain requested, BooleanSupplier cancellationRequested) {
         List<Segment> result = new ArrayList<>();
         for (Segment segment : segments) {
+            checkCancelled(cancellationRequested);
             for (ExactTemporalDomain.Interval interval : requested.intervals()) {
+                checkCancelled(cancellationRequested);
                 ExactTemporalDomain.Interval overlap = segment.interval().intersection(interval);
                 if (overlap != null) result.add(new Segment(segment.value(), overlap));
             }
         }
         return ofSegments(result);
+    }
+
+    private static void checkCancelled(BooleanSupplier cancellationRequested) {
+        if (cancellationRequested != null && cancellationRequested.getAsBoolean()) {
+            throw new CancellationException("exact score-profile operation cancelled");
+        }
     }
 
     public int maximumRationalComponentBitLength() {

@@ -47,23 +47,37 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
             TimeUnit.SECONDS.toNanos(1);
 
     private final LongSupplier clock;
+    private final String registryId;
     private volatile TDGraph preparedGraph;
 
     public IScopeAlgorithm() {
-        this(System::nanoTime);
+        this("iscope", System::nanoTime);
+    }
+
+    /** Explicit alias constructor; both historical and named basic IDs preserve this implementation. */
+    public IScopeAlgorithm(String registryId) {
+        this(registryId, System::nanoTime);
     }
 
     /** Injectable monotonic clock constructor for deterministic deadline tests. */
     public IScopeAlgorithm(LongSupplier clock) {
+        this("iscope", clock);
+    }
+
+    public IScopeAlgorithm(String registryId, LongSupplier clock) {
+        if (!List.of("iscope", "iscope-basic").contains(registryId)) {
+            throw new IllegalArgumentException("basic iSCOPE only supports IDs iscope and iscope-basic");
+        }
         if (clock == null) {
             throw new IllegalArgumentException("monotonic clock is required");
         }
+        this.registryId = registryId;
         this.clock = clock;
     }
 
     @Override
     public String id() {
-        return "iscope";
+        return registryId;
     }
 
     @Override
@@ -217,6 +231,8 @@ public final class IScopeAlgorithm implements ExperimentAlgorithm {
         scalars.put("legacy_projection_schema", "LEGACY_CANONICAL_PROFILE_12DP-v1");
         scalars.put("implementation_variant",
                 "CONTINUOUS_PROFILE_EXHAUSTIVE_PATH_ADAPTATION-v1");
+        scalars.put("registry_variant_id", "iscope-basic");
+        scalars.put("historical_iscope_alias", registryId.equals("iscope"));
         scalars.put("paper_fidelity", "DEVIATION");
         scalars.put("paper_doi", "10.1007/978-981-95-7251-9_12");
         scalars.put("partial_label_function_splitting", false);

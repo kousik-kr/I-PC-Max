@@ -101,6 +101,9 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
     algorithm_label = {
         "pace-b": "PACE-B",
         "iscope": "iSCOPE",
+        "iscope-basic": "iSCOPE-basic",
+        "iscope-opt1": "iSCOPE-Opt1",
+        "iscope-optimized": "iSCOPE-optimized (Opt1+Opt2)",
         "allfp": "allFP",
         "interval-best": "interval-best (legacy)",
         "rpq": "RPQ (historical)",
@@ -124,7 +127,7 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
             "T03-B_PREFERENCE_FREE_REFERENCE"
             if algorithm_id == "allfp"
             else "T03-A_PREFERENCE_AWARE"
-            if algorithm_id in {"pace-b", "iscope"}
+            if algorithm_id in {"pace-b", "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized"}
             else "HISTORICAL_OR_EXACTNESS"
         ),
         "variant_id": configuration.get("ablation"),

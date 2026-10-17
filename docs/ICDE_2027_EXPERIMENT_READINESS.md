@@ -4,6 +4,10 @@ Audit revision: 508a1d8cc422fd4595ad36857e51990fd86c562e
 Branch: feature/icde27-baseline-implementation
 Classification: **NOT READY FOR FULL-NETWORK EXPERIMENTS**
 
+## M5-R4 update (2026-10-17)
+
+M5-R4 preserves `iscope` as the historical basic alias, adds `iscope-basic`, exact-pruned `iscope-opt1`, and approximate `iscope-optimized`, all under the five-second policy. Opt1 passed exhaustive tiny DAG/graph comparisons against the independent rational whole-cell oracle using a conservative exact edge-minimum lower bound. Opt2 is exact only over retained routes and never globally certified. The prospective compact config now uses `iscope-optimized` as C01 primary with `iscope-basic` as an ablation, retains the 50-query/two-trial workload, and remains unapproved; no jobs were dispatched. See [M5-R4 implementation evidence](repairs/ISCOPE_OPTIMIZED_IMPLEMENTATION.md).
+
 ## M5-R2 numerical repair update (2026-10-16)
 
 The SICSP-Pref final evaluator now uses exact rational edge-entry replay, score-event preimages, budget feasibility and complete envelope selection over its retained route registry. The repaired exactness scope is `RETAINED_FRONTIER`; the search remains heuristic and the adapter does not claim global certification. Native SICSP generation is unchanged. Independent whole-cell rational oracle checks validate exact output for raw-simple, retained-feasible and global simple-path registries, and the known heuristic-miss route remains absent from the generated set. Details and counterexamples are in [SICSP_PREF_EXACT_NUMERICAL_REPAIR.md](repairs/SICSP_PREF_EXACT_NUMERICAL_REPAIR.md).

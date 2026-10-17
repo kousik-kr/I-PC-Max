@@ -10,7 +10,7 @@
   "algorithms": [
     {"id": "pace-x", "variant": "controlled-only-certificate-gated", "parameters": {"theta": 2, "threads": 1}},
     {"id": "pace-b", "variant": "bounded-candidates-exact-retained-objective", "parameters": {"theta": 2, "threads": 1, "resolved_pace_b": false}},
-    {"id": "iscope", "variant": "basic-iscope-five-second-cap", "parameters": {"threads": 1, "max_enumerated_paths": 100000}},
+    {"id": "iscope-basic", "variant": "basic-iscope-five-second-cap", "parameters": {"threads": 1, "max_enumerated_paths": 100000}},
     {"id": "sicsp-pref", "variant": "native-event-generator-controlled-only", "parameters": {"threads": 1}}
   ],
   "purpose": "Twenty shared NY-EXACT queries, one measured trial, all four preference methods. PACE-X is a global reference only after GLOBAL_CERTIFIED status and independent rational-oracle validation."

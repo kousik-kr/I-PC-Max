@@ -34,6 +34,10 @@ Exact evaluation of an emitted registry does not certify that search generated a
 | iSCOPE | Emitted simple-path registry, exact | `GLOBAL_CERTIFIED` only when the unpruned DFS exhausts, and neither the five-second deadline nor path cap fires. |
 | SICSP-Pref | Native retained feasible registry, exact | `RETAINED_FRONTIER`; the native event generator is a candidate search, not a global simple-path proof. |
 
+### M5-R4 iSCOPE variants
+
+The table above records the M5-R3 state. M5-R4 preserves `iscope` as the historical alias for `IScopeAlgorithm` and registers `iscope-basic` with the same unpruned behavior. `iscope-opt1` uses rational partial functions and the proved conservative edge-minimum bound; it may claim `GLOBAL_CERTIFIED` only after exhaustive uncapped search and complete exact replay. `iscope-optimized` adds approximate Opt2 merging and is always `NOT_CERTIFIED`, even though its reported values are exact over the retained route registry. See [the implementation report](ISCOPE_OPTIMIZED_IMPLEMENTATION.md), [Opt1 proof](ISCOPE_OPT1_PRUNING_PROOF_AND_TESTS.md), and [Opt2 contract](ISCOPE_OPT2_APPROXIMATION_CONTRACT.md).
+
 A failed or empty exact registry is unresolved by an adapter unless its declared search scope proves no feasible route. In particular, a legacy PACE `NO_FEASIBLE_PATH` result is not upgraded by final replay.
 
 ## Aggregation and validation

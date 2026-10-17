@@ -69,6 +69,29 @@ class BenchOptionsTest {
         assertEquals(5, iscope.timeoutSeconds);
     }
 
+    @Test
+    void iscopeVariantsKeepTheFiveSecondProtocolAndExposeOpt2Parameters() {
+        for (String algorithm : java.util.List.of(
+                "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized")) {
+            assertEquals(algorithm, AlgorithmRegistry.create(algorithm).id());
+        }
+        for (String algorithm : java.util.List.of("iscope-basic", "iscope-opt1", "iscope-optimized")) {
+            assertThrows(IllegalArgumentException.class, () -> parse(
+                    "--algorithm", algorithm, "--timeout-seconds", "4"));
+        }
+        BenchOptions optimized = parse("--algorithm", "iscope-optimized",
+                "--timeout-seconds", "5",
+                "--iscope-opt2-breakpoint-threshold-minutes", "1.25");
+        assertEquals("1.25", optimized.algorithmConfig().objectiveOptions()
+                .get("iscope_opt2_breakpoint_threshold_minutes"));
+        assertThrows(IllegalArgumentException.class, () -> parse(
+                "--algorithm", "iscope-opt1", "--timeout-seconds", "5",
+                "--iscope-opt2-breakpoint-threshold-minutes", "2"));
+        assertThrows(IllegalArgumentException.class, () -> parse(
+                "--algorithm", "iscope-optimized", "--timeout-seconds", "5",
+                "--iscope-opt2-breakpoint-threshold-minutes", "0"));
+    }
+
     private static BenchOptions parse(String... prefix) {
         String[] suffix = {"--dataset", "demo", "--query-file", "experiments/manifests/tiny.jsonl",
                 "--output-jsonl", "target/test.jsonl"};

@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /** Exact rational domain, including disconnected intervals and owned endpoints. */
 public final class ExactTemporalDomain {
@@ -136,10 +138,15 @@ public final class ExactTemporalDomain {
     }
 
     public ExactTemporalDomain intersection(ExactTemporalDomain other) {
+        return intersection(other, () -> false);
+    }
+
+    public ExactTemporalDomain intersection(ExactTemporalDomain other, BooleanSupplier cancellationRequested) {
         List<Interval> result = new ArrayList<>();
         int i = 0;
         int j = 0;
         while (i < intervals.size() && j < other.intervals.size()) {
+            checkCancelled(cancellationRequested);
             Interval a = intervals.get(i);
             Interval b = other.intervals.get(j);
             Interval overlap = a.intersection(b);
@@ -152,13 +159,27 @@ public final class ExactTemporalDomain {
     }
 
     public ExactTemporalDomain difference(ExactTemporalDomain other) {
+        return difference(other, () -> false);
+    }
+
+    public ExactTemporalDomain difference(ExactTemporalDomain other, BooleanSupplier cancellationRequested) {
         List<Interval> fragments = new ArrayList<>(intervals);
         for (Interval cut : other.intervals) {
+            checkCancelled(cancellationRequested);
             List<Interval> next = new ArrayList<>();
-            for (Interval source : fragments) subtract(source, cut, next);
+            for (Interval source : fragments) {
+                checkCancelled(cancellationRequested);
+                subtract(source, cut, next);
+            }
             fragments = next;
         }
         return of(fragments);
+    }
+
+    private static void checkCancelled(BooleanSupplier cancellationRequested) {
+        if (cancellationRequested != null && cancellationRequested.getAsBoolean()) {
+            throw new CancellationException("exact temporal-domain operation cancelled");
+        }
     }
 
     /** Returns a rounded legacy view; rational event locations cannot survive this projection. */

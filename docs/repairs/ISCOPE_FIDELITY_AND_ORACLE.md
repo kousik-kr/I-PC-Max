@@ -1,5 +1,7 @@
 # iSCOPE specification, complete-profile oracle, and accounting
 
+> M5-R3 snapshot: this document records the original basic implementation's deviation and oracle state. M5-R4 adds explicit partial-function Opt1 and an approximate Opt1+Opt2 adaptation under separate IDs. The implementation, proof, paper traceability, and approximation contract are documented in [ISCOPE_OPTIMIZED_IMPLEMENTATION.md](ISCOPE_OPTIMIZED_IMPLEMENTATION.md) and its linked reports.
+
 Date: 2026-10-16 UTC. Milestone: M5-R, R3.
 
 ## Disposition

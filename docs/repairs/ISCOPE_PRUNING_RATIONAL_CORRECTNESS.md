@@ -1,5 +1,7 @@
 # Basic iSCOPE pruning and completion audit
 
+> M5-R3 snapshot: the statements below describe the pre-Opt1 basic variant. M5-R4 adds separate `iscope-opt1` and `iscope-optimized` IDs without changing basic search. Current Opt1 proof and tests are in [ISCOPE_OPT1_PRUNING_PROOF_AND_TESTS.md](ISCOPE_OPT1_PRUNING_PROOF_AND_TESTS.md).
+
 **Variant:** `CONTINUOUS_PROFILE_EXHAUSTIVE_PATH_ADAPTATION-v1`. This is the existing basic adaptation, not the optimized published WISE implementation. The interface continues to use the shared exact objective evaluator.
 
 ## Search audit

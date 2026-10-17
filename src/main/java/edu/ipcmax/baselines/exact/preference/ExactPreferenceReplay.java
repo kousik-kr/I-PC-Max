@@ -12,6 +12,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /** Builds exact no-wait rational arrival and preference profiles for one route. */
 public final class ExactPreferenceReplay {
@@ -29,45 +31,67 @@ public final class ExactPreferenceReplay {
     public static Optional<ExactPreferencePathProfile> replayExact(
             TDGraph graph, int source, int destination, Path path,
             ExactTemporalDomain departureDomain, ExactTime budget) {
+        return replayExact(graph, source, destination, path, departureDomain, budget, () -> false);
+    }
+
+    /** Cancellable exact replay; checks between edge and profile operations. */
+    public static Optional<ExactPreferencePathProfile> replayExact(
+            TDGraph graph, int source, int destination, Path path,
+            ExactTemporalDomain departureDomain, ExactTime budget,
+            BooleanSupplier cancellationRequested) {
+        checkCancelled(cancellationRequested);
         graph.node(source);
         graph.node(destination);
-        validatePath(graph, source, destination, path);
+        validatePath(graph, source, destination, path, cancellationRequested);
         ExactArrivalProfile prefix = ExactArrivalProfile.identity(departureDomain);
         ExactScoreProfile accumulated = null;
         long scoreEvents = 0;
         int current = source;
         for (int arcId : path.arcIds()) {
+            checkCancelled(cancellationRequested);
             Edge edge = graph.edges().get(arcId);
             if (edge.source() != current) throw new IllegalArgumentException("disconnected path at arc " + arcId);
-            ExactScoreProfile edgeScore = ExactScoreProfile.edgeScore(edge);
-            ExactTemporalDomain scorePreimage = prefix.preimage(edgeScore.domain());
-            ExactTemporalDomain scoreSupport = prefix.domain().intersection(scorePreimage);
+            ExactScoreProfile edgeScore = ExactScoreProfile.edgeScore(edge, cancellationRequested);
+            ExactTemporalDomain scorePreimage = prefix.preimage(edgeScore.domain(), cancellationRequested);
+            ExactTemporalDomain scoreSupport = prefix.domain().intersection(scorePreimage, cancellationRequested);
             if (scoreSupport.isEmpty()) return Optional.empty();
-            ExactArrivalProfile scoreEntryMap = prefix.restrict(scoreSupport);
-            ExactScoreProfile edgeScoreOnDeparture = edgeScore.pullback(scoreEntryMap);
+            ExactArrivalProfile scoreEntryMap = prefix.restrict(scoreSupport, cancellationRequested);
+            ExactScoreProfile edgeScoreOnDeparture = edgeScore.pullback(scoreEntryMap, cancellationRequested);
             scoreEvents += Math.max(0, edgeScoreOnDeparture.pieceCount() - 1);
             if (accumulated == null) accumulated = edgeScoreOnDeparture;
-            else accumulated = accumulated.restrict(scoreSupport).plus(edgeScoreOnDeparture);
+            else accumulated = accumulated.restrict(scoreSupport, cancellationRequested)
+                    .plus(edgeScoreOnDeparture, cancellationRequested);
 
-            ExactArrivalProfile edgeArrival = ExactArrivalProfile.edgeArrival(edge);
-            ExactTemporalDomain travelPreimage = prefix.preimage(edgeArrival.domain());
-            ExactTemporalDomain nextSupport = scoreSupport.intersection(travelPreimage);
+            ExactArrivalProfile edgeArrival = ExactArrivalProfile.edgeArrival(edge, cancellationRequested);
+            ExactTemporalDomain travelPreimage = prefix.preimage(edgeArrival.domain(), cancellationRequested);
+            ExactTemporalDomain nextSupport = scoreSupport.intersection(travelPreimage, cancellationRequested);
             if (nextSupport.isEmpty()) return Optional.empty();
-            accumulated = accumulated.restrict(nextSupport);
-            prefix = prefix.restrict(nextSupport).composeAfter(edgeArrival);
+            accumulated = accumulated.restrict(nextSupport, cancellationRequested);
+            prefix = prefix.restrict(nextSupport, cancellationRequested)
+                    .composeAfter(edgeArrival, cancellationRequested);
+            checkCancelled(cancellationRequested);
             if (prefix.isEmpty()) return Optional.empty();
             current = edge.target();
         }
         if (current != destination) throw new IllegalArgumentException("path does not reach destination");
         if (accumulated == null) accumulated = ExactScoreProfile.constant(prefix.domain(), java.math.BigInteger.ZERO);
-        accumulated = accumulated.restrict(prefix.domain());
+        accumulated = accumulated.restrict(prefix.domain(), cancellationRequested);
         if (!prefix.domain().equals(accumulated.domain())) {
             throw new IllegalStateException("exact path score support differs from arrival support");
         }
-        ExactTravelBudgetDomain budgetDomain = ExactTravelBudgetDomain.compute(prefix, budget);
-        ExactTemporalDomain feasible = prefix.domain().intersection(budgetDomain.domain());
+        checkCancelled(cancellationRequested);
+        ExactTravelBudgetDomain budgetDomain = ExactTravelBudgetDomain.compute(
+                prefix, budget, cancellationRequested);
+        ExactTemporalDomain feasible = prefix.domain().intersection(
+                budgetDomain.domain(), cancellationRequested);
         return Optional.of(new ExactPreferencePathProfile(path, prefix, accumulated, feasible,
                 budget, scoreEvents, budgetDomain.rootOperations()));
+    }
+
+    private static void checkCancelled(BooleanSupplier cancellationRequested) {
+        if (cancellationRequested != null && cancellationRequested.getAsBoolean()) {
+            throw new CancellationException("exact preference replay cancelled");
+        }
     }
 
     /** Replays one canonical decimal departure exactly, without imposing a budget. */
@@ -83,7 +107,8 @@ public final class ExactPreferenceReplay {
 
     public record PointReplay(ExactTime arrival, java.math.BigInteger score) { }
 
-    private static void validatePath(TDGraph graph, int source, int destination, Path path) {
+    private static void validatePath(TDGraph graph, int source, int destination, Path path,
+            BooleanSupplier cancellationRequested) {
         if (path.arcIds().isEmpty()) {
             if (source != destination) throw new IllegalArgumentException("empty route requires identical endpoints");
             return;
@@ -93,6 +118,7 @@ public final class ExactPreferenceReplay {
         visited.add(source);
         int current = source;
         for (int arcId : path.arcIds()) {
+            checkCancelled(cancellationRequested);
             if (arcId < 0 || arcId >= graph.edgeCount()) throw new IllegalArgumentException("unknown arc id " + arcId);
             Edge edge = graph.edges().get(arcId);
             if (edge.source() != current) throw new IllegalArgumentException("disconnected path at arc " + arcId);

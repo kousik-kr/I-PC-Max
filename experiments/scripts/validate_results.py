@@ -286,7 +286,10 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         checksum = output.get("profile_checksum")
         if record.get("completion_status") in valid_profile_statuses and not checksum:
             errors.append(f"valid-profile job {job_id} has no output checksum")
-        if algorithm in {"pace-x", "pace-b", "iscope", "sicsp-pref"}:
+        if algorithm in {
+            "pace-x", "pace-b", "iscope", "iscope-basic", "iscope-opt1",
+            "iscope-optimized", "sicsp-pref",
+        }:
             objective = output.get("objective_result")
             if not isinstance(objective, dict) and output.get("exact_profile_schema"):
                 objective = output
@@ -302,7 +305,9 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
                             errors.append(f"preference job {job_id} output checksum is not the exact profile checksum")
                     except ValueError as malformed:
                         errors.append(f"preference job {job_id} has invalid exact profile: {malformed}")
-        if algorithm in {"pace-b", "iscope", "allfp"} and checksum:
+        if algorithm in {
+            "pace-b", "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized", "allfp"
+        } and checksum:
             if counters.get("output_validation_contract") != (
                 "CANONICAL_EXACT_PROFILE_AND_VERTEX_SIMPLE-v1"
             ):

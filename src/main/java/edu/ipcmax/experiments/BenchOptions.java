@@ -151,7 +151,7 @@ final class BenchOptions {
                 case "--baseline-k" -> options.baselineK = integer(tokens, ++index, option);
                 case "--thop-index-dir", "--thop-partitions", "--thop-domain-start",
                         "--thop-domain-end", "--thop-lifecycle", "--sicsp-weights",
-                        "--sicsp-weight-bound" -> options.objectiveOptions.put(
+                        "--sicsp-weight-bound", "--iscope-opt2-breakpoint-threshold-minutes" -> options.objectiveOptions.put(
                                 option.substring(2).replace('-', '_'), value(tokens, ++index, option));
                 case "--max-enumerated-paths" -> options.maxEnumeratedPaths = positiveLong(tokens, ++index, option);
                 case "--max-labels" -> options.maxLabels = positiveLong(tokens, ++index, option);
@@ -254,9 +254,21 @@ final class BenchOptions {
         if (algorithm.equals("rpq") && rpqStepMinutes < 1) {
             throw new IllegalArgumentException("RPQ requires a positive whole-minute --rpq-step-minutes");
         }
-        if (algorithm.equals("iscope") && timeoutSeconds != 5) {
+        if (List.of("iscope", "iscope-basic", "iscope-opt1", "iscope-optimized").contains(algorithm)
+                && timeoutSeconds != 5) {
             throw new IllegalArgumentException(
                     algorithm + " requires the declared five-second --timeout-seconds 5 protocol");
+        }
+        if (objectiveOptions.containsKey("iscope_opt2_breakpoint_threshold_minutes")) {
+            if (!algorithm.equals("iscope-optimized")) {
+                throw new IllegalArgumentException(
+                        "--iscope-opt2-breakpoint-threshold-minutes requires --algorithm iscope-optimized");
+            }
+            java.math.BigDecimal threshold = new java.math.BigDecimal(
+                    objectiveOptions.get("iscope_opt2_breakpoint_threshold_minutes"));
+            if (threshold.signum() <= 0) {
+                throw new IllegalArgumentException("Opt2 breakpoint threshold must be positive");
+            }
         }
         if (algorithm.equals("ksp-profile") && baselineK < 1) {
             throw new IllegalArgumentException("KSP requires --baseline-k >= 1");

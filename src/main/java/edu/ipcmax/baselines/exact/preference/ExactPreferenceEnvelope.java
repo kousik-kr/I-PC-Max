@@ -13,6 +13,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeSet;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /** Complete exact route-selection profile over a supplied candidate registry. */
 public final class ExactPreferenceEnvelope {
@@ -105,20 +107,31 @@ public final class ExactPreferenceEnvelope {
     public static ExactPreferenceEnvelope overRetained(
             ExactTemporalDomain requested,
             Map<Path, ExactPreferencePathProfile> profiles) {
+        return overRetained(requested, profiles, () -> false);
+    }
+
+    public static ExactPreferenceEnvelope overRetained(
+            ExactTemporalDomain requested,
+            Map<Path, ExactPreferencePathProfile> profiles,
+            BooleanSupplier cancellationRequested) {
         TreeSet<ExactTime> cuts = new TreeSet<>();
         for (ExactTemporalDomain.Interval interval : requested.intervals()) {
+            checkCancelled(cancellationRequested);
             cuts.add(interval.start());
             cuts.add(interval.end());
         }
         List<ExactPreferencePathProfile> usable = profiles.values().stream()
                 .filter(profile -> !profile.feasibleDomain().isEmpty()).toList();
         for (ExactPreferencePathProfile profile : usable) {
+            checkCancelled(cancellationRequested);
             addDomainCuts(cuts, profile.feasibleDomain());
             profile.arrival().segments().forEach(segment -> {
+                checkCancelled(cancellationRequested);
                 cuts.add(segment.interval().start());
                 cuts.add(segment.interval().end());
             });
             profile.score().segments().forEach(segment -> {
+                checkCancelled(cancellationRequested);
                 cuts.add(segment.interval().start());
                 cuts.add(segment.interval().end());
             });
@@ -126,11 +139,13 @@ public final class ExactPreferenceEnvelope {
         long pairComparisons = 0;
         for (int i = 0; i < usable.size(); i++) {
             for (int j = i + 1; j < usable.size(); j++) {
+                checkCancelled(cancellationRequested);
                 ExactPreferencePathProfile left = usable.get(i);
                 ExactPreferencePathProfile right = usable.get(j);
                 ExactTemporalDomain common = left.feasibleDomain().intersection(right.feasibleDomain());
                 if (common.isEmpty()) continue;
-                for (ExactTime crossing : ExactProfileEnvelope.breakpointCrossings(left.arrival(), right.arrival())) {
+                for (ExactTime crossing : ExactProfileEnvelope.breakpointCrossings(
+                        left.arrival(), right.arrival(), cancellationRequested)) {
                     if (common.contains(crossing)) cuts.add(crossing);
                 }
                 pairComparisons += (long) left.arrival().segments().size() * right.arrival().segments().size();
@@ -141,11 +156,12 @@ public final class ExactPreferenceEnvelope {
         List<Cell> result = new ArrayList<>();
         long comparisons = pairComparisons;
         for (int i = 0; i + 1 < ordered.size(); i++) {
+            checkCancelled(cancellationRequested);
             ExactTime start = ordered.get(i), end = ordered.get(i + 1);
             if (start.equals(end)) continue;
             ExactTime probe = start.add(end).divide(ExactTime.of(2));
             if (!requested.contains(probe)) continue;
-            Chosen chosen = select(usable, probe);
+            Chosen chosen = select(usable, probe, cancellationRequested);
             Selection selection = chosen.selection();
             comparisons += chosen.comparisons();
             ExactTemporalDomain.Interval cell = new ExactTemporalDomain.Interval(start, end, false, false);
@@ -153,8 +169,9 @@ public final class ExactPreferenceEnvelope {
                     : selectedCell(cell, selection, probe));
         }
         for (ExactTime point : ordered) {
+            checkCancelled(cancellationRequested);
             if (!requested.contains(point)) continue;
-            Chosen chosen = select(usable, point);
+            Chosen chosen = select(usable, point, cancellationRequested);
             Selection selection = chosen.selection();
             comparisons += chosen.comparisons();
             ExactTemporalDomain.Interval cell = ExactTemporalDomain.Interval.singleton(point);
@@ -168,10 +185,13 @@ public final class ExactPreferenceEnvelope {
 
     private record Chosen(Selection selection, long comparisons) { }
 
-    private static Chosen select(List<ExactPreferencePathProfile> profiles, ExactTime departure) {
+    private static Chosen select(
+            List<ExactPreferencePathProfile> profiles, ExactTime departure,
+            BooleanSupplier cancellationRequested) {
         Selection best = null;
         long comparisons = 0;
         for (ExactPreferencePathProfile candidate : profiles) {
+            checkCancelled(cancellationRequested);
             if (!candidate.feasibleDomain().contains(departure)) continue;
             BigInteger score = candidate.score().valueAt(departure);
             ExactTime arrival = candidate.arrival().valueAtExact(departure);
@@ -183,6 +203,12 @@ public final class ExactPreferenceEnvelope {
             }
         }
         return new Chosen(best, comparisons);
+    }
+
+    private static void checkCancelled(BooleanSupplier cancellationRequested) {
+        if (cancellationRequested != null && cancellationRequested.getAsBoolean()) {
+            throw new CancellationException("exact preference-envelope commitment cancelled");
+        }
     }
 
     /** Positive means left wins. */

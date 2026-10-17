@@ -8,6 +8,7 @@ from experiments.scripts.build_matrices import build_all
 from experiments.scripts.common.config import algorithm_timeout_seconds, load_design
 from experiments.scripts.validate_results import validate_planned_cells
 from experiments.scripts.run_all import _preflight_resources_compatible
+from experiments.scripts.execute_matrix import JAVA_STATUS, _command
 
 
 class ConfigContractTest(unittest.TestCase):
@@ -32,12 +33,13 @@ class ConfigContractTest(unittest.TestCase):
         self.assertEqual("unlimited", design["resources"]["timeout_seconds"])
         self.assertEqual({
             "pace-b": "unlimited", "iscope": 5,
+            "iscope-basic": 5, "iscope-opt1": 5, "iscope-optimized": 5,
             "thop-partitioned": "unlimited", "pace-x": "unlimited",
             "sicsp-pref": "unlimited",
         }, design["resources"]["algorithm_timeout_seconds"])
         with TemporaryDirectory() as temporary:
             report = build_all(design, Path(temporary))
-            self.assertEqual({"C01": 900, "C02": 80}, report["study_counts"])
+            self.assertEqual({"C01": 1200, "C02": 80}, report["study_counts"])
             jobs = []
             for path in Path(temporary).glob("*.jsonl"):
                 if path.name == "canonical_job_ledger.jsonl":
@@ -50,15 +52,38 @@ class ConfigContractTest(unittest.TestCase):
         historical = [job for job in jobs if job["study_id"] == "C01"]
         for dataset in ("NY", "FLA", "CAL"):
             rows = [job for job in historical if job["dataset_id"] == dataset]
-            self.assertEqual(300, len(rows))
+            self.assertEqual(400, len(rows))
             self.assertEqual(50, len({job["query_id"] for job in rows}))
             self.assertEqual(
-                {"pace-b": 100, "iscope": 100, "thop-partitioned": 100},
+                {"pace-b": 100, "iscope-optimized": 100, "iscope-basic": 100,
+                 "thop-partitioned": 100},
                 dict(Counter(job["algorithm_id"] for job in rows)),
             )
+        self.assertFalse(any(job["algorithm_id"] == "iscope" for job in jobs))
         self.assertFalse(any(job["algorithm_id"] == "sicsp-pref" for job in historical))
         self.assertTrue(validate_planned_cells(jobs, design)["passed"])
         self.assertEqual(0, validate_planned_cells(jobs, design)["manifest_identity_mismatches"])
+
+    def test_compact_optimized_iscope_passes_frozen_opt2_threshold_to_java(self):
+        design = load_design(Path("experiments/configs/icde2027_compact_v1/compact.yaml"))
+        algorithm = next(
+            item for item in design["study_definitions"][0]["algorithms"]
+            if item["id"] == "iscope-optimized"
+        )
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            command = _command({
+                "algorithm_id": "iscope-optimized",
+                "algorithm_parameters": algorithm["parameters"],
+                "axis": {}, "study_id": "C01", "job_id": "opt2-config-check",
+                "dataset_id": "NY",
+            }, design, root, root / "query.jsonl", root / "result.jsonl")
+        position = command.index("--iscope-opt2-breakpoint-threshold-minutes")
+        self.assertEqual("2", command[position + 1])
+        self.assertEqual("5", command[command.index("--timeout-seconds") + 1])
+        self.assertEqual("SUCCESS", JAVA_STATUS["COMPLETED"])
+        self.assertEqual("SUCCESS", JAVA_STATUS["UNRESOLVED_NO_GENERATED_CANDIDATE"])
+        self.assertEqual("TIME_CAPPED_NOT_CERTIFIED", JAVA_STATUS["TIME_CAPPED_NOT_CERTIFIED"])
 
     def test_paper_design_has_two_track_datasets_and_all_studies(self):
         design = load_design(Path("experiments/configs/paper_q1.yaml"))

@@ -6,14 +6,24 @@ import edu.ipcmax.baselines.exact.ExactTime;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /** Exact support where the affine travel-time relation is at most a budget. */
 public record ExactTravelBudgetDomain(ExactTemporalDomain domain, long rootOperations) {
     public static ExactTravelBudgetDomain compute(ExactArrivalProfile arrival, ExactTime budget) {
+        return compute(arrival, budget, () -> false);
+    }
+
+    public static ExactTravelBudgetDomain compute(
+            ExactArrivalProfile arrival, ExactTime budget, BooleanSupplier cancellationRequested) {
         List<ExactTemporalDomain.Interval> result = new ArrayList<>();
         long roots = 0;
-        for (var affine : arrival.asTravelTime().segments()) {
-            ExactTime slope = affine.slope();
+        for (var affine : arrival.segments()) {
+            if (cancellationRequested != null && cancellationRequested.getAsBoolean()) {
+                throw new CancellationException("exact budget-domain construction cancelled");
+            }
+            ExactTime slope = affine.slope().subtract(ExactTime.ONE);
             ExactTime intercept = affine.intercept();
             var source = affine.interval();
             if (slope.signum() == 0) {

@@ -5,6 +5,10 @@ Classification: **NOT READY**; see the full repository audit for findings and ac
 
 ## M5-R superseding status (2026-10-16)
 
+### M5-R4 iSCOPE update (2026-10-17)
+
+M5-R4 preserves the existing basic search under `iscope` (historical alias) and explicit `iscope-basic`, and adds `iscope-opt1` plus `iscope-optimized`. Opt1 propagates exact rational prefix arrival/score functions and applies a conservative exact reverse shortest-path bound over per-edge minimum travel times. It passed exhaustive tiny-graph whole-cell oracle checks. Since coordinate units and a safe maximum road speed are not established, the paper's Euclidean/maxSpeed bound is disabled. Opt2 is an explicitly approximate breakpoint/roulette adaptation, uses a two-minute configured threshold, exact-replays only retained routes, and remains `NOT_CERTIFIED`. The prospective compact primary selects `iscope-optimized` after this tiny-graph implementation validation and keeps basic as an ablation. No benchmark jobs were dispatched. See [M5-R4 report](repairs/ISCOPE_OPTIMIZED_IMPLEMENTATION.md) and the paper/Opt1/Opt2 audits linked there.
+
 PACE-X's contradictory incomplete-empty-frontier result is repaired and covered by `PaceCompletionInvariantTest`; its certification remains conditional on the reviewed completeness conditions. PACE-B search is unchanged and its bounded candidate scope remains explicit. The full iSCOPE publication is now available locally and was read; the current one-thread continuous-profile implementation is a material deviation from the paper's optimized partial-function, temporal-splitting, breakpoint-merging, randomized, parallel method. Native SICSP's original weight objective and candidate search remain unchanged and now have a separate CLI adapter. SICSP-Pref remains numerically unresolved: independent tests show wrong score/winner and false budget feasibility, so its result scope is `NOT_CERTIFIED`. THop remains exact-rational for its fastest-profile objective, with its search-first then prune/materialize schedule disclosed as a paper deviation. See [M5 repair report](ICDE_2027_M5_REPAIR_REPORT.md) for gate-level evidence.
 
 ## Source materials

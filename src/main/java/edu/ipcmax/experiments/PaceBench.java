@@ -849,7 +849,8 @@ public final class PaceBench {
         long timeoutNanos = TimeUnit.SECONDS.toNanos(timeoutSeconds);
         long watchdogNanos = timeoutNanos;
         if (timeoutSeconds > 0
-                && (algorithm.id().equals("iscope")
+                && (List.of("iscope", "iscope-basic", "iscope-opt1", "iscope-optimized")
+                    .contains(algorithm.id())
                     || algorithm.id().equals("allfp"))) {
             watchdogNanos = timeoutNanos + TimeUnit.SECONDS.toNanos(2);
         }
@@ -1024,7 +1025,9 @@ public final class PaceBench {
                 switch (options.algorithm) {
                     case "pace-x" -> "FAIL_CLOSED";
                     case "pace-b" -> "DETERMINISTIC_RETAINED_FRONTIER";
-                    case "iscope" -> "ANYTIME_VALIDATED_ENVELOPE";
+                    case "iscope", "iscope-basic" -> "ANYTIME_VALIDATED_ENVELOPE";
+                    case "iscope-opt1" -> "EXACT_PARTIAL_FUNCTION_PRUNED_ENVELOPE";
+                    case "iscope-optimized" -> "APPROXIMATE_SEARCH_EXACT_RETAINED_ROUTE_ENVELOPE";
                     case "allfp" -> "FASTEST_FUNCTIONAL_ENVELOPE";
                     case "sicsp-pref" -> "RETAINED_FRONTIER_UNRESOLVED";
                     case "sicsp-native" -> "NATIVE_HEURISTIC_WEIGHT_BOUNDED";
@@ -1095,7 +1098,9 @@ public final class PaceBench {
             case "pl-exact" -> "PROFILE_LABELING";
             case "rpq" -> "SAMPLED_LEFT_CLOSED_RIGHT_OPEN";
             case "ksp-profile" -> "EXACT_OVER_RETAINED_K_PATHS";
-            case "iscope" -> "ANYTIME_STREAMING_INTERVAL_PROFILE";
+            case "iscope", "iscope-basic" -> "CONTINUOUS_PROFILE_EXHAUSTIVE_PATH_ADAPTATION-v1";
+            case "iscope-opt1" -> "EXACT_PARTIAL_FUNCTION_OPT1";
+            case "iscope-optimized" -> "APPROXIMATE_PARTIAL_FUNCTION_OPT1_OPT2";
             case "allfp" -> "CONTINUOUS_FUNCTIONAL_ALL_FASTEST_PATHS";
             case "sicsp-pref" -> "SEQUENTIAL_SICSP_PREFERENCE_PROFILE";
             case "sicsp-native" -> "NATIVE_WEIGHT_BOUNDED_MINIMUM_ARRIVAL_HEURISTIC";
@@ -1109,9 +1114,11 @@ public final class PaceBench {
             case "sicsp-native" -> "minimum_arrival_under_native_weight_bound";
             default -> "preference_profile_with_travel_time_budget";
         });
-        result.put("numerical_contract", options.algorithm.equals("thop-partitioned")
-                ? "exact_rational_after_decimal_canonical_input-v1"
-                : "legacy_canonical_12_decimal_profile_and_per_operation_replay-v1");
+        result.put("numerical_contract", List.of("iscope-opt1", "iscope-optimized").contains(options.algorithm)
+                ? "EXACT_RATIONAL_PREFERENCE_PROFILE-v1"
+                : options.algorithm.equals("thop-partitioned")
+                        ? "exact_rational_after_decimal_canonical_input-v1"
+                        : "legacy_canonical_12_decimal_profile_and_per_operation_replay-v1");
         result.put("status_schema_version", 2);
         result.put("theta", pace == null ? null : pace.theta());
         result.put("anchor_limit", pace == null ? null
@@ -1151,7 +1158,8 @@ public final class PaceBench {
                 : options.timeoutSpecified ? "EXPLICIT_FINITE" : "UNSPECIFIED_LEGACY");
         result.put("memory_limit_bytes", options.memoryLimitMb == 0 ? null : options.memoryLimitMb * 1024L * 1024L);
         result.put("max_enumerated_paths", switch (options.algorithm) {
-            case "exh-profile", "ksp-profile", "interval-best", "iscope", "sicsp-pref" ->
+            case "exh-profile", "ksp-profile", "interval-best", "iscope", "iscope-basic",
+                    "iscope-opt1", "iscope-optimized", "sicsp-pref" ->
                     options.maxEnumeratedPaths;
             default -> null;
         });
@@ -1182,9 +1190,11 @@ public final class PaceBench {
         result.put("single_midpoint_fastest_connector_enabled",
                 pace != null
                         && pace.singleMidpointFastestConnectorEnabled());
-        result.put("temporal_replay_contract", options.algorithm.equals("thop-partitioned")
-                ? "EXACT_RATIONAL_AFTER_DECIMAL_CANONICAL_INPUT-v1"
-                : "LEGACY_CANONICAL_PROFILE_COMPOSITION-v1");
+        result.put("temporal_replay_contract", List.of("iscope-opt1", "iscope-optimized").contains(options.algorithm)
+                ? "EXACT_RATIONAL_PARTIAL_FUNCTION_AND_FINAL_REPLAY-v1"
+                : options.algorithm.equals("thop-partitioned")
+                        ? "EXACT_RATIONAL_AFTER_DECIMAL_CANONICAL_INPUT-v1"
+                        : "LEGACY_CANONICAL_PROFILE_COMPOSITION-v1");
         result.put("connector_cache_enabled", pace == null ? false
                 : pace.features().connectorCacheEnabled());
         result.put("profile_cache_enabled", pace == null ? false
@@ -1258,7 +1268,7 @@ public final class PaceBench {
         return switch (algorithm) {
             case "pace-x" -> "PACE_X";
             case "pace-b" -> "PACE_B";
-            case "iscope" -> "ISCOPE_ANYTIME";
+            case "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized" -> "ISCOPE_FIVE_SECOND_CAP";
             case "allfp" -> "ALLFP_FUNCTIONAL";
             case "sicsp-pref" -> "SICSP_PREF_RETAINED_FRONTIER";
             case "sicsp-native" -> "SICSP_NATIVE_HEURISTIC";
@@ -1276,11 +1286,17 @@ public final class PaceBench {
                     "ALL_SCORE_PIVOTS",
                     "THETA_COVERS_SELECTED_PIVOTS",
                     "NO_CAP_REACHED");
-            case "iscope" -> List.of(
+            case "iscope", "iscope-basic" -> List.of(
                     "EXHAUSTIVE_LOOPLESS_PATH_ENUMERATION",
                     "LEGACY_CANONICAL_FULL_WINDOW_PATH_PROFILES",
                     "SCORE_MAXIMIZING_FEASIBLE_ENVELOPE",
                     "NO_CAP_REACHED");
+            case "iscope-opt1" -> List.of(
+                    "EXACT_RATIONAL_PARTIAL_FUNCTION_PROPAGATION",
+                    "ADMISSIBLE_EXACT_EDGE_MINIMUM_SUFFIX_BOUND",
+                    "EXHAUSTIVE_LOOPLESS_PATH_ENUMERATION",
+                    "NO_CAP_REACHED");
+            case "iscope-optimized" -> List.of();
             case "allfp" -> List.of(
                     "CONTINUOUS_FUNCTIONAL_A_STAR",
                     "ADMISSIBLE_REVERSE_MIN_EDGE_LOWER_BOUND",

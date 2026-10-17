@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeSet;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /** Shared exact objective evaluation and serialization for preference algorithms. */
 public final class ExactPreferenceObjective {
@@ -61,14 +63,78 @@ public final class ExactPreferenceObjective {
         String exactJson = ExactPreferenceProfileCodec.encode(envelope);
         Map<String, Object> result = summarize(envelope, domain, endToEndNanos,
                 completionStatus, exactnessScope, registryScope, emittedRoutes, profiles, exactJson);
-        return new Evaluation(envelope, Map.copyOf(profiles), exactJson, result);
+        return new Evaluation(envelope, Map.copyOf(profiles), exactJson, result, true);
+    }
+
+    /**
+     * Cancellable route-by-route replay. Each accepted exact route is committed only
+     * after its exact envelope update finishes, so a deadline returns the last whole
+     * envelope over fully replayed routes.
+     */
+    public static Evaluation evaluateIncrementally(
+            TDGraph graph,
+            QuerySpec query,
+            Collection<Path> emittedRoutes,
+            long endToEndNanos,
+            String completionStatus,
+            String exactnessScope,
+            String registryScope,
+            BooleanSupplier cancellationRequested) {
+        Objects.requireNonNull(graph, "graph");
+        Objects.requireNonNull(query, "query");
+        Objects.requireNonNull(emittedRoutes, "emittedRoutes");
+        Objects.requireNonNull(cancellationRequested, "cancellationRequested");
+        ExactTemporalDomain domain = ExactTemporalDomain.fromLegacy(query.departureDomain());
+        ExactTime budget = ExactTime.fromCanonicalDouble(Domain.canonicalTime(query.maxTravelTime()));
+        List<Path> orderedRoutes = emittedRoutes.stream().distinct()
+                .sorted(Comparator.comparing(path -> path.arcIds().toString())).toList();
+        Map<Path, ExactPreferencePathProfile> committedProfiles = new LinkedHashMap<>();
+        ExactPreferenceEnvelope committedEnvelope = ExactPreferenceEnvelope.overRetained(domain, Map.of());
+        boolean complete = true;
+        for (Path path : orderedRoutes) {
+            if (cancellationRequested.getAsBoolean()) {
+                complete = false;
+                break;
+            }
+            final java.util.Optional<ExactPreferencePathProfile> replayed;
+            try {
+                replayed = ExactPreferenceReplay.replayExact(
+                        graph, query.source(), query.destination(), path, domain, budget,
+                        cancellationRequested);
+            } catch (CancellationException cancelled) {
+                complete = false;
+                break;
+            }
+            if (replayed.isEmpty()) continue;
+            Map<Path, ExactPreferencePathProfile> staged = new LinkedHashMap<>(committedProfiles);
+            staged.put(path, replayed.orElseThrow());
+            if (!replayed.orElseThrow().feasibleDomain().isEmpty()) {
+                try {
+                    ExactPreferenceEnvelope next = ExactPreferenceEnvelope.overRetained(
+                            domain, staged, cancellationRequested);
+                    committedProfiles = staged;
+                    committedEnvelope = next;
+                } catch (CancellationException cancelled) {
+                    complete = false;
+                    break;
+                }
+            } else {
+                committedProfiles = staged;
+            }
+        }
+        String exactJson = ExactPreferenceProfileCodec.encode(committedEnvelope);
+        Map<String, Object> result = summarize(committedEnvelope, domain, endToEndNanos,
+                completionStatus, exactnessScope, registryScope, orderedRoutes,
+                committedProfiles, exactJson);
+        return new Evaluation(committedEnvelope, committedProfiles, exactJson, result, complete);
     }
 
     public record Evaluation(
             ExactPreferenceEnvelope profile,
             Map<Path, ExactPreferencePathProfile> routeProfiles,
             String serializedProfile,
-            Map<String, Object> objectiveResult) {
+            Map<String, Object> objectiveResult,
+            boolean evaluationComplete) {
         public Evaluation {
             Objects.requireNonNull(profile, "profile");
             routeProfiles = Map.copyOf(routeProfiles);
