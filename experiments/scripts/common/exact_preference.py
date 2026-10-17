@@ -35,6 +35,8 @@ class ExactInterval:
     def from_json(cls, value: Any, label: str) -> "ExactInterval":
         if not isinstance(value, dict):
             raise ValueError(f"{label} must be an interval object")
+        if set(value) != {"start", "end", "start_inclusive", "end_inclusive"}:
+            raise ValueError(f"{label} has fields outside the exact interval schema")
         start = _fraction(value.get("start"), f"{label}.start")
         end = _fraction(value.get("end"), f"{label}.end")
         left = value.get("start_inclusive")
@@ -81,6 +83,8 @@ def decode_exact_preference_profile(value: Any, expected_checksum: str | None = 
     """Validate profile schema, partition ownership, arrival relation, and checksum."""
     if not isinstance(value, dict) or value.get("schema") != SCHEMA:
         raise ValueError(f"expected {SCHEMA}")
+    if set(value) != {"schema", "domain", "cells"}:
+        raise ValueError("exact profile has fields outside the versioned schema")
     raw_domain = value.get("domain")
     raw_cells = value.get("cells")
     if not isinstance(raw_domain, list) or not isinstance(raw_cells, list):
@@ -91,8 +95,18 @@ def decode_exact_preference_profile(value: Any, expected_checksum: str | None = 
     for index, raw in enumerate(raw_cells):
         if not isinstance(raw, dict):
             raise ValueError(f"cells[{index}] must be an object")
-        interval = ExactInterval.from_json(raw.get("interval"), f"cells[{index}].interval")
         state = raw.get("status")
+        expected_fields = (
+            {"interval", "status", "budget_feasible"}
+            if state == "NO_PATH"
+            else {
+                "interval", "status", "budget_feasible", "score", "path",
+                "arrival", "travel_time",
+            }
+        )
+        if set(raw) != expected_fields:
+            raise ValueError(f"cells[{index}] has fields outside the exact cell schema")
+        interval = ExactInterval.from_json(raw.get("interval"), f"cells[{index}].interval")
         feasible = raw.get("budget_feasible")
         if state == "NO_PATH":
             if feasible is not False:
@@ -130,13 +144,52 @@ def decode_exact_preference_profile(value: Any, expected_checksum: str | None = 
             interval.start == interval.end and _selected_at(cells, interval.start)
             for interval in domain) else 0)
     average = integrated / feasible_measure if feasible_measure else None
-    serialized = json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
+    canonical_value = {
+        "schema": SCHEMA,
+        "domain": [_canonical_interval(interval) for interval in raw_domain],
+        "cells": [_canonical_cell(cell) for cell in raw_cells],
+    }
+    serialized = json.dumps(
+        canonical_value, ensure_ascii=False, separators=(",", ":")
+    ) + "\n"
     checksum = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
     if expected_checksum is not None and checksum != expected_checksum:
         raise ValueError("exact preference profile checksum mismatch")
     return ExactPreferenceProfile(domain, tuple(cells), checksum,
                                   ExactPreferenceMetrics(total, feasible_measure,
                                       coverage, integrated, average))
+
+
+def _canonical_interval(value: dict[str, Any]) -> dict[str, Any]:
+    """Use the field order emitted by ExactPreferenceProfileCodec in Java."""
+    return {
+        "start": value["start"],
+        "end": value["end"],
+        "start_inclusive": value["start_inclusive"],
+        "end_inclusive": value["end_inclusive"],
+    }
+
+
+def _canonical_cell(value: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "interval": _canonical_interval(value["interval"]),
+        "status": value["status"],
+        "budget_feasible": value["budget_feasible"],
+    }
+    if value["status"] == "SELECTED":
+        result.update({
+            "score": value["score"],
+            "path": value["path"],
+            "arrival": {
+                "slope": value["arrival"]["slope"],
+                "intercept": value["arrival"]["intercept"],
+            },
+            "travel_time": {
+                "slope": value["travel_time"]["slope"],
+                "intercept": value["travel_time"]["intercept"],
+            },
+        })
+    return result
 
 
 def _selected_at(cells: tuple[ExactPreferenceCell, ...], point: Fraction) -> bool:

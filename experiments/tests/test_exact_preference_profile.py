@@ -72,6 +72,23 @@ def test_decoder_rejects_corrupt_checksum_and_affine_travel_mismatch():
         decode_exact_preference_profile(corrupt)
 
 
+def test_decoder_checksum_is_independent_of_json_object_key_order():
+    value = fixture()
+    reordered = {
+        "cells": [
+            {key: cell[key] for key in reversed(cell)}
+            for cell in value["cells"]
+        ],
+        "domain": [
+            {key: interval_value[key] for key in reversed(interval_value)}
+            for interval_value in value["domain"]
+        ],
+        "schema": value["schema"],
+    }
+    profile = decode_exact_preference_profile(reordered, checksum(value))
+    assert profile.checksum == checksum(value)
+
+
 def test_decoder_rejects_a_missing_owned_singleton_or_domain_gap():
     value = fixture()
     del value["cells"][2]
