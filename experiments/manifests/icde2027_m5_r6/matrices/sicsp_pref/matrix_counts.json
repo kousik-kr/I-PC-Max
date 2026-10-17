@@ -1,0 +1,39 @@
+{
+  "algorithms_started": false,
+  "canonical_job_ledger": "canonical_job_ledger.jsonl",
+  "canonical_job_ledger_rows": 1,
+  "canonical_job_ledger_sha256": "ade99c1e1f56bb29c4ae89b39fd3a05a17497dedb4c550b5018b26e34e335754",
+  "config_hash": "d71068956acb85d2e3552042bef386cf4baa080405bf42c399bc064a5f3a0b8b",
+  "configured_parallel_timeout_upper_bound_seconds": 600,
+  "datasets": [
+    "NY"
+  ],
+  "disk_budget_passed": true,
+  "estimated_raw_bytes_per_job": 262144,
+  "estimated_storage_bytes": 262144,
+  "logical_cores_used_for_plan": 32,
+  "matrix_validation": {
+    "duplicate_job_ids": 0,
+    "missing_cells": 0,
+    "passed": true
+  },
+  "max_disk_bytes": 107374182400,
+  "pace_b_candidate_work_upper_bound": 0,
+  "pace_b_jobs": 0,
+  "physical_cores_used_for_plan": 32,
+  "required_matrix_query_ids_by_dataset": {
+    "NY": 1
+  },
+  "resolved_physical_core_thread_list": [
+    1
+  ],
+  "schema_version": 1,
+  "serial_timeout_upper_bound_seconds": 600,
+  "study_counts": {
+    "R6S": 1
+  },
+  "study_hashes": {
+    "R6S": "6f6b1b6f38aa84d63f9f05994a2e4e6b27fb5e8b38ba3e76334a194611934a99"
+  },
+  "total_jobs": 1
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "study_id": "R6S",
+  "stage": "m5_r6_sicsp_pref",
+  "mode": "execute",
+  "datasets": [
+    "NY"
+  ],
+  "split": "evaluation",
+  "query_manifest_pattern": "experiments/manifests/icde2027_m5_r6/queries/NY/fastest_budget.jsonl",
+  "trials": 1,
+  "algorithms": [
+    {
+      "id": "sicsp-pref",
+      "variant": "native-sicsp-event-generation-exact-preference-replay",
+      "parameters": {
+        "threads": 1
+      }
+    }
+  ],
+  "purpose": "One controlled NY historical fastest-budget query pilot; no full workload expansion."
+}

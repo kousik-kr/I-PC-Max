@@ -96,6 +96,23 @@ def test_decoder_rejects_a_missing_owned_singleton_or_domain_gap():
         decode_exact_preference_profile(value)
 
 
+def test_decoder_rejects_unknown_affine_fields_and_noncanonical_cell_order():
+    value = fixture()
+    value["cells"][1]["arrival"]["extra"] = "1"
+    with pytest.raises(ValueError, match="arrival has fields outside"):
+        decode_exact_preference_profile(value)
+
+    value = fixture()
+    value["cells"].reverse()
+    with pytest.raises(ValueError, match="cells are not in canonical interval order"):
+        decode_exact_preference_profile(value)
+
+    value = fixture()
+    value["cells"][1]["score"] = "07"
+    with pytest.raises(ValueError, match="score.*nonnegative integer string"):
+        decode_exact_preference_profile(value)
+
+
 def test_zero_measure_identity_domain_preserves_point_feasibility():
     value = {
         "schema": "exact-preference-envelope-v1",

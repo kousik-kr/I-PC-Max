@@ -49,6 +49,20 @@ def _query_id(dataset: str, split: str, pair: int, center: int, axis: dict[str, 
     return f"{dataset}-{prefix}-P{pair:03d}-C{center}-W{window}-RHO{rho:03d}{suffix}"
 
 
+def _manifest_spec(row: dict[str, Any], position: int) -> dict[str, Any]:
+    """Read planner fields when present; synthetic fixtures use stable fallbacks."""
+    metadata = row.get("metadata") or {}
+    pair_index = metadata.get("pair_index", row.get("pair_index", position))
+    center = metadata.get("time_center", row.get("time_center"))
+    if center is None:
+        center = (int(row["interval_start"]) + int(row["interval_end"])) // 2
+    return {
+        "query_id": row["query_id"],
+        "pair_index": int(pair_index),
+        "time_center": int(center),
+    }
+
+
 def expand_study(study: dict[str, Any], design: dict[str, Any]) -> list[dict[str, Any]]:
     if study.get("mode") != "execute":
         return []
@@ -83,12 +97,8 @@ def expand_study(study: dict[str, Any], design: dict[str, Any]) -> list[dict[str
             if len({row.get("query_id") for row in manifest_rows}) != len(manifest_rows):
                 raise ValueError(f"query manifest has duplicate query IDs: {manifest_path}")
             manifest_specs = [
-                {
-                    "query_id": row["query_id"],
-                    "pair_index": int(row["metadata"]["pair_index"]),
-                    "time_center": int(row["metadata"]["time_center"]),
-                }
-                for row in manifest_rows
+                _manifest_spec(row, position)
+                for position, row in enumerate(manifest_rows, start=1)
             ]
         for algorithm in study.get("algorithms", []):
             allowed = algorithm.get("datasets")

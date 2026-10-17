@@ -1,0 +1,105 @@
+{
+  "directed_edges": [
+    {
+      "arc_id": 0,
+      "destination": 2,
+      "distance": 10,
+      "score_steps": [
+        [
+          0,
+          420,
+          0
+        ],
+        [
+          420,
+          600,
+          8
+        ],
+        [
+          600,
+          1440,
+          0
+        ]
+      ],
+      "source": 1,
+      "travel_time": "10"
+    },
+    {
+      "arc_id": 1,
+      "destination": 4,
+      "distance": 10,
+      "score_steps": [
+        [
+          0,
+          1440,
+          0
+        ]
+      ],
+      "source": 2,
+      "travel_time": "10"
+    },
+    {
+      "arc_id": 2,
+      "destination": 3,
+      "distance": 5,
+      "score_steps": [
+        [
+          0,
+          420,
+          0
+        ],
+        [
+          420,
+          600,
+          5
+        ],
+        [
+          600,
+          1440,
+          0
+        ]
+      ],
+      "source": 1,
+      "travel_time": "5"
+    },
+    {
+      "arc_id": 3,
+      "destination": 4,
+      "distance": 40,
+      "score_steps": [
+        [
+          0,
+          1440,
+          0
+        ]
+      ],
+      "source": 3,
+      "travel_time": "40"
+    },
+    {
+      "arc_id": 4,
+      "destination": 4,
+      "distance": 25,
+      "score_steps": [
+        [
+          0,
+          1440,
+          0
+        ]
+      ],
+      "source": 1,
+      "travel_time": "25"
+    }
+  ],
+  "graph_semantic_checksum": "f753dd012525acd43469714f4203532e52af8656737100584007d40cfc7221b7",
+  "identity_scope": "canonical_runtime_graph_semantics-v1",
+  "nodes": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "schema_version": 1,
+  "source_definition": "src/main/java/edu/ipcmax/experiments/ExperimentDatasets.java",
+  "source_definition_sha256": "75ec7f08beab0cc06f74045da2cbb4b1e11dc070c677588324644d5f1e656ed7"
+}

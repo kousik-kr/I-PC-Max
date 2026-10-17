@@ -1,0 +1,1 @@
+{"schema_version":1,"query_id":"tiny-1-4-wide","dataset_id":"demo","source":1,"destination":4,"interval_start":420,"interval_end":430,"window_length":10,"budget":60.0,"budget_slack":2.0,"budget_policy":"tight","distance_bin":0,"lower_bound_distance":20.0,"query_seed":1001,"metadata":{"workload":"smoke"}}

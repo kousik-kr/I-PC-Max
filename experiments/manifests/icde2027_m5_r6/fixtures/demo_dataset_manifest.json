@@ -1,0 +1,15 @@
+{
+  "checksum_scope_version": "canonical_runtime_graph_semantics-v1",
+  "dataset_checksum": "f753dd012525acd43469714f4203532e52af8656737100584007d40cfc7221b7",
+  "dataset_id": "demo",
+  "directed_edges": 5,
+  "fixture_description": "Bundled deterministic four-node temporal graph with competing score/travel alternatives.",
+  "nodes": 4,
+  "output_files": [
+    "demo_dataset_manifest.json",
+    "demo_graph_identity.json"
+  ],
+  "schema_version": 1,
+  "source_definition": "src/main/java/edu/ipcmax/experiments/ExperimentDatasets.java",
+  "source_definition_sha256": "75ec7f08beab0cc06f74045da2cbb4b1e11dc070c677588324644d5f1e656ed7"
+}

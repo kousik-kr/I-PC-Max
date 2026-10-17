@@ -14,6 +14,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from experiments.scripts.common.atomic_io import atomic_write_json, atomic_write_text
+from experiments.scripts.build_matrices import _manifest_spec
 from experiments.scripts.common.config import load_design, repo_path
 from experiments.scripts.common.hashing import sha256_file
 from experiments.scripts.common.provenance import physical_core_count
@@ -76,10 +77,11 @@ def _expected_cells(design: dict[str, Any]) -> collections.Counter[tuple[Any, ..
                         )
                         query_specs = [
                             (
-                                int(row["metadata"]["pair_index"]),
-                                int(row["metadata"]["time_center"]),
+                                spec["pair_index"],
+                                spec["time_center"],
                             )
-                            for row in _jsonl([manifest])
+                            for position, row in enumerate(_jsonl([manifest]), start=1)
+                            for spec in [_manifest_spec(row, position)]
                         ]
                     else:
                         pair_count = int(algorithm.get(
@@ -129,12 +131,12 @@ def _manifest_identity_mismatches(
                     continue
                 for axis in algorithm.get("axes", study.get("axes", [{}])):
                     axis_json = json.dumps(axis, sort_keys=True, separators=(",", ":"))
-                    for row in rows:
-                        metadata = row["metadata"]
+                    for position, row in enumerate(rows, start=1):
+                        planner_spec = _manifest_spec(row, position)
                         for trial in range(int(study.get("trials", 1))):
                             expected[(
                                 study["study_id"], dataset, row["query_id"],
-                                int(metadata["pair_index"]), int(metadata["time_center"]),
+                                planner_spec["pair_index"], planner_spec["time_center"],
                                 algorithm["id"], algorithm.get("variant", algorithm["id"]),
                                 axis_json, trial, manifest_value, digest,
                             )] += 1

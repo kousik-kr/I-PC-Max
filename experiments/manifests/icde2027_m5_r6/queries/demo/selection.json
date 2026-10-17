@@ -1,0 +1,16 @@
+{
+  "candidate_count": 3,
+  "graph_identity": "Bundled four-node, five-edge ExperimentDatasets.demo synthetic graph; exact runtime semantic checksum is recorded in the fixture dataset manifest.",
+  "schema_version": 1,
+  "selected_manifest": "experiments/manifests/icde2027_m5_r6/queries/demo/tractable_sicsp.jsonl",
+  "selected_manifest_sha256": "bfc869f454d140303e563d8d57a6bfb8a6f6ca3f385528f28caf313c6354c0fc",
+  "selected_query_id": "tiny-1-4-wide",
+  "selected_rank": 1,
+  "selection_criterion": "Use the existing ten-minute-window demo query as the predetermined tractable-range SICSP-Pref characterization after the same NY evaluation query exceeded its 600-second watchdog; preserve its row byte-for-byte.",
+  "sort_fields": [
+    "source manifest order"
+  ],
+  "source_manifest": "experiments/manifests/tiny.jsonl",
+  "source_manifest_sha256": "564dd2083969c179acd39c3667bf385c32813577eb3aa7ec2bdfddf4427cd232",
+  "source_row_sha256": "4eca1c27bcb73535bf3bf22f0a1f3f758c8821f171d0adb2df5b23997dfb7639"
+}

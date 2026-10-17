@@ -1,0 +1,31 @@
+{
+  "candidate_count": 50,
+  "schema_version": 1,
+  "selected_manifest": "experiments/manifests/icde2027_m5_r6/queries/NY/fastest_budget.jsonl",
+  "selected_manifest_sha256": "ea476f7da1f51ebd4fb19e4d54eb9aa8faa980e29deabf2f911b70d74585f153",
+  "selected_metadata": {
+    "budget": 30.353824057352,
+    "budget_derivation_rule": "B=canonical_time((1+rho)*T_hat_min,Delta);T_hat_min,Delta=max_grid_witness_travel_time",
+    "destination": 199179,
+    "distance_band": "B1",
+    "interval_end": 570,
+    "interval_start": 450,
+    "lower_bound_distance": 22.918166667,
+    "source": 198026,
+    "t_hat_min_delta": 23.349095428732,
+    "witness_path_checksum_sha256": "cb01da15b6c36dccb2a8a2b307ddc94f52a45ef50dfc102da0e750a275db16fb"
+  },
+  "selected_query_id": "NY-EVAL-P003-C510-W120-RHO030",
+  "selected_rank": 1,
+  "selection_criterion": "Choose rank 1 from the existing NY compact_50 evaluation records by ascending distance_bin, lower_bound_distance, fastest-path-derived t_hat_min_delta, budget, then query_id. This preselects the easiest historical query before algorithm execution.",
+  "sort_fields": [
+    "distance_bin",
+    "lower_bound_distance",
+    "metadata.t_hat_min_delta",
+    "budget",
+    "query_id"
+  ],
+  "source_manifest": "experiments/manifests/icde2027_compact_v1/queries/NY/compact_50.jsonl",
+  "source_manifest_sha256": "0094e026e67dd6f8e6cc9bb16d6302588fa02b6491431713113c256cfe2e0609",
+  "source_row_sha256": "72d56bfc3dff0fe6c2f0f20aa3033badaa65ef39a50128cee45ad979b9901fe0"
+}

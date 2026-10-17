@@ -34,7 +34,7 @@ import java.util.function.LongSupplier;
 
 /** Exact-function iSCOPE adaptation with Opt1 or Opt1+approximate Opt2. */
 public final class IScopePartialLabelAlgorithm implements ExperimentAlgorithm {
-    private static final long DEFAULT_LIMIT_NANOS = TimeUnit.SECONDS.toNanos(5);
+    private static final long DEFAULT_LIMIT_NANOS = TimeUnit.SECONDS.toNanos(10);
     private static final long MAX_FINALIZATION_RESERVE_NANOS = TimeUnit.SECONDS.toNanos(1);
     private static final String DEFAULT_OPT2_THRESHOLD_MINUTES = "2";
 
@@ -179,7 +179,7 @@ public final class IScopePartialLabelAlgorithm implements ExperimentAlgorithm {
         scalars.put("coordinates_used", false);
         scalars.put("lower_bound_invariant", "LB(v,d)<=every_time_dependent_suffix_travel_duration_from_v_to_d");
         scalars.put("query_deadline_nanos", limit);
-        scalars.put("query_time_cap_protocol_seconds", 5);
+        scalars.put("query_time_cap_protocol_seconds", TimeUnit.NANOSECONDS.toSeconds(limit));
         scalars.put("finalization_reserve_nanos", reserve);
         scalars.put("measured_query_elapsed_ns", totalElapsedNanos);
         scalars.put("end_to_end_query_nanos", totalElapsedNanos);

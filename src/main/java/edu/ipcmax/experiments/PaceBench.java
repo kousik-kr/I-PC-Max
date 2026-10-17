@@ -1011,7 +1011,7 @@ public final class PaceBench {
         status.put("status_code", result.status().name());
         status.put("completed", result.status().completedExecution());
         status.put("terminal", result.status().terminal());
-        status.put("execution_policy", executionPolicy(options.algorithm));
+        status.put("execution_policy", executionPolicy(options.algorithm, options.timeoutSeconds));
         status.put("exactness_scope", result.exactnessScope().name());
         status.put(
                 "generation_completion",
@@ -1264,11 +1264,12 @@ public final class PaceBench {
         return result;
     }
 
-    private static String executionPolicy(String algorithm) {
+    private static String executionPolicy(String algorithm, int timeoutSeconds) {
         return switch (algorithm) {
             case "pace-x" -> "PACE_X";
             case "pace-b" -> "PACE_B";
-            case "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized" -> "ISCOPE_FIVE_SECOND_CAP";
+            case "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized" ->
+                    "ISCOPE_" + timeoutSeconds + "_SECOND_CAP";
             case "allfp" -> "ALLFP_FUNCTIONAL";
             case "sicsp-pref" -> "SICSP_PREF_RETAINED_FRONTIER";
             case "sicsp-native" -> "SICSP_NATIVE_HEURISTIC";

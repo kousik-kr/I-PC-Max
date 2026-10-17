@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ from .hashing import sha256_file, sha256_json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SUPPORTED_DATASETS = ("NY", "FLA", "CAL", "USA", "OL", "NY-EXACT")
+SUPPORTED_DATASETS = ("NY", "FLA", "CAL", "USA", "OL", "NY-EXACT", "demo")
 FINAL_ABLATIONS = {
     "full",
     "no-safe-corridor",
@@ -602,6 +603,184 @@ def _validate_icde2027_compact_primary(
                 raise ValueError(f"pilot is not an unchanged five-band subset of the compact manifest: {query_path}")
 
 
+def _validate_icde2027_m5_r6_pilot(
+    design: dict[str, Any], studies: list[dict[str, Any]]
+) -> None:
+    """Validate the one-query, method-specific M5-R6 pilot identities."""
+    method = design.get("pilot_method")
+    method_specs = {
+        "iscope-optimized": {
+            "study_id": "R6I",
+            "timeout": 10,
+            "policy": "TEN_SECOND_QUERY_DEADLINE_EXACT_REPLAY_PROFILE_NOT_CERTIFIED",
+            "variant": "opt1-plus-opt2-10-second-cap-exact-retained-route-evaluation",
+        },
+        "sicsp-pref": {
+            "study_id": "R6S",
+            "timeout": 600,
+            "policy": "SINGLE_QUERY_600_SECOND_WATCHDOG_NO_CANDIDATE_CUTOFF",
+            "variant": "native-sicsp-event-generation-exact-preference-replay",
+        },
+    }
+    if method not in method_specs:
+        raise ValueError("M5-R6 pilot method must be iscope-optimized or sicsp-pref")
+    spec = method_specs[method]
+    campaign_kind = design.get("campaign_kind")
+    if campaign_kind not in {"iscope10", "sicsp_pref", "sicsp_fixture"}:
+        raise ValueError("M5-R6 pilot requires a method-specific campaign identity")
+    fixture_pilot = campaign_kind == "sicsp_fixture"
+    expected_dataset = "demo" if fixture_pilot else "NY"
+    expected_study_id = "R6F" if fixture_pilot else spec["study_id"]
+    expected_split = "fixture" if fixture_pilot else "evaluation"
+    expected_manifest = (
+        "experiments/manifests/icde2027_m5_r6/queries/demo/tractable_sicsp.jsonl"
+        if fixture_pilot else
+        "experiments/manifests/icde2027_m5_r6/queries/NY/fastest_budget.jsonl"
+    )
+    if set(design["datasets"]) != {expected_dataset} or len(studies) != 1:
+        raise ValueError("M5-R6 pilots require one explicitly selected graph and study")
+    study = studies[0]
+    if (
+        study.get("study_id") != expected_study_id
+        or study.get("mode") != "execute"
+        or study.get("datasets") != [expected_dataset]
+        or study.get("split") != expected_split
+        or study.get("trials") != 1
+    ):
+        raise ValueError("M5-R6 study must contain one query and one trial")
+    if study.get("query_manifest_pattern") != expected_manifest:
+        raise ValueError("M5-R6 must use its frozen single-query selector")
+    algorithms = study.get("algorithms", [])
+    if len(algorithms) != 1 or algorithms[0].get("id") != method:
+        raise ValueError("M5-R6 study must contain exactly its declared pilot method")
+    algorithm = algorithms[0]
+    if algorithm.get("variant") != spec["variant"]:
+        raise ValueError("M5-R6 method variant does not match the declared protocol")
+    parameters = algorithm.get("parameters", {})
+    if parameters.get("threads") != 1:
+        raise ValueError("M5-R6 pilots must explicitly use one worker")
+    if method == "iscope-optimized" and (
+        parameters.get("max_enumerated_paths") != 100000
+        or parameters.get("iscope_opt2_breakpoint_threshold_minutes") != 2
+    ):
+        raise ValueError("M5-R6 iSCOPE must preserve the existing Opt2 threshold and path policy")
+    if method == "sicsp-pref" and set(parameters) != {"threads"}:
+        raise ValueError("M5-R6 SICSP-Pref must not introduce a candidate cutoff")
+
+    resources = design["resources"]
+    if resources.get("timeout_seconds") != "unlimited":
+        raise ValueError("M5-R6 requires explicit method-specific query watchdogs")
+    if resources.get("algorithm_timeout_seconds") != {method: spec["timeout"]}:
+        raise ValueError("M5-R6 method-specific query timeout does not match its protocol")
+    if resources.get("timeout_result_policy") != {method: spec["policy"]}:
+        raise ValueError("M5-R6 timeout result policy is incomplete")
+    if (
+        resources.get("preprocessing_timeout_seconds") != 1800
+        or resources.get("memory_limit_mb") != 32768
+        or resources.get("max_concurrent") != 1
+        or resources.get("max_threads_per_query") != 1
+        or resources.get("parallel_thread_candidates") != [1]
+    ):
+        raise ValueError("M5-R6 resource safeguards must remain explicit and serial")
+    protocol = design["protocol"]
+    if (
+        protocol.get("algorithm_comparison_threads") != 1
+        or protocol.get("warmup_passes") != 0
+        or protocol.get("measured_trials") != 1
+        or protocol.get("shared_preprocessing") is not False
+        or protocol.get("retry_algorithm_failures") != 0
+    ):
+        raise ValueError("M5-R6 requires one measured, non-retried query execution")
+    result_root = design["paths"].get("results_root", "")
+    if not result_root.startswith("experiments/results/icde2027_m5_r6/"):
+        raise ValueError("M5-R6 results require their own versioned namespace")
+    if (
+        design.get("historical_result_reuse") is not False
+        or design.get("freeze_required_before_execution") is not True
+        or not design.get("freeze_manifest")
+    ):
+        raise ValueError("M5-R6 requires a new approved freeze and disables historical reuse")
+    if design["paths"].get("jar") != "target/pace-bench.jar":
+        raise ValueError("M5-R6 freeze must identify the clean release JAR")
+
+    if fixture_pilot:
+        source_path = repo_path("experiments/manifests/tiny.jsonl")
+        selector_path = repo_path(
+            "experiments/manifests/icde2027_m5_r6/queries/demo/selection.json"
+        )
+        expected_query_id = "tiny-1-4-wide"
+        fixture_manifest_path = repo_path(
+            design.get("workload", {}).get("fixture_dataset_manifest", "")
+        )
+        fixture_manifest = load_document(fixture_manifest_path)
+        fixture_source = repo_path(
+            "src/main/java/edu/ipcmax/experiments/ExperimentDatasets.java"
+        )
+        fixture_payload_path = fixture_manifest_path.parent / "demo_graph_identity.json"
+        fixture_payload = load_document(fixture_payload_path)
+        if (
+            fixture_manifest.get("dataset_id") != "demo"
+            or fixture_manifest.get("dataset_checksum")
+                != "f753dd012525acd43469714f4203532e52af8656737100584007d40cfc7221b7"
+            or fixture_manifest.get("source_definition_sha256") != sha256_file(fixture_source)
+            or fixture_manifest.get("output_files") != [
+                "demo_dataset_manifest.json", "demo_graph_identity.json"
+            ]
+            or fixture_payload.get("graph_semantic_checksum")
+                != fixture_manifest.get("dataset_checksum")
+            or len(fixture_payload.get("directed_edges", [])) != 5
+            or design["dataset_configs"].get("demo")
+                != "experiments/configs/datasets/demo.yaml"
+        ):
+            raise ValueError("M5-R6 controlled fixture graph identity changed")
+    else:
+        source_path = repo_path(
+            "experiments/manifests/icde2027_compact_v1/queries/NY/compact_50.jsonl"
+        )
+        selector_path = repo_path(
+            "experiments/manifests/icde2027_m5_r6/queries/NY/selection.json"
+        )
+        expected_query_id = "NY-EVAL-P003-C510-W120-RHO030"
+    query_path = repo_path(study["query_manifest_pattern"])
+    source_bytes = source_path.read_bytes()
+    source_rows = [
+        (line, json.loads(line))
+        for line in source_bytes.splitlines(keepends=True)
+        if line.strip()
+    ]
+
+    def selection_key(item: tuple[bytes, dict[str, Any]]) -> tuple[Any, ...]:
+        row = item[1]
+        return (
+            row["distance_bin"], row["lower_bound_distance"],
+            row["metadata"]["t_hat_min_delta"], row["budget"], row["query_id"],
+        )
+
+    if fixture_pilot:
+        selected_source_line, selected_source_row = source_rows[0]
+    else:
+        selected_source_line, selected_source_row = min(source_rows, key=selection_key)
+    query_bytes = query_path.read_bytes()
+    selector = load_document(selector_path)
+    query_rows = [json.loads(line) for line in query_bytes.splitlines() if line.strip()]
+    if (
+        len(source_rows) != (3 if fixture_pilot else 50)
+        or len(query_rows) != 1
+        or query_bytes != selected_source_line
+        or query_rows[0] != selected_source_row
+        or selector.get("source_manifest_sha256") != sha256_file(source_path)
+        or selector.get("selected_manifest_sha256") != sha256_file(query_path)
+        or selector.get("source_row_sha256")
+            != hashlib.sha256(selected_source_line.rstrip(b"\r\n")).hexdigest()
+        or selector.get("selected_query_id") != selected_source_row["query_id"]
+        or selector.get("selected_rank") != 1
+        or selector.get("candidate_count") != len(source_rows)
+    ):
+        raise ValueError("M5-R6 query is not the rank-one unchanged historical row")
+    if selected_source_row["query_id"] != expected_query_id:
+        raise ValueError("M5-R6 designated query identity changed")
+
+
 def load_design(path: Path) -> dict[str, Any]:
     path = path.resolve()
     design = load_document(path)
@@ -657,6 +836,11 @@ def load_design(path: Path) -> dict[str, Any]:
     elif profile == "icde2027_compact_primary_v1":
         kind = design.get("campaign_kind")
         expected = {"M01"} if kind == "main" else {"P01"} if kind == "pilot" else set()
+    elif profile == "icde2027_m5_r6_pilot":
+        if design.get("campaign_kind") == "sicsp_fixture":
+            expected = {"R6F"}
+        else:
+            expected = {"R6I"} if design.get("pilot_method") == "iscope-optimized" else {"R6S"}
     else:
         expected = {f"E{index:02d}" for index in range(14)}
     if study_ids != expected:
@@ -680,6 +864,8 @@ def load_design(path: Path) -> dict[str, Any]:
         _validate_icde2027_compact(design, studies)
     elif not design.get("smoke", False) and profile == "icde2027_compact_primary_v1":
         _validate_icde2027_compact_primary(design, studies)
+    elif not design.get("smoke", False) and profile == "icde2027_m5_r6_pilot":
+        _validate_icde2027_m5_r6_pilot(design, studies)
     elif not design.get("smoke", False) and profile == "scalability_5s":
         _validate_scalability_5s(design, studies)
     elif not design.get("smoke", False) and profile == "two_track":

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "experiment_id": "icde2027_m5_r6_sicsp_fixture_v1",
+  "profile": "icde2027_m5_r6_pilot",
+  "campaign_kind": "sicsp_fixture",
+  "pilot_method": "sicsp-pref",
+  "datasets": [
+    "demo"
+  ],
+  "dataset_configs": {
+    "demo": "experiments/configs/datasets/demo.yaml"
+  },
+  "studies": [
+    "experiments/configs/icde2027_m5_r6/sicsp_fixture_study.yaml"
+  ],
+  "seeds": {
+    "schedule": 20260725
+  },
+  "workload": {
+    "source_policy": "EXISTING_SYNTHETIC_FIXTURE_QUERY_BYTE_FOR_BYTE",
+    "selection_sidecar": "experiments/manifests/icde2027_m5_r6/queries/demo/selection.json",
+    "fixture_dataset_manifest": "experiments/manifests/icde2027_m5_r6/fixtures/demo_dataset_manifest.json",
+    "historical_query_policy": "preserve_source_record_byte_for_byte"
+  },
+  "protocol": {
+    "warmup_passes": 0,
+    "measured_trials": 1,
+    "process_isolation": true,
+    "shared_preprocessing": false,
+    "algorithm_comparison_threads": 1,
+    "retry_infrastructure_failures": 0,
+    "retry_algorithm_failures": 0,
+    "metric_definition_version": "icde2027-m5-r6-pilot-v1",
+    "preprocessing_accounting": "SEPARATE_FROM_QUERY",
+    "completion_policy": "STATUS_AND_COMPLETED_FLAG_MUST_AGREE",
+    "memory_measurement": "PROCESS_PEAK_RSS_AND_JAVA_HEAP_REPORTED_SEPARATELY"
+  },
+  "resources": {
+    "timeout_seconds": "unlimited",
+    "algorithm_timeout_seconds": {
+      "sicsp-pref": 600
+    },
+    "timeout_result_policy": {
+      "sicsp-pref": "SINGLE_QUERY_600_SECOND_WATCHDOG_NO_CANDIDATE_CUTOFF"
+    },
+    "preprocessing_timeout_seconds": 1800,
+    "memory_limit_mb": 32768,
+    "max_concurrent": 1,
+    "max_threads_per_query": 1,
+    "parallel_thread_candidates": [
+      1
+    ]
+  },
+  "query_generation": {
+    "java_main_class": "edu.ipcmax.experiments.querygen.QuerySetGenerator",
+    "paper_java_main_class": "edu.ipcmax.experiments.querygen.PaperQuerySetGenerator",
+    "configuration": "experiments/configs/query_generation.yaml",
+    "manifest_pattern": "experiments/manifests/icde2027_m5_r6/queries/demo/tractable_sicsp.jsonl",
+    "required_contract": "fixture-existing-row-v1"
+  },
+  "dataset_generation": {
+    "configuration": "experiments/configs/dataset_generation.yaml"
+  },
+  "paths": {
+    "data_root": "data/input",
+    "results_root": "experiments/results/icde2027_m5_r6/sicsp_fixture",
+    "matrix_root": "experiments/manifests/icde2027_m5_r6/matrices/sicsp_fixture",
+    "query_root": "experiments/manifests/icde2027_m5_r6/queries",
+    "jar": "target/pace-bench.jar"
+  },
+  "freeze_required_before_execution": true,
+  "freeze_manifest": "experiments/results/icde2027_m5_r6/sicsp_fixture/freezes/sicsp_fixture.json",
+  "historical_result_reuse": false,
+  "planning": {
+    "estimated_raw_bytes_per_job": 262144,
+    "estimated_fixed_release_bytes": 0,
+    "max_disk_bytes": 107374182400,
+    "runtime_upper_bound_definition": "One controlled fixture query, 600-second query watchdog, separate 1800-second preprocessing timeout, one worker."
+  }
+}

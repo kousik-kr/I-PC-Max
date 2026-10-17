@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "dataset_id": "demo",
+  "path": "demo",
+  "enabled": true,
+  "expected_nodes": 4,
+  "expected_edges": 5,
+  "required_support_end": 1440,
+  "checksum_scope_version": "canonical_runtime_graph_semantics-v1"
+}

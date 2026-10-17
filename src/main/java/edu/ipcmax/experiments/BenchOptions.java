@@ -255,9 +255,9 @@ final class BenchOptions {
             throw new IllegalArgumentException("RPQ requires a positive whole-minute --rpq-step-minutes");
         }
         if (List.of("iscope", "iscope-basic", "iscope-opt1", "iscope-optimized").contains(algorithm)
-                && timeoutSeconds != 5) {
+                && timeoutSeconds != 5 && timeoutSeconds != 10) {
             throw new IllegalArgumentException(
-                    algorithm + " requires the declared five-second --timeout-seconds 5 protocol");
+                    algorithm + " requires a declared --timeout-seconds 5 or 10 protocol");
         }
         if (objectiveOptions.containsKey("iscope_opt2_breakpoint_threshold_minutes")) {
             if (!algorithm.equals("iscope-optimized")) {

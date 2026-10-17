@@ -55,7 +55,7 @@ class BenchOptionsTest {
     }
 
     @Test
-    void explicitUnlimitedIsDistinctFromZeroAndPreservesFiniteIscopeCap() {
+    void explicitUnlimitedIsDistinctFromZeroAndPreservesFiniteIscopeCaps() {
         BenchOptions unlimited = parse(
                 "--algorithm", "pace-b", "--timeout-seconds", "unlimited",
                 "--memory-limit-mb", "2048");
@@ -67,10 +67,13 @@ class BenchOptionsTest {
         BenchOptions iscope = parse(
                 "--algorithm", "iscope", "--timeout-seconds", "5");
         assertEquals(5, iscope.timeoutSeconds);
+        BenchOptions tenSecondIscope = parse(
+                "--algorithm", "iscope-optimized", "--timeout-seconds", "10");
+        assertEquals(10, tenSecondIscope.timeoutSeconds);
     }
 
     @Test
-    void iscopeVariantsKeepTheFiveSecondProtocolAndExposeOpt2Parameters() {
+    void iscopeVariantsAcceptFiveOrTenSecondProtocolsAndExposeOpt2Parameters() {
         for (String algorithm : java.util.List.of(
                 "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized")) {
             assertEquals(algorithm, AlgorithmRegistry.create(algorithm).id());
@@ -90,6 +93,8 @@ class BenchOptionsTest {
         assertThrows(IllegalArgumentException.class, () -> parse(
                 "--algorithm", "iscope-optimized", "--timeout-seconds", "5",
                 "--iscope-opt2-breakpoint-threshold-minutes", "0"));
+        assertEquals(10, parse("--algorithm", "iscope-optimized",
+                "--timeout-seconds", "10").timeoutSeconds);
     }
 
     private static BenchOptions parse(String... prefix) {

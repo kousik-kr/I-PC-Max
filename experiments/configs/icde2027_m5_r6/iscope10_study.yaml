@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "study_id": "R6I",
+  "stage": "m5_r6_iscope10",
+  "mode": "execute",
+  "datasets": [
+    "NY"
+  ],
+  "split": "evaluation",
+  "query_manifest_pattern": "experiments/manifests/icde2027_m5_r6/queries/NY/fastest_budget.jsonl",
+  "trials": 1,
+  "algorithms": [
+    {
+      "id": "iscope-optimized",
+      "variant": "opt1-plus-opt2-10-second-cap-exact-retained-route-evaluation",
+      "parameters": {
+        "threads": 1,
+        "max_enumerated_paths": 100000,
+        "iscope_opt2_breakpoint_threshold_minutes": 2
+      }
+    }
+  ],
+  "purpose": "One controlled NY historical fastest-budget query pilot; no full workload expansion."
+}

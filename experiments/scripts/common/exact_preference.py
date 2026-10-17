@@ -91,6 +91,13 @@ def decode_exact_preference_profile(value: Any, expected_checksum: str | None = 
         raise ValueError("exact profile domain and cells must be arrays")
     domain = tuple(ExactInterval.from_json(interval, f"domain[{index}]")
                    for index, interval in enumerate(raw_domain))
+    if tuple(sorted(domain, key=_interval_order_key)) != domain:
+        raise ValueError("exact profile domain intervals are not in canonical order")
+    for previous, current in zip(domain, domain[1:]):
+        if (previous.end > current.start
+                or (previous.end == current.start
+                    and (previous.end_inclusive or current.start_inclusive))):
+            raise ValueError("exact profile domain intervals are not canonically normalized")
     cells: list[ExactPreferenceCell] = []
     for index, raw in enumerate(raw_cells):
         if not isinstance(raw, dict):
@@ -116,7 +123,13 @@ def decode_exact_preference_profile(value: Any, expected_checksum: str | None = 
         if state != "SELECTED" or feasible is not True:
             raise ValueError(f"invalid exact profile cell status at {index}")
         score_text = raw.get("score")
-        if not isinstance(score_text, str) or not score_text.isdigit():
+        if (
+            not isinstance(score_text, str)
+            or not score_text
+            or not score_text.isascii()
+            or not score_text.isdecimal()
+            or (len(score_text) > 1 and score_text.startswith("0"))
+        ):
             raise ValueError(f"selected score at {index} must be a nonnegative integer string")
         path_value = raw.get("path")
         if not isinstance(path_value, list) or any(type(arc) is not int or arc < 0 for arc in path_value):
@@ -125,12 +138,18 @@ def decode_exact_preference_profile(value: Any, expected_checksum: str | None = 
         travel = raw.get("travel_time")
         if not isinstance(arrival, dict) or not isinstance(travel, dict):
             raise ValueError(f"selected cell {index} has no affine arrival/travel profile")
+        if set(arrival) != {"slope", "intercept"}:
+            raise ValueError(f"selected cell {index} arrival has fields outside the exact affine schema")
+        if set(travel) != {"slope", "intercept"}:
+            raise ValueError(f"selected cell {index} travel_time has fields outside the exact affine schema")
         slope = _fraction(arrival.get("slope"), f"cells[{index}].arrival.slope")
         intercept = _fraction(arrival.get("intercept"), f"cells[{index}].arrival.intercept")
         if (_fraction(travel.get("slope"), f"cells[{index}].travel_time.slope") != slope - 1
                 or _fraction(travel.get("intercept"), f"cells[{index}].travel_time.intercept") != intercept):
             raise ValueError(f"selected cell {index} has an inconsistent travel-time relation")
         cells.append(ExactPreferenceCell(interval, True, int(score_text), tuple(path_value), slope, intercept))
+    if tuple(sorted(cells, key=lambda cell: _interval_order_key(cell.interval))) != tuple(cells):
+        raise ValueError("exact profile cells are not in canonical interval order")
     _validate_partition(domain, tuple(cells))
     total = sum((interval.end - interval.start for interval in domain), Fraction())
     feasible_measure = sum((cell.interval.end - cell.interval.start for cell in cells
@@ -168,6 +187,16 @@ def _canonical_interval(value: dict[str, Any]) -> dict[str, Any]:
         "start_inclusive": value["start_inclusive"],
         "end_inclusive": value["end_inclusive"],
     }
+
+
+def _interval_order_key(interval: ExactInterval) -> tuple[Fraction, bool, Fraction, bool]:
+    """Match ExactTemporalDomain and ExactPreferenceEnvelope ordering in Java."""
+    return (
+        interval.start,
+        not interval.start_inclusive,
+        interval.end,
+        not interval.end_inclusive,
+    )
 
 
 def _canonical_cell(value: dict[str, Any]) -> dict[str, Any]:

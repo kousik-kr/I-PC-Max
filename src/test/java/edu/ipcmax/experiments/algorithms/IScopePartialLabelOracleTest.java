@@ -244,7 +244,7 @@ class IScopePartialLabelOracleTest {
         assertEquals(ExperimentStatus.TIME_CAPPED_NOT_CERTIFIED, result.status());
         assertEquals(ExactnessScope.NOT_CERTIFIED, result.exactnessScope());
         assertEquals(Boolean.TRUE, result.scalars().get("deadline_cap_triggered"));
-        assertEquals(5, result.scalars().get("query_time_cap_protocol_seconds"));
+        assertEquals(0L, result.scalars().get("query_time_cap_protocol_seconds"));
         assertEquals(300L, result.scalars().get("query_deadline_nanos"));
         List<List<Integer>> retained = routes(result, "retained_route_registry");
         assertMatchesOracle(graph, query, exactProfile(result),
