@@ -241,6 +241,12 @@ def _parse_stages(value: str) -> list[str]:
     return [stage for stage in STAGES if stage in requested]
 
 
+def _format_timeout_upper_bound(value: int | None) -> str:
+    if value is None:
+        return "unlimited"
+    return f"{value:,} seconds"
+
+
 def _load_reused_preflight(path: Path, design: dict[str, Any]) -> dict[str, Any]:
     """Reuse a previously completed deep preflight for the same filtered design."""
     report = json.loads(path.read_text(encoding="utf-8"))
@@ -507,8 +513,12 @@ def main() -> int:
                 f"Run ID: `{args.run_id}`", "",
                 f"- Exact planned jobs: {plan['total_jobs']:,}",
                 f"- Estimated storage: {plan['estimated_storage_bytes']:,} bytes",
-                f"- Serial timeout upper bound: {plan['serial_timeout_upper_bound_seconds']:,} seconds",
-                f"- Configured-parallel timeout upper bound: {plan['configured_parallel_timeout_upper_bound_seconds']:,} seconds",
+                "- Serial timeout upper bound: "
+                    + _format_timeout_upper_bound(plan["serial_timeout_upper_bound_seconds"]),
+                "- Configured-parallel timeout upper bound: "
+                    + _format_timeout_upper_bound(
+                        plan["configured_parallel_timeout_upper_bound_seconds"]
+                    ),
                 f"- Physical cores: {plan['physical_cores_used_for_plan']}",
                 "- Resolved thread list: "
                     + ", ".join(map(str, plan["resolved_physical_core_thread_list"])),
