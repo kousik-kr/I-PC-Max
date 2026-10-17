@@ -196,7 +196,10 @@ def _resolved_pace_b(
 def _command(
     job: dict[str, Any], design: dict[str, Any], run_root: Path, query_file: Path, java_output: Path
 ) -> list[str]:
-    if design.get("profile") == "icde2027_v1":
+    if (
+        design.get("profile") == "icde2027_v1"
+        or design.get("freeze_required_before_execution") is True
+    ):
         from experiments.scripts.common.benchmark_freeze import capture_run_freeze
         capture_run_freeze(design, run_root)
     resources = design["resources"]

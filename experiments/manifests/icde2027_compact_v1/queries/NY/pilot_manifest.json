@@ -1,0 +1,50 @@
+{
+  "dataset_id": "NY",
+  "measured_trials": 1,
+  "pilot_query_count": 5,
+  "pilot_query_manifest": "experiments/manifests/icde2027_compact_v1/queries/NY/pilot_5.jsonl",
+  "pilot_query_sha256": "6b377353d7972c115e73b8490fd0312322134cdb6d4fa4d7566402e786b9576c",
+  "schema_version": 1,
+  "selected_queries": [
+    {
+      "distance_bin": 1,
+      "pair_id": "NY-EVAL-P001",
+      "pair_index": 1,
+      "query_id": "NY-EVAL-P001-C510-W120-RHO030",
+      "time_center": 510
+    },
+    {
+      "distance_bin": 2,
+      "pair_id": "NY-EVAL-P021",
+      "pair_index": 21,
+      "query_id": "NY-EVAL-P021-C510-W120-RHO030",
+      "time_center": 510
+    },
+    {
+      "distance_bin": 3,
+      "pair_id": "NY-EVAL-P041",
+      "pair_index": 41,
+      "query_id": "NY-EVAL-P041-C510-W120-RHO030",
+      "time_center": 510
+    },
+    {
+      "distance_bin": 4,
+      "pair_id": "NY-EVAL-P061",
+      "pair_index": 61,
+      "query_id": "NY-EVAL-P061-C510-W120-RHO030",
+      "time_center": 510
+    },
+    {
+      "distance_bin": 5,
+      "pair_id": "NY-EVAL-P081",
+      "pair_index": 81,
+      "query_id": "NY-EVAL-P081-C510-W120-RHO030",
+      "time_center": 510
+    }
+  ],
+  "selection": "lowest pair_index at original time_center 510 in each of distance_bin 1 through 5",
+  "selection_frozen_before_execution": true,
+  "source_manifest": "experiments/manifests/icde2027_compact_v1/queries/NY/compact_50.jsonl",
+  "source_manifest_sha256": "0094e026e67dd6f8e6cc9bb16d6302588fa02b6491431713113c256cfe2e0609",
+  "unchanged_source_rows": true
+}

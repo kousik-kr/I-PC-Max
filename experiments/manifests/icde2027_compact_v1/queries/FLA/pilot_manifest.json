@@ -1,0 +1,50 @@
+{
+  "dataset_id": "FLA",
+  "measured_trials": 1,
+  "pilot_query_count": 5,
+  "pilot_query_manifest": "experiments/manifests/icde2027_compact_v1/queries/FLA/pilot_5.jsonl",
+  "pilot_query_sha256": "1c94c73ba6e262965fcd737971aae3904068ae731ab43816405ee9fa8741ff92",
+  "schema_version": 1,
+  "selected_queries": [
+    {
+      "distance_bin": 1,
+      "pair_id": "FLA-EVAL-P001",
+      "pair_index": 1,
+      "query_id": "FLA-EVAL-P001-C510-W120-RHO030",
+      "time_center": 510
+    },
+    {
+      "distance_bin": 2,
+      "pair_id": "FLA-EVAL-P021",
+      "pair_index": 21,
+      "query_id": "FLA-EVAL-P021-C510-W120-RHO030",
+      "time_center": 510
+    },
+    {
+      "distance_bin": 3,
+      "pair_id": "FLA-EVAL-P041",
+      "pair_index": 41,
+      "query_id": "FLA-EVAL-P041-C510-W120-RHO030",
+      "time_center": 510
+    },
+    {
+      "distance_bin": 4,
+      "pair_id": "FLA-EVAL-P061",
+      "pair_index": 61,
+      "query_id": "FLA-EVAL-P061-C510-W120-RHO030",
+      "time_center": 510
+    },
+    {
+      "distance_bin": 5,
+      "pair_id": "FLA-EVAL-P081",
+      "pair_index": 81,
+      "query_id": "FLA-EVAL-P081-C510-W120-RHO030",
+      "time_center": 510
+    }
+  ],
+  "selection": "lowest pair_index at original time_center 510 in each of distance_bin 1 through 5",
+  "selection_frozen_before_execution": true,
+  "source_manifest": "experiments/manifests/icde2027_compact_v1/queries/FLA/compact_50.jsonl",
+  "source_manifest_sha256": "e417c799d094c4e8dfeff1a421621f317a6a2d4a938ec974fba5360573e6c09e",
+  "unchanged_source_rows": true
+}

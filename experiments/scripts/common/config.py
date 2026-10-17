@@ -477,6 +477,131 @@ def _validate_icde2027_compact(
                     raise ValueError(f"compact rows must select five pairs per distance band: {query_path}")
 
 
+def _validate_icde2027_compact_primary(
+    design: dict[str, Any], studies: list[dict[str, Any]]
+) -> None:
+    kind = design.get("campaign_kind")
+    expected_kind = {"main": ("M01", 50, 2), "pilot": ("P01", 5, 1)}
+    if kind not in expected_kind:
+        raise ValueError("compact primary campaign_kind must be main or pilot")
+    study_id, query_count, trials = expected_kind[kind]
+    if len(studies) != 1 or studies[0].get("study_id") != study_id:
+        raise ValueError(f"{kind} campaign requires study {study_id}")
+    study = studies[0]
+    if set(design["datasets"]) != {"NY", "FLA", "CAL"}:
+        raise ValueError("compact primary campaign requires NY, FLA, and CAL")
+    if set(study.get("datasets", [])) != set(design["datasets"]):
+        raise ValueError("compact primary study must cover each configured dataset")
+    if study.get("mode") != "execute" or study.get("trials") != trials:
+        raise ValueError(f"compact {kind} campaign has the wrong execution/trial policy")
+    expected_query_pattern = (
+        "experiments/manifests/icde2027_compact_v1/queries/{dataset}/"
+        + ("compact_50.jsonl" if kind == "main" else "pilot_5.jsonl")
+    )
+    if study.get("query_manifest_pattern") != expected_query_pattern:
+        raise ValueError(f"compact {kind} campaign must use {expected_query_pattern}")
+    if {algorithm.get("id") for algorithm in study.get("algorithms", [])} != {
+        "pace-b", "iscope-optimized"
+    }:
+        raise ValueError("primary PACE-B/iSCOPE campaign must contain exactly those two methods")
+    if any(
+        algorithm.get("parameters", {}).get("threads") != 1
+        for algorithm in study.get("algorithms", [])
+    ):
+        raise ValueError("compact primary methods must each use one execution worker")
+    optimized = next(
+        item for item in study["algorithms"] if item["id"] == "iscope-optimized"
+    )
+    if optimized.get("parameters", {}).get("iscope_opt2_breakpoint_threshold_minutes") != 2:
+        raise ValueError("primary iSCOPE must use the documented two-minute Opt2 threshold")
+    pace_b = design.get("pace_b_defaults", {})
+    if design.get("resolved_pace_b_required") is not False or any(
+        pace_b.get(name) != expected
+        for name, expected in {
+            "pivot_limit_l": 4,
+            "connector_limit_kc": 4,
+            "frontier_limit_kf": 2,
+            "threads": 1,
+            "connector_expansion_cap_mc": 250000,
+            "breakpoint_cap_mb": 100000,
+            "query_work_cap_mq": 5000000,
+        }.items()
+    ):
+        raise ValueError("primary PACE-B requires frozen 4/4/2 bounds and declared work caps")
+    resources = design["resources"]
+    if resources.get("timeout_seconds") != "unlimited":
+        raise ValueError("primary campaign base wall time must be unlimited")
+    if resources.get("algorithm_timeout_seconds") != {
+        "pace-b": "unlimited", "iscope-optimized": 5,
+    }:
+        raise ValueError("primary campaign requires unlimited PACE-B and five-second iSCOPE")
+    if resources.get("timeout_result_policy") != {
+        "pace-b": "NO_WALL_TIMEOUT_REPORT_INTRINSIC_WORK_CAPS",
+        "iscope-optimized": "APPROXIMATE_SEARCH_EXACT_RETAINED_ROUTE_PROFILE_NOT_CERTIFIED",
+    }:
+        raise ValueError("primary campaign timeout-result policies are incomplete")
+    if (
+        design.get("protocol", {}).get("algorithm_comparison_threads") != 1
+        or not design.get("protocol", {}).get("shared_preprocessing")
+        or resources.get("max_concurrent") != 1
+        or resources.get("max_threads_per_query") != 1
+    ):
+        raise ValueError("primary campaign must run one query worker with shared preprocessing")
+    if resources.get("memory_limit_mb") != 256000:
+        raise ValueError("primary campaign must freeze the reviewed 256000 MB memory limit")
+    if design.get("historical_result_reuse") is not False:
+        raise ValueError("primary campaign must disable historical result reuse")
+    if design.get("freeze_required_before_execution") is not True or not design.get("freeze_manifest"):
+        raise ValueError("primary campaign requires an explicit clean-release freeze manifest")
+    if not design["paths"]["results_root"].startswith(
+        "experiments/results/icde2027_compact_v1/"
+    ):
+        raise ValueError("primary campaign requires an isolated compact results namespace")
+
+    for dataset in design["datasets"]:
+        query_path = repo_path(expected_query_pattern.format(dataset=dataset))
+        rows = [
+            json.loads(line)
+            for line in query_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if len(rows) != query_count or len({row.get("query_id") for row in rows}) != query_count:
+            raise ValueError(f"{kind} manifest must contain {query_count} unique query IDs: {query_path}")
+        if any(
+            row.get("dataset_id") != dataset
+            or row.get("window_length") != 120
+            or row.get("budget_slack") != 0.3
+            or row.get("metadata", {}).get("split") != "evaluation"
+            for row in rows
+        ):
+            raise ValueError(f"{kind} manifest contains a changed or mismatched query: {query_path}")
+        if kind == "main":
+            sidecar = load_document(query_path.parent / "manifest.json")
+            if (
+                sha256_file(query_path) != sidecar.get("compact_query_sha256")
+                or query_count != sidecar.get("compact_query_count")
+            ):
+                raise ValueError(f"main manifest identity changed: {query_path}")
+        else:
+            sidecar = load_document(query_path.parent / "pilot_manifest.json")
+            source_path = repo_path(
+                f"experiments/manifests/icde2027_compact_v1/queries/{dataset}/compact_50.jsonl"
+            )
+            source_rows = {
+                row["query_id"]: row
+                for row in map(json.loads, source_path.read_text(encoding="utf-8").splitlines())
+                if row.get("query_id")
+            }
+            if (
+                sha256_file(query_path) != sidecar.get("pilot_query_sha256")
+                or query_count != sidecar.get("pilot_query_count")
+                or sidecar.get("source_manifest_sha256") != sha256_file(source_path)
+                or any(source_rows.get(row["query_id"]) != row for row in rows)
+                or len({row.get("distance_bin") for row in rows}) != 5
+            ):
+                raise ValueError(f"pilot is not an unchanged five-band subset of the compact manifest: {query_path}")
+
+
 def load_design(path: Path) -> dict[str, Any]:
     path = path.resolve()
     design = load_document(path)
@@ -529,6 +654,9 @@ def load_design(path: Path) -> dict[str, Any]:
             raise ValueError("ICDE2027 requires explicit objective-specific studies")
     elif profile == "icde2027_compact_v1":
         expected = {"C01", "C02"}
+    elif profile == "icde2027_compact_primary_v1":
+        kind = design.get("campaign_kind")
+        expected = {"M01"} if kind == "main" else {"P01"} if kind == "pilot" else set()
     else:
         expected = {f"E{index:02d}" for index in range(14)}
     if study_ids != expected:
@@ -550,6 +678,8 @@ def load_design(path: Path) -> dict[str, Any]:
         validate_icde2027(design, studies)
     elif not design.get("smoke", False) and profile == "icde2027_compact_v1":
         _validate_icde2027_compact(design, studies)
+    elif not design.get("smoke", False) and profile == "icde2027_compact_primary_v1":
+        _validate_icde2027_compact_primary(design, studies)
     elif not design.get("smoke", False) and profile == "scalability_5s":
         _validate_scalability_5s(design, studies)
     elif not design.get("smoke", False) and profile == "two_track":

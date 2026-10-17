@@ -1220,6 +1220,7 @@ def refresh_all_manifest_checksums(
 def validate_assets(
     design: dict[str, Any],
     config: dict[str, Any],
+    verify_raw_conversion: bool = True,
 ) -> dict[str, Any]:
     errors: list[str] = []
     records: list[dict[str, Any]] = []
@@ -1262,7 +1263,8 @@ def validate_assets(
                 expected_contract,
                 int(definition["required_support_end"]),
                 None if (
-                    definition.get("induced_subgraph")
+                    not verify_raw_conversion
+                    or definition.get("induced_subgraph")
                     or definition.get("asset_status") == "external_input_required"
                 ) else raw_paths(config, dataset)["travel_time"],
                 numerator,
@@ -1436,6 +1438,12 @@ def validate_assets(
         "variants": variants,
         "errors": errors,
         "passed": not errors,
+        "raw_source_conversion_verified": verify_raw_conversion,
+        "raw_source_conversion_note": (
+            "not checked; source DIMACS inputs are not required for a frozen payload run"
+            if not verify_raw_conversion
+            else "checked where source inputs are configured and available"
+        ),
     }
 
 

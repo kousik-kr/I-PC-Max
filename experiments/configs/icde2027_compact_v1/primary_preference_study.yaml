@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "study_id": "M01",
+  "stage": "primary_preference_main",
+  "mode": "execute",
+  "datasets": ["NY", "FLA", "CAL"],
+  "split": "evaluation",
+  "query_manifest_pattern": "experiments/manifests/icde2027_compact_v1/queries/{dataset}/compact_50.jsonl",
+  "trials": 2,
+  "algorithms": [
+    {"id": "pace-b", "variant": "bounded-candidates-exact-retained-objective", "parameters": {"theta": 2, "threads": 1, "resolved_pace_b": false}},
+    {"id": "iscope-optimized", "variant": "opt1-plus-opt2-five-second-cap-exact-retained-route-evaluation", "parameters": {"threads": 1, "max_enumerated_paths": 100000, "iscope_opt2_breakpoint_threshold_minutes": 2}}
+  ],
+  "purpose": "Primary preference campaign: the 50 existing compact query rows per NY/FLA/CAL dataset, two measured trials, PACE-B and iscope-optimized only."
+}

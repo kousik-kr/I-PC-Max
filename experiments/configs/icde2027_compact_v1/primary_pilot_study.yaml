@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "study_id": "P01",
+  "stage": "predeclared_primary_pilot",
+  "mode": "execute",
+  "datasets": ["NY", "FLA", "CAL"],
+  "split": "evaluation",
+  "query_manifest_pattern": "experiments/manifests/icde2027_compact_v1/queries/{dataset}/pilot_5.jsonl",
+  "trials": 1,
+  "algorithms": [
+    {"id": "pace-b", "variant": "bounded-candidates-exact-retained-objective", "parameters": {"theta": 2, "threads": 1, "resolved_pace_b": false}},
+    {"id": "iscope-optimized", "variant": "opt1-plus-opt2-five-second-cap-exact-retained-route-evaluation", "parameters": {"threads": 1, "max_enumerated_paths": 100000, "iscope_opt2_breakpoint_threshold_minutes": 2}}
+  ],
+  "purpose": "Five original compact queries per dataset, one from each OD distance band, one measured trial, PACE-B and iscope-optimized only. THop is excluded until its v2 index is ready."
+}

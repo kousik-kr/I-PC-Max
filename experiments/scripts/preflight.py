@@ -20,7 +20,7 @@ from experiments.scripts.common.config import (
     load_document,
     repo_path,
 )
-from experiments.scripts.common.hashing import graph_checksum
+from experiments.scripts.common.hashing import graph_checksum, sha256_file
 from experiments.scripts.common.provenance import host_environment
 from experiments.scripts.generate_dataset_assets import validate_assets
 from experiments.scripts.generate_queries import validate_all
@@ -428,6 +428,47 @@ def inspect_implementation_gates(design: dict[str, Any]) -> dict[str, Any]:
     return {"gates": records, "passed": not blockers, "blockers": blockers}
 
 
+def _primary_compact_query_report(design: dict[str, Any]) -> dict[str, Any]:
+    """Report the exact manifests already validated by the compact profile."""
+    study = design["study_definitions"][0]
+    pattern = study["query_manifest_pattern"]
+    expected = 50 if design["campaign_kind"] == "main" else 5
+    records = []
+    for dataset in design["datasets"]:
+        path = repo_path(pattern.format(dataset=dataset))
+        rows = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        unique = len({row["query_id"] for row in rows})
+        records.append({
+            "dataset_id": dataset,
+            "path": path.as_posix(),
+            "checksum": sha256_file(path),
+            "rows": len(rows),
+            "unique_query_ids": unique,
+            "expected_rows": expected,
+            "passed": len(rows) == expected and unique == expected,
+            "identity_validation": "load_design compact-primary source-manifest contract",
+        })
+    return {"datasets": records, "passed": all(row["passed"] for row in records)}
+
+
+def _primary_asset_design(design: dict[str, Any]) -> dict[str, Any]:
+    """Deep-check only assets used by this campaign, excluding unused variants."""
+    result = dict(design)
+    result["dataset_definitions"] = {
+        dataset: {
+            **definition,
+            "required_score_density_percent": [],
+            "required_graph_seeds": [],
+        }
+        for dataset, definition in design["dataset_definitions"].items()
+    }
+    return result
+
+
 def run_preflight(
     config_path: Path,
     checksums: bool = True,
@@ -448,6 +489,11 @@ def run_preflight(
         for item in datasets
         for message in item.get("errors", [])
     ]
+    asset_design = (
+        _primary_asset_design(design)
+        if design.get("profile") == "icde2027_compact_primary_v1"
+        else design
+    )
     asset_integrity = (
         {
             "datasets": [],
@@ -465,10 +511,13 @@ def run_preflight(
         if not design["datasets"]
         else _name_payload_checksum_scopes(
             validate_assets(
-                design,
+                asset_design,
                 load_document(repo_path(
                     design["dataset_generation"]["configuration"]
                 )),
+                verify_raw_conversion=(
+                    design.get("profile") != "icde2027_compact_primary_v1"
+                ),
             )
         )
     )
@@ -479,6 +528,8 @@ def run_preflight(
     queries = (
         {"datasets": [], "passed": True, "skipped": "smoke design"}
         if design.get("smoke")
+        else _primary_compact_query_report(design)
+        if design.get("profile") == "icde2027_compact_primary_v1"
         else validate_all(design)
     )
     for item in queries["datasets"]:
@@ -486,6 +537,8 @@ def run_preflight(
             f"{item['dataset_id']} queries: {message}"
             for message in item.get("errors", [])
         )
+        if item.get("passed") is False:
+            blockers.append(f"{item['dataset_id']}: compact query manifest validation failed")
     resources = dict(design["resources"])
     if resources.get("require_server_profile_for_full_run") and resources.get("memory_limit_mb") is None:
         message = "full-run memory_limit_mb is unresolved; provide the target server profile"

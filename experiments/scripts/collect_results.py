@@ -17,6 +17,7 @@ from experiments.scripts.common.atomic_io import atomic_write_json, write_jsonl
 from experiments.scripts.common.config import load_design, repo_path
 from experiments.scripts.common.hashing import sha256_files
 from experiments.scripts.common.exact_preference import decode_exact_preference_profile
+from experiments.scripts.common.exact_fastest_profile import decode_fastest_profile
 
 
 def read_records(directory: Path) -> list[dict[str, Any]]:
@@ -88,6 +89,8 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
         objective = output
     exact_profile = None
     exact_error = None
+    fastest_profile = None
+    fastest_error = None
     if isinstance(objective, dict) and objective.get("profile") is not None:
         try:
             exact_profile = decode_exact_preference_profile(
@@ -95,6 +98,13 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
             )
         except ValueError as error:
             exact_error = str(error)
+    if isinstance(objective, dict) and objective.get("objective") == "fastest_profile":
+        try:
+            fastest_profile = decode_fastest_profile(
+                objective, output.get("profile_checksum")
+            )
+        except ValueError as error:
+            fastest_error = str(error)
     peak_rss = memory.get("peak_rss")
     start_rss = memory.get("start_rss")
     algorithm_id = configuration.get("algorithm")
@@ -128,6 +138,8 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
             if algorithm_id == "allfp"
             else "T03-A_PREFERENCE_AWARE"
             if algorithm_id in {"pace-b", "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized"}
+            else "FASTEST_PROFILE_REFERENCE"
+            if algorithm_id == "thop-partitioned"
             else "HISTORICAL_OR_EXACTNESS"
         ),
         "variant_id": configuration.get("ablation"),
@@ -239,6 +251,26 @@ def flatten(record: dict[str, Any]) -> dict[str, Any]:
         })
     elif exact_error is not None:
         row["exact_profile_validation_error"] = exact_error
+    if fastest_profile is not None:
+        row.update({
+            "fastest_profile_schema": "exact-rational-travel-time-profile-v1",
+            "fastest_profile_checksum": fastest_profile.checksum,
+            "fastest_profile_cells": len(fastest_profile.cells),
+            "fastest_profile_covered_measure": str(fastest_profile.covered_measure),
+            "fastest_profile_total_measure": str(fastest_profile.total_measure),
+            "fastest_profile_coverage_exact": str(fastest_profile.coverage),
+            "fastest_profile_integrated_travel_time": str(
+                fastest_profile.integrated_travel_time
+            ),
+            "fastest_profile_average_travel_time": (
+                None if fastest_profile.average_travel_time is None
+                else str(fastest_profile.average_travel_time)
+            ),
+            "fastest_profile_preference_scores_used": False,
+            "fastest_profile_pace_budget_used": False,
+        })
+    elif fastest_error is not None:
+        row["fastest_profile_validation_error"] = fastest_error
     return row
 
 

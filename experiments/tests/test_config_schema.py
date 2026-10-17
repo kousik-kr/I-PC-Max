@@ -3,6 +3,7 @@ from collections import Counter
 from tempfile import TemporaryDirectory
 import json
 import unittest
+from unittest.mock import patch
 
 from experiments.scripts.build_matrices import build_all
 from experiments.scripts.common.config import algorithm_timeout_seconds, load_design
@@ -70,7 +71,9 @@ class ConfigContractTest(unittest.TestCase):
             item for item in design["study_definitions"][0]["algorithms"]
             if item["id"] == "iscope-optimized"
         )
-        with TemporaryDirectory() as temporary:
+        with TemporaryDirectory() as temporary, patch(
+            "experiments.scripts.common.benchmark_freeze.capture_run_freeze", return_value={}
+        ):
             root = Path(temporary)
             command = _command({
                 "algorithm_id": "iscope-optimized",

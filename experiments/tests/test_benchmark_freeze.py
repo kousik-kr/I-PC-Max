@@ -15,6 +15,21 @@ def test_missing_or_unapproved_freeze_blocks_execution(tmp_path):
         verify_freeze(design)
 
 
+def test_compact_primary_profile_cannot_bypass_declared_freeze_gate(tmp_path):
+    design = {
+        "profile": "icde2027_compact_primary_v1",
+        "freeze_required_before_execution": True,
+    }
+    with pytest.raises(ValueError, match="explicit freeze_manifest"):
+        verify_freeze(design)
+    design["freeze_manifest"] = str(tmp_path / "freeze.json")
+    with pytest.raises(ValueError, match="missing"):
+        verify_freeze(design)
+    (tmp_path / "freeze.json").write_text(json.dumps({"readiness": {"approved": False}}))
+    with pytest.raises(ValueError, match="approved"):
+        verify_freeze(design)
+
+
 def test_jar_or_workload_mutation_invalidates_frozen_identity(tmp_path, monkeypatch):
     import hashlib
     jar = tmp_path / "bench.jar"
@@ -26,6 +41,14 @@ def test_jar_or_workload_mutation_invalidates_frozen_identity(tmp_path, monkeypa
     source.write_text("frozen source")
     import experiments.scripts.common.benchmark_freeze as freeze
     monkeypatch.setattr(freeze, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        freeze, "subprocess_run_git",
+        lambda *arguments: {
+            ("rev-parse", "HEAD"): "a" * 40,
+            ("rev-parse", "HEAD^{tree}"): "b" * 40,
+            ("status", "--porcelain"): "",
+        }[arguments],
+    )
     design = {"profile": "icde2027_v1", "config_hash": "design123",
               "freeze_manifest": str(tmp_path / "freeze.json"),
               "resources": {"algorithm_timeout_seconds": {"iscope": 5}},

@@ -19,6 +19,7 @@ from experiments.scripts.common.hashing import sha256_file
 from experiments.scripts.common.provenance import physical_core_count
 from experiments.scripts.common.status import TERMINAL_STATUSES
 from experiments.scripts.common.exact_preference import decode_exact_preference_profile
+from experiments.scripts.common.exact_fastest_profile import decode_fastest_profile
 
 
 def _jsonl(paths: list[Path]) -> list[dict[str, Any]]:
@@ -305,6 +306,22 @@ def validate(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
                             errors.append(f"preference job {job_id} output checksum is not the exact profile checksum")
                     except ValueError as malformed:
                         errors.append(f"preference job {job_id} has invalid exact profile: {malformed}")
+        if algorithm == "thop-partitioned" and record.get("completion_status") in valid_profile_statuses:
+            objective = output.get("objective_result")
+            try:
+                fastest_profile = decode_fastest_profile(
+                    objective, output.get("profile_checksum")
+                )
+                if status.get("exactness_scope") != "GLOBAL_CERTIFIED":
+                    errors.append(f"THop job {job_id} lacks global fastest-profile exactness")
+                if counters.get("preference_score_applicable") is not False:
+                    errors.append(f"THop job {job_id} does not declare preference scores inapplicable")
+                if counters.get("pace_budget_applied") is not False:
+                    errors.append(f"THop job {job_id} does not declare the PACE budget unapplied")
+                if objective.get("feasible") is not bool(fastest_profile.cells):
+                    errors.append(f"THop job {job_id} feasibility flag disagrees with its exact profile")
+            except (ValueError, AttributeError) as malformed:
+                errors.append(f"THop job {job_id} has an invalid exact fastest profile: {malformed}")
         if algorithm in {
             "pace-b", "iscope", "iscope-basic", "iscope-opt1", "iscope-optimized", "allfp"
         } and checksum:

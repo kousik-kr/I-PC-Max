@@ -24,6 +24,7 @@ from experiments.scripts.common.config import (
     repo_path,
 )
 from experiments.scripts.common.exact_preference import decode_exact_preference_profile
+from experiments.scripts.common.exact_fastest_profile import decode_fastest_profile
 
 
 def _percentile(values: list[float], fraction: float) -> float | None:
@@ -92,6 +93,7 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     plans = {row["job_id"]: row for row in plan_rows}
     metric_paths = {
         "wall_time_ns": ("timing_ns", "query_total"),
+        "preprocessing_time_ns": ("timing_ns", "preprocessing_total"),
         "cpu_time_ns": ("timing_ns", "cpu_total"),
         "lower_bound_time_ns": (
             "timing_ns", "lower_bound_preprocessing"
@@ -160,6 +162,14 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         "allfp_budget_variant_reuse_hit": (
             "counters", "allfp_budget_variant_reuse_hit"
         ),
+        "boundary_preprocessing_time_ns": (
+            "counters", "boundary_preprocessing_nanos"
+        ),
+        "inner_preprocessing_time_ns": (
+            "counters", "inner_preprocessing_nanos"
+        ),
+        "index_loading_time_ns": ("counters", "index_loading_nanos"),
+        "thop_index_bytes": ("counters", "index_bytes_on_disk"),
     }
     Group = tuple[str, str, str, str, str]
     trials: dict[tuple[Group, str], dict[str, list[float]]] = collections.defaultdict(
@@ -257,6 +267,26 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
                     exact_trials[query_key]["average_selected_preference"].append(
                         exact_profile.metrics.average_selected_preference
                     )
+            if isinstance(objective, dict) and objective.get("objective") == "fastest_profile":
+                fastest_profile = decode_fastest_profile(
+                    objective, output.get("profile_checksum")
+                )
+                trials[query_key]["fastest_profile_cells"].append(
+                    float(len(fastest_profile.cells))
+                )
+                trials[query_key]["fastest_profile_coverage"].append(
+                    float(fastest_profile.coverage)
+                )
+                if fastest_profile.average_travel_time is not None:
+                    exact_trials[query_key]["fastest_profile_average_travel_time"].append(
+                        fastest_profile.average_travel_time
+                    )
+                exact_trials[query_key]["fastest_profile_integrated_travel_time"].append(
+                    fastest_profile.integrated_travel_time
+                )
+                exact_trials[query_key]["fastest_profile_coverage_exact"].append(
+                    fastest_profile.coverage
+                )
             for metric, (section, field) in metric_paths.items():
                 value = java.get(section, {}).get(field)
                 if isinstance(value, (int, float)):
@@ -409,6 +439,52 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
                 None if not exact_query_medians[group].get("average_selected_preference")
                 else str(statistics.median(exact_query_medians[group]["average_selected_preference"]))
             ),
+            "median_fastest_profile_cells": (
+                None if not metrics.get("fastest_profile_cells")
+                else statistics.median(metrics["fastest_profile_cells"])
+            ),
+            "median_fastest_profile_coverage": (
+                None if not metrics.get("fastest_profile_coverage")
+                else statistics.median(metrics["fastest_profile_coverage"])
+            ),
+            "median_fastest_profile_coverage_exact": (
+                None if not exact_query_medians[group].get("fastest_profile_coverage_exact")
+                else str(statistics.median(
+                    exact_query_medians[group]["fastest_profile_coverage_exact"]
+                ))
+            ),
+            "median_fastest_profile_integrated_travel_time": (
+                None if not exact_query_medians[group].get("fastest_profile_integrated_travel_time")
+                else str(statistics.median(
+                    exact_query_medians[group]["fastest_profile_integrated_travel_time"]
+                ))
+            ),
+            "median_fastest_profile_average_travel_time": (
+                None if not exact_query_medians[group].get("fastest_profile_average_travel_time")
+                else str(statistics.median(
+                    exact_query_medians[group]["fastest_profile_average_travel_time"]
+                ))
+            ),
+            "median_preprocessing_time_ns": (
+                statistics.median(metrics["preprocessing_time_ns"])
+                if metrics.get("preprocessing_time_ns") else None
+            ),
+            "median_boundary_preprocessing_time_ns": (
+                statistics.median(metrics["boundary_preprocessing_time_ns"])
+                if metrics.get("boundary_preprocessing_time_ns") else None
+            ),
+            "median_inner_preprocessing_time_ns": (
+                statistics.median(metrics["inner_preprocessing_time_ns"])
+                if metrics.get("inner_preprocessing_time_ns") else None
+            ),
+            "median_index_loading_time_ns": (
+                statistics.median(metrics["index_loading_time_ns"])
+                if metrics.get("index_loading_time_ns") else None
+            ),
+            "median_thop_index_bytes": (
+                statistics.median(metrics["thop_index_bytes"])
+                if metrics.get("thop_index_bytes") else None
+            ),
             "median_average_selected_travel_time": statistics.median(
                 metrics["average_selected_travel_time"]
             ) if metrics.get("average_selected_travel_time") else None,
@@ -457,6 +533,11 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             row[name] = axis.get(name, configuration.get(name))
         uncertainty_fields = {
             "median_wall_time_ns": "wall_time_ns",
+            "median_preprocessing_time_ns": "preprocessing_time_ns",
+            "median_boundary_preprocessing_time_ns": "boundary_preprocessing_time_ns",
+            "median_inner_preprocessing_time_ns": "inner_preprocessing_time_ns",
+            "median_index_loading_time_ns": "index_loading_time_ns",
+            "median_thop_index_bytes": "thop_index_bytes",
             "median_cpu_time_ns": "cpu_time_ns",
             "median_peak_rss_bytes": "peak_rss_bytes",
             "median_incremental_rss_bytes": "incremental_rss_bytes",
@@ -471,6 +552,8 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             "median_candidates_retained": "candidates_retained",
             "median_total_candidate_work": "total_candidate_work",
             "median_profile_cells_total": "profile_cells_total",
+            "median_fastest_profile_cells": "fastest_profile_cells",
+            "median_fastest_profile_coverage": "fastest_profile_coverage",
             "median_feasible_coverage": "feasible_coverage",
             "median_average_selected_score": "average_selected_score",
             "median_average_selected_travel_time":

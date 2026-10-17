@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "experiment_id": "icde2027_compact_primary_preference_v1",
+  "profile": "icde2027_compact_primary_v1",
+  "campaign_kind": "main",
+  "datasets": ["NY", "FLA", "CAL"],
+  "dataset_configs": {
+    "NY": "experiments/configs/datasets/ny.yaml",
+    "FLA": "experiments/configs/datasets/fla.yaml",
+    "CAL": "experiments/configs/datasets/cal.yaml"
+  },
+  "studies": ["experiments/configs/icde2027_compact_v1/primary_preference_study.yaml"],
+  "seeds": {"graph_main": 42, "schedule": 20260725, "bootstrap": 20260726},
+  "workload": {
+    "default_window_minutes": 120,
+    "default_budget_overhead": 0.30,
+    "budget_definition": "GRID_LOWER_BOUND_WITNESS_PATH_TRAVEL_TIME",
+    "historical_query_policy": "preserve_source_records_byte_for_byte"
+  },
+  "pace_b_defaults": {
+    "theta": 2,
+    "threads": 1,
+    "pivot_limit_l": 4,
+    "connector_limit_kc": 4,
+    "frontier_limit_kf": 2,
+    "connector_expansion_cap_mc": 250000,
+    "breakpoint_cap_mb": 100000,
+    "query_work_cap_mq": 5000000,
+    "query_work_accounting_contract": "PACE-MQ-TOTAL-WORK-v3",
+    "semantic_version": "pace-b-fb-witness-grid-v1"
+  },
+  "resolved_pace_b_required": false,
+  "protocol": {
+    "warmup_passes": 1,
+    "measured_trials": 2,
+    "process_isolation": false,
+    "shared_preprocessing": true,
+    "algorithm_comparison_threads": 1,
+    "retry_infrastructure_failures": 1,
+    "retry_algorithm_failures": 0,
+    "metric_definition_version": "icde2027-exact-objective-v1",
+    "preprocessing_accounting": "SEPARATE_FROM_QUERY",
+    "completion_policy": "STATUS_AND_COMPLETED_FLAG_MUST_AGREE",
+    "memory_measurement": "PROCESS_PEAK_RSS_AND_JAVA_HEAP_REPORTED_SEPARATELY"
+  },
+  "resources": {
+    "timeout_seconds": "unlimited",
+    "algorithm_timeout_seconds": {"pace-b": "unlimited", "iscope-optimized": 5},
+    "timeout_result_policy": {
+      "pace-b": "NO_WALL_TIMEOUT_REPORT_INTRINSIC_WORK_CAPS",
+      "iscope-optimized": "APPROXIMATE_SEARCH_EXACT_RETAINED_ROUTE_PROFILE_NOT_CERTIFIED"
+    },
+    "preprocessing_timeout_seconds": 1800,
+    "memory_limit_mb": 256000,
+    "max_concurrent": 1,
+    "max_threads_per_query": 1,
+    "parallel_thread_candidates": [1],
+    "require_server_profile_for_full_run": true
+  },
+  "query_generation": {
+    "java_main_class": "edu.ipcmax.experiments.querygen.QuerySetGenerator",
+    "paper_java_main_class": "edu.ipcmax.experiments.querygen.PaperQuerySetGenerator",
+    "configuration": "experiments/configs/query_generation.yaml",
+    "manifest_pattern": "experiments/manifests/queries/{dataset}/paper_q1.jsonl",
+    "required_contract": "paper-q1-v1"
+  },
+  "dataset_generation": {
+    "configuration": "experiments/configs/dataset_generation.yaml"
+  },
+  "paths": {
+    "data_root": "data/input",
+    "results_root": "experiments/results/icde2027_compact_v1/primary_preference",
+    "matrix_root": "experiments/manifests/icde2027_compact_v1/matrices/primary_preference",
+    "query_root": "experiments/manifests/icde2027_compact_v1/queries",
+    "jar": "target/pace-bench.jar"
+  },
+  "freeze_required_before_execution": true,
+  "freeze_manifest": "experiments/results/icde2027_compact_v1/freezes/primary_preference.json",
+  "historical_result_reuse": false,
+  "planning": {
+    "estimated_raw_bytes_per_job": 131072,
+    "estimated_fixed_release_bytes": 104857600,
+    "max_disk_bytes": 107374182400,
+    "runtime_upper_bound_definition": "Unlimited query wall time for PACE-B; five-second search cap for iscope-optimized; preprocessing has a separate timeout."
+  }
+}

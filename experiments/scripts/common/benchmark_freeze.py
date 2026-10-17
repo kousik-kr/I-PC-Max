@@ -20,7 +20,9 @@ def sha256_file(path: Path) -> str:
 def source_paths(root: Path) -> list[Path]:
     """Execution-affecting source/config files; final report prose is excluded."""
     paths = [root / name for name in ["pom.xml", "Makefile", "pace_bench", "pace_bench.cmd"] if (root / name).is_file()]
-    for folder, suffixes in [("src/main", {".java"}), ("experiments/scripts", {".py"}),
+    for folder, suffixes in [("src/main", {".java"}),
+                             ("experiments/scripts", {".py"}),
+                             ("experiments/tools/thop_feasibility", {".java"}),
                              ("experiments/configs", {".yaml", ".json"}),
                              ("experiments/schemas", {".json"}),
                              ("experiments/fixtures", {".json", ".jsonl"})]:
@@ -32,9 +34,16 @@ _VERIFIED: dict[str, tuple] = {}
 
 
 def verify_freeze(design: dict[str, Any]) -> dict[str, Any]:
-    if design.get("profile") != "icde2027_v1":
+    required = (
+        design.get("profile") == "icde2027_v1"
+        or design.get("freeze_required_before_execution") is True
+    )
+    if not required:
         return {}
-    path = repo_path(design.get("freeze_manifest", "experiments/manifests/icde2027_v1/MISSING_FREEZE.json"))
+    configured_path = design.get("freeze_manifest")
+    if not configured_path:
+        raise ValueError("execution requires an explicit freeze_manifest path")
+    path = repo_path(configured_path)
     if not path.is_file():
         raise ValueError(f"prospective benchmark freeze is missing: {path}")
     value = json.loads(path.read_text())
@@ -45,6 +54,13 @@ def verify_freeze(design: dict[str, Any]) -> dict[str, Any]:
     source = value["source"]
     if not source.get("files") or any(len(str(source.get(k, ""))) != 40 for k in ["commit", "tree"]):
         raise ValueError("freeze is missing source commit/tree/file identities")
+    current_commit = subprocess_run_git("rev-parse", "HEAD")
+    current_tree = subprocess_run_git("rev-parse", "HEAD^{tree}")
+    current_status = subprocess_run_git("status", "--porcelain")
+    if current_commit != source["commit"] or current_tree != source["tree"]:
+        raise ValueError("current source commit/tree differs from the approved benchmark freeze")
+    if current_status:
+        raise ValueError("benchmark execution requires a clean frozen source checkout")
     expected_config = design.get("source_config_hash", design.get("config_hash"))
     if value.get("config_hash") != expected_config:
         raise ValueError("benchmark freeze config identity mismatch")
@@ -82,6 +98,16 @@ def verify_freeze(design: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"frozen artifact checksum mismatch: {artifact}")
         _VERIFIED[key] = signature
     return value
+
+
+def subprocess_run_git(*arguments: str) -> str:
+    """Read the current checkout identity without depending on user shell state."""
+    import subprocess
+
+    return subprocess.run(
+        ["git", *arguments], cwd=REPO_ROOT, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
 
 
 def capture_run_freeze(design: dict[str, Any], run_root: Path) -> dict[str, Any]:
