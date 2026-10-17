@@ -27,6 +27,45 @@ from experiments.scripts.common.exact_preference import decode_exact_preference_
 from experiments.scripts.common.exact_fastest_profile import decode_fastest_profile
 
 
+_PREFERENCE_ALGORITHMS = {
+    "pace-x", "pace-b", "iscope", "iscope-basic", "iscope-opt1",
+    "iscope-optimized", "sicsp-pref",
+}
+_CAPPED_STATUSES = {"TIME_CAPPED_NOT_CERTIFIED", "PATH_CAPPED_NOT_CERTIFIED"}
+
+
+def _capped_preference_profile_metrics(
+    record: dict[str, Any], algorithm_id: str
+) -> dict[str, Any] | None:
+    """Decode capped profile quality without calling the search complete."""
+    if (
+        algorithm_id not in _PREFERENCE_ALGORITHMS
+        or record.get("completion_status") not in _CAPPED_STATUSES
+    ):
+        return None
+    java = record.get("java_record") or {}
+    output = java.get("output") or {}
+    objective = output.get("objective_result")
+    if not isinstance(objective, dict) and output.get("exact_profile_schema"):
+        objective = output
+    if not isinstance(objective, dict) or not isinstance(objective.get("profile"), dict):
+        return None
+    profile = decode_exact_preference_profile(
+        objective["profile"], objective.get("exact_profile_checksum")
+    )
+    if output.get("profile_checksum") != profile.checksum:
+        raise ValueError("capped preference output checksum is not the exact profile checksum")
+    timing = java.get("timing_ns") or {}
+    return {
+        "wall_time_ns": timing.get("query_total"),
+        "profile_cells": len(profile.cells),
+        "feasible_coverage": profile.metrics.coverage,
+        "integrated_preference": profile.metrics.integrated_preference,
+        "average_selected_preference": profile.metrics.average_selected_preference,
+        "path_switches": output.get("path_switch_count"),
+    }
+
+
 def _percentile(values: list[float], fraction: float) -> float | None:
     if not values:
         return None
@@ -178,9 +217,16 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     exact_trials: dict[tuple[Group, str], dict[str, list[Fraction]]] = collections.defaultdict(
         lambda: collections.defaultdict(list)
     )
+    capped_profile_trials: dict[
+        tuple[Group, str], dict[str, list[float]]
+    ] = collections.defaultdict(lambda: collections.defaultdict(list))
+    capped_profile_exact_trials: dict[
+        tuple[Group, str], dict[str, list[Fraction]]
+    ] = collections.defaultdict(lambda: collections.defaultdict(list))
     completion: collections.Counter[Group] = collections.Counter()
     successful: collections.Counter[Group] = collections.Counter()
     valid_outputs: collections.Counter[Group] = collections.Counter()
+    capped_profile_records: collections.Counter[Group] = collections.Counter()
     statuses: dict[Group, collections.Counter[str]] = collections.defaultdict(collections.Counter)
     exactness: dict[Group, collections.Counter[str]] = collections.defaultdict(collections.Counter)
     generations: dict[Group, collections.Counter[str]] = collections.defaultdict(collections.Counter)
@@ -242,6 +288,26 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             and isinstance(checksum, str)
             and bool(checksum)
         )
+        capped_profile = _capped_preference_profile_metrics(
+            record, algorithm_id
+        )
+        if capped_profile is not None:
+            capped_profile_records[group] += 1
+            capped_key = (group, plan["query_id"])
+            for metric in ("wall_time_ns", "profile_cells", "path_switches"):
+                value = capped_profile[metric]
+                if isinstance(value, (int, float)):
+                    capped_profile_trials[capped_key][metric].append(float(value))
+            capped_profile_exact_trials[capped_key]["feasible_coverage"].append(
+                capped_profile["feasible_coverage"]
+            )
+            capped_profile_exact_trials[capped_key]["integrated_preference"].append(
+                capped_profile["integrated_preference"]
+            )
+            if capped_profile["average_selected_preference"] is not None:
+                capped_profile_exact_trials[capped_key][
+                    "average_selected_preference"
+                ].append(capped_profile["average_selected_preference"])
         if valid_profile and isinstance(runtime, (int, float)):
             valid_outputs[group] += 1
             if completion_status == "TIME_CAPPED_NOT_CERTIFIED":
@@ -323,6 +389,12 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
     exact_query_medians: dict[Group, dict[str, list[Fraction]]] = collections.defaultdict(
         lambda: collections.defaultdict(list)
     )
+    capped_query_medians: dict[Group, dict[str, list[float]]] = collections.defaultdict(
+        lambda: collections.defaultdict(list)
+    )
+    capped_exact_query_medians: dict[
+        Group, dict[str, list[Fraction]]
+    ] = collections.defaultdict(lambda: collections.defaultdict(list))
     paired_runtime: dict[tuple[str, str, str, str, str], float] = {}
     paired_metrics: dict[
         tuple[str, str, str, str, str], dict[str, float]
@@ -351,6 +423,14 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
         group, _query_id = key
         for metric, values in metrics.items():
             exact_query_medians[group][metric].append(statistics.median(values))
+    for key, metrics in capped_profile_trials.items():
+        group, _query_id = key
+        for metric, values in metrics.items():
+            capped_query_medians[group][metric].append(statistics.median(values))
+    for key, metrics in capped_profile_exact_trials.items():
+        group, _query_id = key
+        for metric, values in metrics.items():
+            capped_exact_query_medians[group][metric].append(statistics.median(values))
     rows: list[dict[str, Any]] = []
     seed = int(design.get("seeds", {}).get("bootstrap", 20260726))
     for group in sorted(completion):
@@ -376,6 +456,11 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             "variant_id": group[3], "axis_json": group[4],
             "planned": total, "successful": successful[group],
             "valid_profiles": valid_outputs[group],
+            "capped_profile_records": capped_profile_records[group],
+            "capped_profile_query_units": len(
+                capped_query_medians[group].get("profile_cells", [])
+            ),
+            "capped_profile_rate": capped_profile_records[group] / total if total else 0,
             "completion_rate": valid_outputs[group] / total if total else 0,
             "valid_profile_rate": valid_outputs[group] / total if total else 0,
             "certified_completion_rate": successful[group] / total if total else 0,
@@ -384,7 +469,12 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             "path_cap_rate": statuses[group]["PATH_CAPPED_NOT_CERTIFIED"] / total if total else 0,
             "oom_rate": statuses[group]["OUT_OF_MEMORY"] / total if total else 0,
             "limit_rate": statuses[group]["RESOURCE_LIMIT_EXCEEDED"] / total if total else 0,
-            "failure_rate": (total - valid_outputs[group]) / total if total else 0,
+            "failure_rate": (
+                total
+                - successful[group]
+                - statuses[group]["TIME_CAPPED_NOT_CERTIFIED"]
+                - statuses[group]["PATH_CAPPED_NOT_CERTIFIED"]
+            ) / total if total else 0,
             "cap_trigger_rate": any_cap[group] / total if total else 0,
             "connector_cap_hit_rate": cap_counts[group]["CONNECTOR_M_C"] / total if total else 0,
             "breakpoint_cap_hit_rate": cap_counts[group]["BREAKPOINT_M_B"] / total if total else 0,
@@ -425,6 +515,36 @@ def summarize(run_root: Path, design: dict[str, Any]) -> dict[str, Any]:
             "median_memo_hit_rate": statistics.median(metrics["memo_hit_rate"]) if metrics.get("memo_hit_rate") else None,
             "median_observed_workers": statistics.median(metrics["observed_workers"]) if metrics.get("observed_workers") else None,
             "median_profile_cells_total": statistics.median(metrics["profile_cells_total"]) if metrics.get("profile_cells_total") else None,
+            "median_capped_profile_wall_time_ns": (
+                None if not capped_query_medians[group].get("wall_time_ns")
+                else statistics.median(capped_query_medians[group]["wall_time_ns"])
+            ),
+            "median_capped_profile_cells": (
+                None if not capped_query_medians[group].get("profile_cells")
+                else statistics.median(capped_query_medians[group]["profile_cells"])
+            ),
+            "median_capped_profile_path_switches": (
+                None if not capped_query_medians[group].get("path_switches")
+                else statistics.median(capped_query_medians[group]["path_switches"])
+            ),
+            "median_capped_profile_feasible_coverage_exact": (
+                None if not capped_exact_query_medians[group].get("feasible_coverage")
+                else str(statistics.median(
+                    capped_exact_query_medians[group]["feasible_coverage"]
+                ))
+            ),
+            "median_capped_profile_integrated_preference_exact": (
+                None if not capped_exact_query_medians[group].get("integrated_preference")
+                else str(statistics.median(
+                    capped_exact_query_medians[group]["integrated_preference"]
+                ))
+            ),
+            "median_capped_profile_average_selected_preference_exact": (
+                None if not capped_exact_query_medians[group].get("average_selected_preference")
+                else str(statistics.median(
+                    capped_exact_query_medians[group]["average_selected_preference"]
+                ))
+            ),
             "median_feasible_coverage": statistics.median(metrics["feasible_coverage"]) if metrics.get("feasible_coverage") else None,
             "median_average_selected_score": statistics.median(metrics["average_selected_score"]) if metrics.get("average_selected_score") else None,
             "median_exact_feasible_coverage": (
